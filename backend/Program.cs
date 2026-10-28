@@ -48,6 +48,27 @@ using (var scope = app.Services.CreateScope())
 {
     var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
     Directory.CreateDirectory("data");
+
+    // Самовосстановление схемы: EnsureCreated() НЕ обновляет существующую базу,
+    // поэтому после добавления новых колонок (например, Users.FamilyCode или таблиц
+    // Accounts/FamilyInvites) старая data/app.db приводит к "SQLite Error 1: no such column".
+    // Если ожидаемых колонок нет — пересоздаём базу (данные в dev-режиме сидируются заново).
+    static bool CanRun(AppDbContext ctx, string sql)
+    {
+        try { ctx.Database.ExecuteSqlRaw(sql); return true; }
+        catch { return false; }
+    }
+    static bool SchemaIsCurrent(AppDbContext ctx) =>
+        CanRun(ctx, "SELECT FamilyCode FROM Users LIMIT 1;")
+        && CanRun(ctx, "SELECT 1 FROM Accounts LIMIT 1;")
+        && CanRun(ctx, "SELECT 1 FROM FamilyInvites LIMIT 1;");
+
+    if (System.IO.File.Exists(Path.Combine("data", "app.db")) && !SchemaIsCurrent(db))
+    {
+        Console.WriteLine("[SchitayKa] Устаревшая схема БД обнаружена — пересоздаю data/app.db ...");
+        await db.Database.EnsureDeletedAsync();
+    }
+
     db.Database.EnsureCreated();
 
     // Демо-данные при первом запуске: вход demo@schitayka.ru / demo123
