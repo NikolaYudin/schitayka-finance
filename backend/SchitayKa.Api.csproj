@@ -1,0 +1,54 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <RootNamespace>SchitayKa.Api</RootNamespace>
+    <!-- Копировать собранный фронтенд (backend/wwwroot) в выходную папку bin/... -->
+    <CopyLocalLockFileAssemblies>true</CopyLocalLockFileAssemblies>
+  </PropertyGroup>
+  <PropertyGroup>
+    <FrontendDir>$([System.IO.Path]::GetFullPath('$(MSBuildProjectDirectory)\..\frontend'))</FrontendDir>
+  </PropertyGroup>
+
+  <ItemGroup Condition="!Exists('$(FrontendDir)')">
+    <!-- Режим публикации без исходников фронтенда (сервер): берём готовый wwwroot как есть -->
+    <Content Include="wwwroot\**" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" LinkBase="wwwroot\" />
+  </ItemGroup>
+
+  <ItemGroup Condition="Exists('$(FrontendDir)')">
+    <!-- Режим разработки: wwwroot — выход сборки vite, исключаем его из implicit Content,
+         копируем в bin после сборки через _CopyWebRootAfterBuild -->
+    <Content Remove="wwwroot\**" />
+  </ItemGroup>
+
+  <Target Name="_CopyWebRootAfterBuild" AfterTargets="Build;Publish">
+    <ItemGroup>
+      <_WpSrc Include="$(MSBuildProjectDirectory)\wwwroot\**" />
+    </ItemGroup>
+    <Copy SourceFiles="@(_WpSrc)" DestinationFolder="$([System.IO.Path]::Combine($(OutDir), 'wwwroot', '%(RecursiveDir)'))" SkipUnchangedFiles="true" Condition="'@(_WpSrc)'!=''" />
+    <Copy SourceFiles="@(_WpSrc)" DestinationFolder="$([System.IO.Path]::Combine($(PublishDir), 'wwwroot', '%(RecursiveDir)'))" SkipUnchangedFiles="true" Condition="'@(_WpSrc)'!='' And '$(IsPublishing)'=='true'" />
+  </Target>
+
+  <!-- Автосборка фронтенда при сборке проекта, если установлен Node.js и есть node_modules.
+       Если npm отсутствует — предупреждение, но сборка .NET продолжается. -->
+
+  <Target Name="BuildFrontend" BeforeTargets="BeforeBuild"
+          Condition="Exists('$(FrontendDir)\package.json') And Exists('$(FrontendDir)\node_modules')">
+    <Message Importance="high" Text="Building frontend (npm run build)..." />
+    <Exec Command="npm run build" WorkingDirectory="$(FrontendDir)" IgnoreExitCode="true" ContinueOnError="WarnAndContinue">
+      <Output TaskParameter="ExitCode" PropertyName="NpmExitCode" />
+    </Exec>
+    <Message Importance="high" Condition="'$(NpmExitCode)'!='0'" Text="WARNING: npm run build failed (exit $(NpmExitCode)). If this is new after 'git pull', run setup.cmd once to install dependencies." />
+  </Target>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.AspNetCore.Authentication.JwtBearer" Version="8.0.11" />
+    <PackageReference Include="Microsoft.AspNetCore.OpenApi" Version="8.0.33" />
+    <PackageReference Include="Microsoft.EntityFrameworkCore.Sqlite" Version="8.0.11" />
+    <PackageReference Include="Swashbuckle.AspNetCore" Version="6.6.2" />
+    <PackageReference Include="System.IdentityModel.Tokens.Jwt" Version="8.23.0" />
+  </ItemGroup>
+
+</Project>

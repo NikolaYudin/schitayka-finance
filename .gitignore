@@ -1,0 +1,18 @@
+bin/
+obj/
+*.user
+*.suo
+.vs/
+node_modules/
+dist/
+build/
+coverage/
+.env
+.env.local
+.env.*.local
+*.log
+.DS_Store
+Thumbs.db
+
+# локальная база SQLite (демо-данные пересоздаются при запуске)
+backend/data/
