@@ -29,7 +29,18 @@ if errorlevel 1 (
 )
 for /f "delims=" %%v in ('dotnet --version') do echo       .NET OK: %%v
 
-echo [3/4] Installing frontend dependencies (npm install)...
+echo [3/5] Restoring NuGet packages (dotnet restore)...
+pushd "%~dp0backend"
+call dotnet restore
+if errorlevel 1 (
+    echo [ERROR] dotnet restore failed. Check your internet connection.
+    popd
+    pause
+    exit /b 1
+)
+popd
+
+echo [4/5] Installing frontend dependencies (npm install)...
 pushd "%~dp0frontend"
 call npm install
 if errorlevel 1 (
@@ -39,7 +50,7 @@ if errorlevel 1 (
     exit /b 1
 )
 
-echo [4/4] Building frontend (npm run build)...
+echo [5/5] Building frontend (npm run build)...
 call npm run build
 if errorlevel 1 (
     echo [ERROR] npm run build failed. See messages above.
