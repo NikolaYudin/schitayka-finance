@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Summary, Category, Tx, TxType, api, fmt, MONTHS_RU } from './api';
+import { Summary, Category, Tx, TxType, AccountInfo, api, fmt, MONTHS_RU } from './api';
 
 // ---- Дашборд: обзор бюджета + анализ + рекомендации ----
 export function Dashboard() {
@@ -138,7 +138,7 @@ export function TxRow({ tx, onDelete }: { tx: Tx; onDelete?: (id: number) => voi
       <div className="tx-dot" style={{ background: tx.categoryColor || '#718096' }} />
       <div className="tx-main">
         <div className="t">{tx.categoryName}{tx.comment ? ` — ${tx.comment}` : ''}</div>
-        <div className="s">{new Date(tx.date).toLocaleDateString('ru-RU')}</div>
+        <div className="s">{new Date(tx.date).toLocaleDateString('ru-RU')}{tx.accountName ? ` · ${tx.accountName}` : ''}</div>
       </div>
       <div className={`tx-sum ${income ? 'income' : 'expense'}`}>{income ? '+' : '−'}{fmt(tx.amount)}</div>
       {onDelete && <button className="btn danger-ghost small" onClick={() => onDelete(tx.id)}>✕</button>}
@@ -147,8 +147,8 @@ export function TxRow({ tx, onDelete }: { tx: Tx; onDelete?: (id: number) => voi
 }
 
 // ---- Быстрая операция (FAB + модалка) ----
-export function QuickTxModal({ categories, onClose, onSaved }: {
-  categories: Category[]; onClose: () => void; onSaved: () => void;
+export function QuickTxModal({ categories, accounts = [], onClose, onSaved }: {
+  categories: Category[]; accounts?: AccountInfo[]; onClose: () => void; onSaved: () => void;
 }) {
   const [type, setType] = useState<TxType>(1);
   const cats = categories.filter(c => c.type === type);
@@ -156,6 +156,7 @@ export function QuickTxModal({ categories, onClose, onSaved }: {
   const [amount, setAmount] = useState('');
   const [date, setDate] = useState(new Date().toISOString().slice(0, 10));
   const [comment, setComment] = useState('');
+  const [accountId, setAccountId] = useState<number | null>(accounts[0]?.id ?? null);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState('');
 
@@ -165,7 +166,7 @@ export function QuickTxModal({ categories, onClose, onSaved }: {
     e.preventDefault(); setErr(''); setBusy(true);
     try {
       await api.post('/api/transactions', {
-        categoryId, type, amount: Number(amount.replace(',', '.')), date, comment,
+        categoryId, type, amount: Number(amount.replace(',', '.')), date, comment, accountId,
       });
       onSaved(); onClose();
     } catch (ex: any) { setErr(ex.message); } finally { setBusy(false); }
@@ -188,6 +189,14 @@ export function QuickTxModal({ categories, onClose, onSaved }: {
           <label>Сумма, ₽<input inputMode="decimal" value={amount} onChange={e => setAmount(e.target.value)} required placeholder="1500" /></label>
           <label>Дата<input type="date" value={date} onChange={e => setDate(e.target.value)} required /></label>
         </div>
+        {accounts.length > 0 && (
+          <label>Счёт
+            <select value={accountId ?? 0} onChange={e => setAccountId(Number(e.target.value) || null)}>
+              <option value={0}>Без счёта</option>
+              {accounts.map(a => <option key={a.id} value={a.id}>{a.name}</option>)}
+            </select>
+          </label>
+        )}
         <label>Комментарий<input value={comment} onChange={e => setComment(e.target.value)} placeholder="необязательно" /></label>
         {err && <div className="alert">{err}</div>}
         <button className="btn primary block" disabled={busy || !cats.length}>{busy ? '…' : 'Сохранить'}</button>

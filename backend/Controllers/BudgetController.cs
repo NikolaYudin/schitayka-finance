@@ -42,6 +42,14 @@ public class BudgetController : ControllerBase
         var txs = await _db.Transactions.Where(t => t.UserId == uid).ToListAsync();
         var cats = await _db.Categories.Where(c => c.UserId == uid).ToListAsync();
         var limits = await _db.BudgetLimits.Where(l => l.UserId == uid && l.Year == year && l.Month == month).ToListAsync();
+        var accounts = await _db.Accounts.Where(a => a.UserId == uid && !a.IsArchived).ToListAsync();
+
+        // Итог по счетам: активные счета минус долги по кредиткам.
+        // Если счетов нет — считаем по старому механизму (стартовый баланс + все операции).
+        decimal totalBalance = accounts.Count > 0
+            ? accounts.Sum(a => a.Type == AccountType.CreditCard ? -a.Balance : a.Balance)
+            : (user?.StartingBalance ?? 0) + txs.Sum(t => t.Type == TxType.Income ? t.Amount : -t.Amount);
+        var cashbackTotal = accounts.Sum(a => a.CashbackAccrued);
 
         var nowMonth = txs.Where(t => t.Date.Year == year && t.Date.Month == month).ToList();
         var income = nowMonth.Where(t => t.Type == TxType.Income).Sum(t => t.Amount);
@@ -100,6 +108,11 @@ public class BudgetController : ControllerBase
         // ---------- Персонализированные рекомендации ----------
         var recommendations = BuildRecommendations(year, month, txs, cats, limits, nowMonth, income, expense, goals);
 
+        // Рекомендация по кэшбэку (если есть счета со ставкой)
+        if (cashbackTotal > 0)
+            recommendations.Insert(0, new { level = "good", icon = "💳",
+                text = $"По вашим счетам накоплен кэшбэк {cashbackTotal:0} ₽ — проверьте, начислил ли банк его на баланс." });
+
         return Ok(new
         {
             year, month,
@@ -107,21 +120,27 @@ public class BudgetController : ControllerBase
             balance = income - expense,
             monthIncome = income,
             monthExpense = expense,
-            totalBalance = (user?.StartingBalance ?? 0) + txs.Sum(t => t.Type == TxType.Income ? t.Amount : -t.Amount),
+            totalBalance,
             savingsRate = income > 0 ? Math.Round((income - expense) / income * 100, 1) : 0,
             byMonth,
             expenseShare,
             limits = limitRows,
             goals = goalRows,
+            accounts = accounts.Select(a => new
+            {
+                a.Id, a.Name, a.Type, typeName = AccountTypeNames.Ru(a.Type),
+                a.Balance, a.CreditLimit, a.CashbackRate, a.CashbackAccrued, a.Color,
+            }),
+            cashbackTotal,
             recommendations,
         });
     }
 
-    private static List<object> BuildRecommendations(
+    private static List<dynamic> BuildRecommendations(
         int year, int month, List<Transaction> txs, List<Category> cats, List<BudgetLimit> limits,
         List<Transaction> nowMonth, decimal income, decimal expense, List<SavingsGoal> goals)
     {
-        var recs = new List<object>();
+        var recs = new List<dynamic>();
 
         void Add(string level, string icon, string text) => recs.Add(new { level, icon, text });
 

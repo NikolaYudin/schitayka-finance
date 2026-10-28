@@ -95,6 +95,26 @@ using (var scope = app.Services.CreateScope())
             new SavingsGoal { UserId = demo.Id, Name = "Подушка безопасности", TargetAmount = 300000, CurrentAmount = 120000, Deadline = new DateOnly(today.Year, 12, 31) },
             new SavingsGoal { UserId = demo.Id, Name = "Отпуск летом", TargetAmount = 150000, CurrentAmount = 4468.94m, Deadline = today.AddMonths(5) });
 
+        // Счета: дебетовая карта с кэшбэком, кредитка (долг), наличные, вклад
+        var aDebit = new Account { UserId = demo.Id, Name = "Основная карта", Type = AccountType.DebitCard, StartingBalance = 30000, CashbackRate = 5, Color = "#2b6cb0" };
+        var aCredit = new Account { UserId = demo.Id, Name = "Кредитная «Кэшбэлка»", Type = AccountType.CreditCard, StartingBalance = 25000, CreditLimit = 120000, CashbackRate = 10, Color = "#e53e3e" };
+        var aCash = new Account { UserId = demo.Id, Name = "Наличные", Type = AccountType.Cash, StartingBalance = 8000, Color = "#38a169" };
+        var aDeposit = new Account { UserId = demo.Id, Name = "Вклад «Полугодие»", Type = AccountType.Deposit, StartingBalance = 100000, Color = "#805ad5" };
+        db.Accounts.AddRange(aDebit, aCredit, aCash, aDeposit);
+        await db.SaveChangesAsync(); // фиксируем Id счетов перед привязкой операций
+
+        // Привяём часть демо-операций к счетам (покупки по кредитке — увеличивают долг)
+        var demoTxs = db.Transactions.Where(t => t.UserId == demo.Id).ToList();
+        foreach (var t in demoTxs)
+        {
+            if (t.Type == TxType.Income && t.CategoryId == cZarplata.Id) t.AccountId = aDebit.Id;      // зарплата на дебетовую
+            else if (t.CategoryId == cFun.Id) t.AccountId = aCredit.Id;                                 // развлечения — в кредит
+            else if (t.CategoryId == cAuto.Id) t.AccountId = aCash.Id;                                  // транспорт — наличными
+            else if (t.Type == TxType.Expense) t.AccountId = aDebit.Id;                                  // остальное — основная карта
+        }
+        // Погашение кредитки: перевод с дебетовой на кредитную (уменьшает долг)
+        db.Transactions.Add(new Transaction { Category = cZarplata, UserId = demo.Id, Type = TxType.Income, Amount = 15000, Date = m.AddDays(5), Comment = "Погашение кредитной карты", AccountId = aCredit.Id });
+
         await db.SaveChangesAsync();
         Console.WriteLine("[seed] Демо-данные созданы: demo@schitayka.ru / demo123");
     }

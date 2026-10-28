@@ -93,7 +93,35 @@ public class TransactionsController : ControllerBase
     public TransactionsController(AppDbContext db) { _db = db; }
     private int Uid => UserAccess.UidOf(User);
 
-    public record TxDto(int CategoryId, TxType Type, decimal Amount, DateOnly Date, string? Comment);
+    public record TxDto(int CategoryId, TxType Type, decimal Amount, DateOnly Date, string? Comment, int? AccountId);
+
+    // Пересчёт баланса счёта при изменении набора операций.
+    // Дебетовые/наличные/вклад: старт + доходы − расходы (+ начисленный кэшбэк).
+    // Кредитные: старт = долг; покупки увеличивают долг, погашения — уменьшают.
+    private async Task RecalcAccounts(params int?[] accountIds)
+    {
+        foreach (var id in accountIds.Where(a => a.HasValue).Select(a => a!.Value).Distinct())
+        {
+            var acc = await _db.Accounts.FirstOrDefaultAsync(a => a.Id == id && a.UserId == Uid);
+            if (acc is null) continue;
+            var signed = await _db.Transactions.Where(t => t.AccountId == id)
+                .Select(t => new { t.Type, t.Amount }).ToListAsync();
+            var net = signed.Sum(t => t.Type == TxType.Income ? t.Amount : -t.Amount);
+            if (acc.Type == AccountType.CreditCard)
+            {
+                acc.Balance = Math.Max(0, acc.StartingBalance - net);
+                acc.CashbackAccrued = 0;
+            }
+            else
+            {
+                var cashback = acc.CashbackRate > 0
+                    ? Math.Round(signed.Where(t => t.Type == TxType.Expense).Sum(t => t.Amount) * acc.CashbackRate / 100m, 2)
+                    : 0m;
+                acc.Balance = Math.Max(0, acc.StartingBalance + net + cashback);
+                acc.CashbackAccrued = cashback;
+            }
+        }
+    }
 
     [HttpGet]
     public async Task<IActionResult> List([FromQuery] int month = 0, [FromQuery] int year = 0,
@@ -107,8 +135,9 @@ public class TransactionsController : ControllerBase
             .Take(Math.Clamp(take, 1, 500))
             .Select(t => new
             {
-                t.Id, t.CategoryId, t.Type, t.Amount, t.Date, t.Comment,
+                t.Id, t.CategoryId, t.Type, t.Amount, t.Date, t.Comment, t.AccountId,
                 categoryName = t.Category.Name, categoryColor = t.Category.Color,
+                accountName = t.Account!.Name,
             })
             .ToListAsync();
         return Ok(list);
@@ -121,6 +150,8 @@ public class TransactionsController : ControllerBase
         if (dto.Amount <= 0) return BadRequest(new { error = "Сумма должна быть больше нуля" });
         var cat = await _db.Categories.FirstOrDefaultAsync(c => c.Id == dto.CategoryId && c.UserId == Uid);
         if (cat is null) return BadRequest(new { error = "Категория не найдена" });
+        if (dto.AccountId is { } accId && !await _db.Accounts.AnyAsync(a => a.Id == accId && a.UserId == Uid))
+            return BadRequest(new { error = "Счёт не найден" });
 
         var tx = new Transaction
         {
@@ -130,10 +161,13 @@ public class TransactionsController : ControllerBase
             Amount = dto.Amount,
             Date = dto.Date,
             Comment = dto.Comment?.Trim() ?? "",
+            AccountId = dto.AccountId,
         };
         _db.Transactions.Add(tx);
         await _db.SaveChangesAsync();
-        return Ok(new { tx.Id, tx.CategoryId, tx.Type, tx.Amount, tx.Date, tx.Comment });
+        await RecalcAccounts(dto.AccountId);
+        await _db.SaveChangesAsync();
+        return Ok(new { tx.Id, tx.CategoryId, tx.Type, tx.Amount, tx.Date, tx.Comment, tx.AccountId });
     }
 
     [HttpPut("{id:int}")]
@@ -145,10 +179,15 @@ public class TransactionsController : ControllerBase
         var cat = await _db.Categories.FirstOrDefaultAsync(c => c.Id == dto.CategoryId && c.UserId == Uid);
         if (cat is null) return BadRequest(new { error = "Категория не найдена" });
         if (dto.Amount <= 0) return BadRequest(new { error = "Сумма должна быть больше нуля" });
+        if (dto.AccountId is { } accId && !await _db.Accounts.AnyAsync(a => a.Id == accId && a.UserId == Uid))
+            return BadRequest(new { error = "Счёт не найден" });
+        var oldAccountId = tx.AccountId;
         tx.CategoryId = cat.Id; tx.Type = dto.Type; tx.Amount = dto.Amount;
-        tx.Date = dto.Date; tx.Comment = dto.Comment?.Trim() ?? "";
+        tx.Date = dto.Date; tx.Comment = dto.Comment?.Trim() ?? ""; tx.AccountId = dto.AccountId;
         await _db.SaveChangesAsync();
-        return Ok(new { tx.Id, tx.CategoryId, tx.Type, tx.Amount, tx.Date, tx.Comment });
+        await RecalcAccounts(oldAccountId, dto.AccountId);
+        await _db.SaveChangesAsync();
+        return Ok(new { tx.Id, tx.CategoryId, tx.Type, tx.Amount, tx.Date, tx.Comment, tx.AccountId });
     }
 
     [HttpDelete("{id:int}")]
@@ -157,7 +196,10 @@ public class TransactionsController : ControllerBase
         if (Uid < 0) return Unauthorized(new { error = "Требуется вход" });
         var tx = await _db.Transactions.FirstOrDefaultAsync(t => t.Id == id && t.UserId == Uid);
         if (tx is null) return NotFound();
+        var accId = tx.AccountId;
         _db.Transactions.Remove(tx);
+        await _db.SaveChangesAsync();
+        await RecalcAccounts(accId);
         await _db.SaveChangesAsync();
         return Ok();
     }

@@ -48,7 +48,15 @@ export interface Category { id: number; name: string; type: TxType; color: strin
 export interface Tx {
   id: number; categoryId: number; type: TxType; amount: number; date: string;
   comment: string; categoryName?: string; categoryColor?: string;
+  accountId?: number | null; accountName?: string | null;
 }
+export type AccountType = 0 | 1 | 2 | 3 | 4; // дебет, кредит, наличные, вклад, прочее
+export interface AccountInfo {
+  id: number; name: string; type: AccountType; typeName: string; balance: number;
+  creditLimit: number; cashbackRate: number; cashbackAccrued: number; color: string;
+  isArchived: boolean; available: number; creditUsagePct: number | null;
+}
+export interface FamilyMember { id: number; name: string; email: string; }
 export interface Goal {
   id: number; name: string; targetAmount: number; currentAmount: number;
   deadline: string | null; progress: number; monthsLeft: number | null; perMonth: number | null;
@@ -61,6 +69,8 @@ export interface Summary {
   year: number; month: number; startingBalance: number;
   balance: number; monthIncome: number; monthExpense: number; totalBalance: number; savingsRate: number;
   byMonth: MonthRow[]; expenseShare: ShareRow[]; limits: LimitRow[]; goals: Goal[];
+  accounts: Pick<AccountInfo, 'id'|'name'|'type'|'typeName'|'balance'|'creditLimit'|'cashbackRate'|'cashbackAccrued'|'color'>[];
+  cashbackTotal: number;
   recommendations: Recommendation[];
 }
 
