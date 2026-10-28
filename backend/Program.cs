@@ -17,8 +17,17 @@ if (string.IsNullOrEmpty(jwtKey))
 builder.Configuration["Jwt:Issuer"] ??= "SchitayKa";
 builder.Configuration["Jwt:Audience"] ??= "SchitayKaClients";
 
-builder.Services.AddDbContext<AppDbContext>(o =>
-    o.UseSqlite(builder.Configuration.GetConnectionString("Default") ?? "Data Source=data/app.db"));
+// Абсолютный путь к БД: при запуске из Visual Studio рабочая папка — bin/Debug/net8.0,
+// и относительный путь "data/app.db" создавал бы отдельную базу в bin (с устаревшей схемой),
+// пока в backend/data лежала актуальная. Фиксируем место: <папка проекта>/data/app.db.
+var dbDir = Path.Combine(builder.Environment.ContentRootPath, "data");
+Directory.CreateDirectory(dbDir);
+var dbPath = Path.Combine(dbDir, "app.db");
+var connStr = builder.Configuration.GetConnectionString("Default");
+if (string.IsNullOrEmpty(connStr) || connStr.Contains("Data Source=data/app.db"))
+    connStr = $"Data Source={dbPath}";
+
+builder.Services.AddDbContext<AppDbContext>(o => o.UseSqlite(connStr));
 
 builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
     .AddJwtBearer(o =>
@@ -47,96 +56,139 @@ var app = builder.Build();
 using (var scope = app.Services.CreateScope())
 {
     var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
-    Directory.CreateDirectory("data");
 
-    // Самовосстановление схемы: EnsureCreated() НЕ обновляет существующую базу,
-    // поэтому после добавления новых колонок (например, Users.FamilyCode или таблиц
-    // Accounts/FamilyInvites) старая data/app.db приводит к "SQLite Error 1: no such column".
-    // Если ожидаемых колонок нет — пересоздаём базу (данные в dev-режиме сидируются заново).
-    static bool CanRun(AppDbContext ctx, string sql)
+    // --- Самовосстановление: демо работает ВСЕГДА ---
+    // 1) EnsureCreated() НЕ обновляет существующую базу, поэтому старые копии app.db
+    //    (в data/ и в bin/... из запусков до фикса пути) с устаревшей схемой приводят
+    //    к "SQLite Error 1: no such column". Удаляем любую копию без ожидаемых колонок.
+    // 2) Если в актуальной базе нет пользователя demo@schitayka.ru — пересоздаём её
+    //    и сидируем демо-данные заново.
+    var expectedCols = new[] { "SELECT FamilyCode FROM Users LIMIT 1;", "SELECT 1 FROM Accounts LIMIT 1;", "SELECT 1 FROM FamilyInvites LIMIT 1;" };
+
+    bool CopyHasCurrentSchema(string path)
     {
-        try { ctx.Database.ExecuteSqlRaw(sql); return true; }
+        try
+        {
+            using var conn = new Microsoft.Data.Sqlite.SqliteConnection($"Data Source={path}");
+            conn.Open();
+            foreach (var sql in expectedCols)
+            {
+                using var cmd = conn.CreateCommand();
+                cmd.CommandText = sql;
+                cmd.ExecuteScalar();
+            }
+            return true;
+        }
         catch { return false; }
     }
-    static bool SchemaIsCurrent(AppDbContext ctx) =>
-        CanRun(ctx, "SELECT FamilyCode FROM Users LIMIT 1;")
-        && CanRun(ctx, "SELECT 1 FROM Accounts LIMIT 1;")
-        && CanRun(ctx, "SELECT 1 FROM FamilyInvites LIMIT 1;");
 
-    if (System.IO.File.Exists(Path.Combine("data", "app.db")) && !SchemaIsCurrent(db))
+    void DeleteDbWithSidecars(string path)
     {
-        Console.WriteLine("[SchitayKa] Устаревшая схема БД обнаружена — пересоздаю data/app.db ...");
-        await db.Database.EnsureDeletedAsync();
+        Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools();
+        File.Delete(path);
+        foreach (var sidecar in new[] { path + "-shm", path + "-wal" })
+            if (File.Exists(sidecar)) File.Delete(sidecar);
+    }
+
+    var dbCopies = new List<string> { dbPath };
+    foreach (var extra in new[]
+    {
+        Path.Combine(AppContext.BaseDirectory, "data", "app.db"),   // bin/Debug/net8.0/data/app.db (старые запуски VS)
+        Path.Combine(builder.Environment.ContentRootPath, "..", "backend", "bin", "data", "app.db"),
+    })
+    {
+        var full = Path.GetFullPath(extra);
+        if (!dbCopies.Contains(full, StringComparer.OrdinalIgnoreCase)) dbCopies.Add(full);
+    }
+
+    foreach (var copy in dbCopies.Where(File.Exists).ToList())
+    {
+        if (!CopyHasCurrentSchema(copy))
+        {
+            Console.WriteLine($"[SchitayKa] Устаревшая схема БД обнаружена — пересоздаю {copy} ...");
+            DeleteDbWithSidecars(copy);
+        }
     }
 
     db.Database.EnsureCreated();
 
-    // Демо-данные при первом запуске: вход demo@schitayka.ru / demo123
-    if (!db.Users.Any())
+    if (db.Users.Any(u => u.Email == "demo@schitayka.ru"))
     {
-        string Hash(string pw) => SchitayKa.Api.Controllers.AuthController.HashPassword(pw);
-        var demo = new User { Email = "demo@schitayka.ru", Name = "Демо-пользователь", PasswordHash = Hash("demo123"), StartingBalance = 45000 };
-        db.Users.Add(demo);
-        await db.SaveChangesAsync(); // фиксируем Id пользователя
-
-        SchitayKa.Api.Controllers.SeedCategories.SeedForUser(db, demo.Id);
-        await db.SaveChangesAsync(); // категории должны попасть в БД до поиска по имени
-        var cats = db.Categories.Where(c => c.UserId == demo.Id).ToList();
-        var cZarplata = cats.First(c => c.Name == "Зарплата");
-        var cProducts = cats.First(c => c.Name == "Продукты");
-        var cAuto = cats.First(c => c.Name == "Транспорт");
-        var cZhkkh = cats.First(c => c.Name == "ЖКХ");
-        var cFun = cats.First(c => c.Name == "Развлечения");
-
-        var today = DateOnly.FromDateTime(DateTime.Today);
-        var m = new DateOnly(today.Year, today.Month, 1);
-        var prev = m.AddMonths(-1);
-
-        db.Transactions.AddRange(new[]
+        Console.WriteLine("[SchitayKa] Демо-аккаунт готов: demo@schitayka.ru / demo123");
+    }
+    else
+    {
+        if (db.Users.Any())
         {
-            new Transaction { Category = cZarplata, UserId = demo.Id, Type = TxType.Income, Amount = 95000, Date = prev, Comment = "Зарплата" },
-            new Transaction { Category = cProducts, UserId = demo.Id, Type = TxType.Expense, Amount = 21350, Date = prev, Comment = "Продукты за месяц" },
-            new Transaction { Category = cAuto, UserId = demo.Id, Type = TxType.Expense, Amount = 14700, Date = prev.AddDays(2), Comment = "Автокредит + бензин" },
-            new Transaction { Category = cZhkkh, UserId = demo.Id, Type = TxType.Expense, Amount = 8200, Date = prev, Comment = "ЖКХ" },
-            new Transaction { Category = cZarplata, UserId = demo.Id, Type = TxType.Income, Amount = 95000, Date = m, Comment = "Зарплата" },
-            new Transaction { Category = cProducts, UserId = demo.Id, Type = TxType.Expense, Amount = 12350, Date = m, Comment = "Продукты" },
-            new Transaction { Category = cAuto, UserId = demo.Id, Type = TxType.Expense, Amount = 9400, Date = m, Comment = "Бензин и парковка" },
-            new Transaction { Category = cZhkkh, UserId = demo.Id, Type = TxType.Expense, Amount = 8200, Date = m, Comment = "ЖКХ" },
-            new Transaction { Category = cFun, UserId = demo.Id, Type = TxType.Expense, Amount = 6500, Date = m.AddDays(3), Comment = "Концерт и кафе" },
-        });
-
-        // Лимиты на текущий месяц
-        db.BudgetLimits.AddRange(
-            new BudgetLimit { UserId = demo.Id, CategoryId = cProducts.Id, Year = m.Year, Month = m.Month, Limit = 20000 },
-            new BudgetLimit { UserId = demo.Id, CategoryId = cAuto.Id, Year = m.Year, Month = m.Month, Limit = 8000 },
-            new BudgetLimit { UserId = demo.Id, CategoryId = cZhkkh.Id, Year = m.Year, Month = m.Month, Limit = 12000 },
-            new BudgetLimit { UserId = demo.Id, CategoryId = cFun.Id, Year = m.Year, Month = m.Month, Limit = 5000 });
-
-        db.SavingsGoals.AddRange(
-            new SavingsGoal { UserId = demo.Id, Name = "Подушка безопасности", TargetAmount = 300000, CurrentAmount = 120000, Deadline = new DateOnly(today.Year, 12, 31) },
-            new SavingsGoal { UserId = demo.Id, Name = "Отпуск летом", TargetAmount = 150000, CurrentAmount = 4468.94m, Deadline = today.AddMonths(5) });
-
-        // Счета: дебетовая карта с кэшбэком, кредитка (долг), наличные, вклад
-        var aDebit = new Account { UserId = demo.Id, Name = "Основная карта", Type = AccountType.DebitCard, StartingBalance = 30000, CashbackRate = 5, Color = "#2b6cb0" };
-        var aCredit = new Account { UserId = demo.Id, Name = "Кредитная «Кэшбэлка»", Type = AccountType.CreditCard, StartingBalance = 25000, CreditLimit = 120000, CashbackRate = 10, Color = "#e53e3e" };
-        var aCash = new Account { UserId = demo.Id, Name = "Наличные", Type = AccountType.Cash, StartingBalance = 8000, Color = "#38a169" };
-        var aDeposit = new Account { UserId = demo.Id, Name = "Вклад «Полугодие»", Type = AccountType.Deposit, StartingBalance = 100000, Color = "#805ad5" };
-        db.Accounts.AddRange(aDebit, aCredit, aCash, aDeposit);
-        await db.SaveChangesAsync(); // фиксируем Id счетов перед привязкой операций
-
-        // Привяём часть демо-операций к счетам (покупки по кредитке — увеличивают долг)
-        var demoTxs = db.Transactions.Where(t => t.UserId == demo.Id).ToList();
-        foreach (var t in demoTxs)
-        {
-            if (t.Type == TxType.Income && t.CategoryId == cZarplata.Id) t.AccountId = aDebit.Id;      // зарплата на дебетовую
-            else if (t.CategoryId == cFun.Id) t.AccountId = aCredit.Id;                                 // развлечения — в кредит
-            else if (t.CategoryId == cAuto.Id) t.AccountId = aCash.Id;                                  // транспорт — наличными
-            else if (t.Type == TxType.Expense) t.AccountId = aDebit.Id;                                  // остальное — основная карта
+            Console.WriteLine("[SchitayKa] Демо-аккаунт отсутствует — пересоздаю базу с чистым сидом ...");
+            await db.Database.EnsureDeletedAsync();
+            db.Database.EnsureCreated();
         }
-        // Погашение кредитки: перевод с дебетовой на кредитную (уменьшает долг)
-        db.Transactions.Add(new Transaction { Category = cZarplata, UserId = demo.Id, Type = TxType.Income, Amount = 15000, Date = m.AddDays(5), Comment = "Погашение кредитной карты", AccountId = aCredit.Id });
 
-        await db.SaveChangesAsync();
+            string Hash(string pw) => SchitayKa.Api.Controllers.AuthController.HashPassword(pw);
+            var demo = new User { Email = "demo@schitayka.ru", Name = "Демо-пользователь", PasswordHash = Hash("demo123"), StartingBalance = 45000 };
+            db.Users.Add(demo);
+            await db.SaveChangesAsync(); // фиксируем Id пользователя
+    
+            SchitayKa.Api.Controllers.SeedCategories.SeedForUser(db, demo.Id);
+            await db.SaveChangesAsync(); // категории должны попасть в БД до поиска по имени
+            var cats = db.Categories.Where(c => c.UserId == demo.Id).ToList();
+            var cZarplata = cats.First(c => c.Name == "Зарплата");
+            var cProducts = cats.First(c => c.Name == "Продукты");
+            var cAuto = cats.First(c => c.Name == "Транспорт");
+            var cZhkkh = cats.First(c => c.Name == "ЖКХ");
+            var cFun = cats.First(c => c.Name == "Развлечения");
+    
+            var today = DateOnly.FromDateTime(DateTime.Today);
+            var m = new DateOnly(today.Year, today.Month, 1);
+            var prev = m.AddMonths(-1);
+    
+            db.Transactions.AddRange(new[]
+            {
+                new Transaction { Category = cZarplata, UserId = demo.Id, Type = TxType.Income, Amount = 95000, Date = prev, Comment = "Зарплата" },
+                new Transaction { Category = cProducts, UserId = demo.Id, Type = TxType.Expense, Amount = 21350, Date = prev, Comment = "Продукты за месяц" },
+                new Transaction { Category = cAuto, UserId = demo.Id, Type = TxType.Expense, Amount = 14700, Date = prev.AddDays(2), Comment = "Автокредит + бензин" },
+                new Transaction { Category = cZhkkh, UserId = demo.Id, Type = TxType.Expense, Amount = 8200, Date = prev, Comment = "ЖКХ" },
+                new Transaction { Category = cZarplata, UserId = demo.Id, Type = TxType.Income, Amount = 95000, Date = m, Comment = "Зарплата" },
+                new Transaction { Category = cProducts, UserId = demo.Id, Type = TxType.Expense, Amount = 12350, Date = m, Comment = "Продукты" },
+                new Transaction { Category = cAuto, UserId = demo.Id, Type = TxType.Expense, Amount = 9400, Date = m, Comment = "Бензин и парковка" },
+                new Transaction { Category = cZhkkh, UserId = demo.Id, Type = TxType.Expense, Amount = 8200, Date = m, Comment = "ЖКХ" },
+                new Transaction { Category = cFun, UserId = demo.Id, Type = TxType.Expense, Amount = 6500, Date = m.AddDays(3), Comment = "Концерт и кафе" },
+            });
+    
+            // Лимиты на текущий месяц
+            db.BudgetLimits.AddRange(
+                new BudgetLimit { UserId = demo.Id, CategoryId = cProducts.Id, Year = m.Year, Month = m.Month, Limit = 20000 },
+                new BudgetLimit { UserId = demo.Id, CategoryId = cAuto.Id, Year = m.Year, Month = m.Month, Limit = 8000 },
+                new BudgetLimit { UserId = demo.Id, CategoryId = cZhkkh.Id, Year = m.Year, Month = m.Month, Limit = 12000 },
+                new BudgetLimit { UserId = demo.Id, CategoryId = cFun.Id, Year = m.Year, Month = m.Month, Limit = 5000 });
+    
+            db.SavingsGoals.AddRange(
+                new SavingsGoal { UserId = demo.Id, Name = "Подушка безопасности", TargetAmount = 300000, CurrentAmount = 120000, Deadline = new DateOnly(today.Year, 12, 31) },
+                new SavingsGoal { UserId = demo.Id, Name = "Отпуск летом", TargetAmount = 150000, CurrentAmount = 4468.94m, Deadline = today.AddMonths(5) });
+    
+            // Счета: дебетовая карта с кэшбэком, кредитка (долг), наличные, вклад
+            var aDebit = new Account { UserId = demo.Id, Name = "Основная карта", Type = AccountType.DebitCard, StartingBalance = 30000, CashbackRate = 5, Color = "#2b6cb0" };
+            var aCredit = new Account { UserId = demo.Id, Name = "Кредитная «Кэшбэлка»", Type = AccountType.CreditCard, StartingBalance = 25000, CreditLimit = 120000, CashbackRate = 10, Color = "#e53e3e" };
+            var aCash = new Account { UserId = demo.Id, Name = "Наличные", Type = AccountType.Cash, StartingBalance = 8000, Color = "#38a169" };
+            var aDeposit = new Account { UserId = demo.Id, Name = "Вклад «Полугодие»", Type = AccountType.Deposit, StartingBalance = 100000, Color = "#805ad5" };
+            db.Accounts.AddRange(aDebit, aCredit, aCash, aDeposit);
+            await db.SaveChangesAsync(); // фиксируем Id счетов перед привязкой операций
+    
+            // Привяём часть демо-операций к счетам (покупки по кредитке — увеличивают долг)
+            var demoTxs = db.Transactions.Where(t => t.UserId == demo.Id).ToList();
+            foreach (var t in demoTxs)
+            {
+                if (t.Type == TxType.Income && t.CategoryId == cZarplata.Id) t.AccountId = aDebit.Id;      // зарплата на дебетовую
+                else if (t.CategoryId == cFun.Id) t.AccountId = aCredit.Id;                                 // развлечения — в кредит
+                else if (t.CategoryId == cAuto.Id) t.AccountId = aCash.Id;                                  // транспорт — наличными
+                else if (t.Type == TxType.Expense) t.AccountId = aDebit.Id;                                  // остальное — основная карта
+            }
+            // Погашение кредитки: перевод с дебетовой на кредитную (уменьшает долг)
+            db.Transactions.Add(new Transaction { Category = cZarplata, UserId = demo.Id, Type = TxType.Income, Amount = 15000, Date = m.AddDays(5), Comment = "Погашение кредитной карты", AccountId = aCredit.Id });
+    
+            await db.SaveChangesAsync();
+            
         Console.WriteLine("[seed] Демо-данные созданы: demo@schitayka.ru / demo123");
     }
 }
