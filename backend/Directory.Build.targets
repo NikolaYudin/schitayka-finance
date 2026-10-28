@@ -1,0 +1,31 @@
+<Project>
+  <!--
+    Лечит NETSDK1004 ("obj\project.assets.json не найден") при сборке в Visual Studio,
+    если NuGet-restore не выполнялось (авто-восстановление пакетов отключено или сбойно).
+
+    Как это работает: SDK импортирует файл из $(CustomAfterMicrosoftCommonTargets) ПОСЛЕ
+    Microsoft.NET.Sdk.targets — т.е. после определения цели ResolvePackageDependenciesForBuild,
+    которая бросает NETSDK1004 (проверка assets внутри ResolveReferences). Мы перезаписываем
+    свойство $(ResolvePackageDependenciesForBuildDependsOn), добавляя в начало нашу цель
+    SchitayKaEnsureRestored: она выполняет dotnet restore, только если obj\project.assets.json
+    отсутствует. Порядок гарантирован явной зависимостью целей MSBuild; при наличии assets
+    поведение сборки не меняется.
+  -->
+  <PropertyGroup>
+    <CustomAfterMicrosoftCommonTargets Condition="'$(MSBuildProjectFileExtension)' == 'csproj'">$(MSBuildThisFileFullPath)</CustomAfterMicrosoftCommonTargets>
+  </PropertyGroup>
+
+  <Target Name="SchitayKaEnsureRestored" Condition="'$(MSBuildProjectFileExtension)' == 'csproj'">
+    <Exec Condition="!Exists('$(MSBuildProjectExtensionsPath)project.assets.json')"
+          Command="dotnet restore &quot;$(MSBuildProjectFullPath)&quot;" />
+  </Target>
+
+  <!-- Хук применяется только во 2-м проходе файла (когда он импортирован как CustomAfter...),
+       когда определение цели из SDK уже загружено и её DependsOn можно переопределить. -->
+  <ItemGroup Condition="'$(CustomAfterMicrosoftCommonTargets)' == '$(MSBuildThisFileFullPath)'">
+    <SchitayKaRestoreHook Include="$(ResolvePackageDependenciesForBuildDependsOn)" />
+  </ItemGroup>
+  <PropertyGroup Condition="'$(CustomAfterMicrosoftCommonTargets)' == '$(MSBuildThisFileFullPath)'">
+    <ResolvePackageDependenciesForBuildDependsOn>SchitayKaEnsureRestored;@(SchitayKaRestoreHook)</ResolvePackageDependenciesForBuildDependsOn>
+  </PropertyGroup>
+</Project>
