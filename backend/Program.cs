@@ -84,7 +84,11 @@ using (var scope = app.Services.CreateScope())
 
     void DeleteDbWithSidecars(string path)
     {
-        Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools();
+        // ВАЖНО: пулы соединений к УДАЛЯЕМЫМ файлам, а не к основному app.db —
+        // иначе сброс всех пулов закроет пул рабочей БД и следующий запрос откроет
+        // новый файл до EnsureCreated() (пустая схема -> "no such table").
+        using (var poolConn = new Microsoft.Data.Sqlite.SqliteConnection($"Data Source={path}"))
+            Microsoft.Data.Sqlite.SqliteConnection.ClearPool(poolConn);
         File.Delete(path);
         foreach (var sidecar in new[] { path + "-shm", path + "-wal" })
             if (File.Exists(sidecar)) File.Delete(sidecar);
