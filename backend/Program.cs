@@ -39,25 +39,46 @@ static void EnsureFrontendBuilt()
         }
         if (frontendDir is null) return; // структура проекта не найдена — молча пропускаем
 
-        // Нужна ли сборка: нет бандла ИЛИ любой исходник/конфиг свежее index.html
+        // Нужна ли сборка: 1) нет бандла; 2) хеш источников не совпадает с записанным
+        // (mtime после git pull ненадёжен — файлы могут быть «старее» index.html);
+        // 3) любой исходник свежее index.html.
         var indexPath = Path.Combine(wwwrootDir!, "index.html");
-        bool needsBuild = !File.Exists(indexPath);
-        DateTime lastWrite = DateTime.MinValue;
+        var srcDir = Path.Combine(frontendDir, "src");
+        var configFiles = new[]
+        {
+            Path.Combine(frontendDir, "index.html"),
+            Path.Combine(frontendDir, "package.json"),
+            Path.Combine(frontendDir, "vite.config.ts"),
+            Path.Combine(frontendDir, "tsconfig.json"),
+        };
+        string CurrentHash()
+        {
+            using var sha = System.Security.Cryptography.SHA256.Create();
+            using var ms = new MemoryStream();
+            void Add(string path)
+            {
+                if (File.Exists(path))
+                {
+                    ms.Write(System.Text.Encoding.UTF8.GetBytes(Path.GetFileName(path) + "|"));
+                    ms.Write(File.ReadAllBytes(path));
+                }
+            }
+            if (Directory.Exists(srcDir))
+                foreach (var f in Directory.EnumerateFiles(srcDir, "*.*", SearchOption.AllDirectories).OrderBy(f => f, StringComparer.Ordinal))
+                    Add(f);
+            foreach (var f in configFiles) Add(f);
+            return Convert.ToHexString(sha.ComputeHash(ms.ToArray()));
+        }
+        var hashFile = Path.Combine(wwwrootDir!, ".frontend-hash");
+        var currentHash = CurrentHash();
+        var storedHash = File.Exists(hashFile) ? File.ReadAllText(hashFile).Trim() : null;
+        bool needsBuild = !File.Exists(indexPath) || storedHash != currentHash;
         if (!needsBuild)
         {
-            lastWrite = File.GetLastWriteTimeUtc(indexPath);
-            var srcDir = Path.Combine(frontendDir, "src");
-            IEnumerable<string> files = Enumerable.Empty<string>();
-            if (Directory.Exists(srcDir))
-                files = Directory.EnumerateFiles(srcDir, "*.*", SearchOption.AllDirectories);
-            files = files.Concat(new[]
-            {
-                Path.Combine(frontendDir, "index.html"),
-                Path.Combine(frontendDir, "package.json"),
-                Path.Combine(frontendDir, "vite.config.ts"),
-                Path.Combine(frontendDir, "tsconfig.json"),
-            });
-            foreach (var f in files)
+            var lastWrite = File.GetLastWriteTimeUtc(indexPath);
+            foreach (var f in Directory.Exists(srcDir)
+                         ? Directory.EnumerateFiles(srcDir, "*.*", SearchOption.AllDirectories).Concat(configFiles)
+                         : configFiles)
             {
                 try { if (File.GetLastWriteTimeUtc(f) > lastWrite) { needsBuild = true; break; } } catch { }
             }
@@ -138,7 +159,10 @@ static void EnsureFrontendBuilt()
         if (RunNpm("run build", frontendDir) != 0)
             Console.WriteLine("[SchitayKa] WARNING: npm run build завершился с ошибкой — использую текущий wwwroot.");
         else
+        {
+            try { File.WriteAllText(hashFile, CurrentHash()); } catch { }
             Console.WriteLine("[SchitayKa] Фронтенд собран в backend/wwwroot.");
+        }
     }
     catch (Exception ex)
     {
@@ -654,6 +678,11 @@ app.Use(async (ctx, next) =>
         if (candidate.StartsWith(Path.GetFullPath(webRoot) + Path.DirectorySeparatorChar, StringComparison.Ordinal)
             && File.Exists(candidate))
         {
+            // index.html — не кэшируем (иначе браузер после обновления покажет старый бандл);
+            // assets с хешем в имени — можно кэшировать надолго.
+            ctx.Response.Headers.CacheControl = candidate.EndsWith("index.html", StringComparison.OrdinalIgnoreCase)
+                ? "no-cache"
+                : "public, max-age=31536000, immutable";
             ctx.Response.ContentType = GetContentType(candidate);
             await ctx.Response.SendFileAsync(candidate);
             return;
@@ -676,6 +705,7 @@ app.MapFallback("/{*path}", async ctx =>
         var index = FindIndexHtml(app.Environment);
         if (index is not null)
         {
+            ctx.Response.Headers.CacheControl = "no-cache";
             ctx.Response.ContentType = "text/html";
             await ctx.Response.SendFileAsync(index);
         }
