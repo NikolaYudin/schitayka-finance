@@ -27,7 +27,21 @@
     <ItemGroup>
       <_WpSrc Include="$(MSBuildProjectDirectory)\wwwroot\**" />
     </ItemGroup>
-    <Copy SourceFiles="@(_WpSrc)" DestinationFolder="$([System.IO.Path]::Combine($(OutDir), 'wwwroot', '%(RecursiveDir)'))" SkipUnchangedFiles="true" Condition="'@(_WpSrc)'!=''" />
+    <!-- SkipUnchangedFiles="false": vite при пересборке может выдать то же имя файла (index-<hash>.js)
+         с новым содержимым и тем же mtime — MSBuild со "true" пропускал такое копирование,
+         и из bin/... сервилась СТАРАЯ копия бандла (страницы «Счета»/«Семья» не появлялись). -->
+    <Copy SourceFiles="@(_WpSrc)" DestinationFolder="$([System.IO.Path]::Combine($(OutDir), 'wwwroot', '%(RecursiveDir)'))" SkipUnchangedFiles="false" Condition="'@(_WpSrc)'!=''" />
+  </Target>
+
+  <!-- Страховка: удаляем устаревшие JS/CSS-бандлы в выходной папке, чтобы браузер не подхватывал
+       старые файлы по кэшу и сервер не отдавал два бандла сразу. -->
+  <Target Name="_CleanStaleWebRootAssets" BeforeTargets="_CopyWebRootAfterBuild">
+    <ItemGroup>
+      <_WpStale Include="$([System.IO.Path]::Combine($(OutDir), 'wwwroot', 'assets', '*.js'));$([System.IO.Path]::Combine($(OutDir), 'wwwroot', 'assets', '*.css'))"
+                Exclude="$(MSBuildProjectDirectory)\wwwroot\assets\*" />
+    </ItemGroup>
+    <Delete Files="@(_WpStale)" Condition="'@(_WpStale)'!=''" />
+    <Message Importance="high" Text="[SchitayKa] Удалены устаревшие бандлы в $(OutDir)wwwroot/assets: @(_WpStale->'%(Filename)%(Extension)', ', ')" Condition="'@(_WpStale)'!=''" />
   </Target>
 
   <!-- При публикации (dotnet publish / VS "Опубликовать") копируем собранный бандл напрямую в PublishDir -->

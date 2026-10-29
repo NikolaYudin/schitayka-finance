@@ -71,7 +71,12 @@ static void EnsureFrontendBuilt()
         }
         var hashFile = Path.Combine(wwwrootDir!, ".frontend-hash");
         var currentHash = CurrentHash();
-        var storedHash = File.Exists(hashFile) ? File.ReadAllText(hashFile).Trim() : null;
+        // Хеш храним и в выходной папке (bin/.../wwwroot/.frontend-hash): после git pull там может
+        // лежать СТАРЫЙ бандл с тем же именем index.html, который нужно пересобрать.
+        var binHashFile = Path.Combine(AppContext.BaseDirectory, "wwwroot", ".frontend-hash");
+        string? ReadHash(string f) => File.Exists(f) ? File.ReadAllText(f).Trim() : null;
+        var storedHash = ReadHash(hashFile);
+        if (string.IsNullOrEmpty(storedHash)) storedHash = ReadHash(binHashFile);
         bool needsBuild = !File.Exists(indexPath) || storedHash != currentHash;
         if (!needsBuild)
         {
@@ -161,6 +166,14 @@ static void EnsureFrontendBuilt()
         else
         {
             try { File.WriteAllText(hashFile, CurrentHash()); } catch { }
+            // Дублируем хеш в выходную папку (bin/.../wwwroot) — там git pull может оставить старый бандл.
+            try
+            {
+                var binWww = Path.Combine(AppContext.BaseDirectory, "wwwroot");
+                Directory.CreateDirectory(binWww);
+                File.WriteAllText(Path.Combine(binWww, ".frontend-hash"), CurrentHash());
+            }
+            catch { }
             Console.WriteLine("[SchitayKa] Фронтенд собран в backend/wwwroot.");
         }
     }
