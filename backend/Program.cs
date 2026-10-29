@@ -27,6 +27,14 @@ var connStr = builder.Configuration.GetConnectionString("Default");
 if (string.IsNullOrEmpty(connStr) || connStr.Contains("Data Source=data/app.db"))
     connStr = $"Data Source={dbPath}";
 
+// --- Конечная защита от устаревших копий БД (NET "no such column: FamilyCode") ---
+// Если в конфигурации указан относительный путь "data/app.db" — всегда переписываем его
+// на абсолютный <папка проекта>/data/app.db. Это гарантирует, что и EF, и raw-SQLite
+// проверка ниже работают с ОДНИМ и тем же файлом, независимо от текущей папки процесса
+// (Visual Studio запускает сервер из bin\Debug\net8.0).
+if (connStr.Contains("Data Source=data/app.db"))
+    connStr = $"Data Source={dbPath}";
+
 // --- Жёсткая самонастройка схемы: демо работает ВСЕГДА ---
 // Проверка выполняется ДО регистрации DbContext и до первого подключения EF,
 // чтобы исключаемые SqliteException не всплывали в отладчике Visual Studio
@@ -34,54 +42,63 @@ if (string.IsNullOrEmpty(connStr) || connStr.Contains("Data Source=data/app.db")
 // EnsureCreated() не обновляет существующую базу, поэтому любую копию app.db
 // (в data/, bin/... из старых запусков VS) с устаревшей схемой пересоздаём.
 // Таблицы/колонки актуальной схемы (имена как в EF: DbSet FamilyInvitations).
-var expectedCols = new[] { "SELECT FamilyCode FROM Users LIMIT 1;", "SELECT 1 FROM Accounts LIMIT 1;", "SELECT 1 FROM FamilyInvitations LIMIT 1;" };
-
-bool CopyHasCurrentSchema(string path)
+string? SqliteError(string path, string sql)
 {
     try
     {
         using var conn = new Microsoft.Data.Sqlite.SqliteConnection($"Data Source={path};Pooling=False");
         conn.Open();
-        foreach (var sql in expectedCols)
-        {
-            using var cmd = conn.CreateCommand();
-            cmd.CommandText = sql;
-            cmd.ExecuteScalar();
-        }
-        return true;
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = sql;
+        cmd.ExecuteScalar();
+        return null;
     }
-    catch { return false; }
+    catch (Microsoft.Data.Sqlite.SqliteException ex) { return ex.SqliteErrorCode == 1 ? ex.Message : null; }
 }
 
-void DeleteDbWithSidecars(string path)
+void EnsureSchemaOk(string path)
 {
-    // Сбрасываем пулы только к УДАЛЯЕМЫМ файлам — иначе следующий запрос откроет
-    // новый пустой файл до EnsureCreated() ("no such table").
-    using (var poolConn = new Microsoft.Data.Sqlite.SqliteConnection($"Data Source={path}"))
-        Microsoft.Data.Sqlite.SqliteConnection.ClearPool(poolConn);
-    File.Delete(path);
-    foreach (var sidecar in new[] { path + "-shm", path + "-wal" })
-        if (File.Exists(sidecar)) File.Delete(sidecar);
-}
+    if (!File.Exists(path)) return; // база будет создана EnsureCreated() с актуальной схемой
 
-var dbCopies = new List<string> { dbPath };
-foreach (var extra in new[]
-{
-    Path.Combine(AppContext.BaseDirectory, "data", "app.db"),   // bin/Debug/net8.0/data/app.db (старые запуски VS)
-    Path.Combine(builder.Environment.ContentRootPath, "..", "backend", "bin", "data", "app.db"),
-})
-{
-    var full = Path.GetFullPath(extra);
-    if (!dbCopies.Contains(full, StringComparer.OrdinalIgnoreCase)) dbCopies.Add(full);
-}
-
-foreach (var copy in dbCopies.Where(File.Exists).ToList())
-{
-    if (!CopyHasCurrentSchema(copy))
+    // 1) Мелкие расхождения лечим на месте: недостающие колонки добавляем через ALTER TABLE,
+    //    данные пользователя при этом СОХРАНЯЮТСЯ (например, старый app.db без FamilyCode).
+    var addCols = new (string Table, string Col, string Def)[]
     {
-        Console.WriteLine($"[SchitayKa] Устаревшая схема БД обнаружена — пересоздаю {copy} ...");
-        DeleteDbWithSidecars(copy);
+        ("Users", "FamilyCode", "TEXT NULL"),
+        ("Transactions", "AccountId", "INTEGER NULL"),
+    };
+    foreach (var (table, col, def) in addCols)
+    {
+        var err = SqliteError(path, $"SELECT \"{col}\" FROM \"{table}\" LIMIT 1;");
+        if (err is not null && err.Contains("no such column"))
+        {
+            using var conn = new Microsoft.Data.Sqlite.SqliteConnection($"Data Source={path};Pooling=False");
+            conn.Open();
+            using var cmd = conn.CreateCommand();
+            cmd.CommandText = $"ALTER TABLE \"{table}\" ADD COLUMN \"{col}\" {def};";
+            cmd.ExecuteNonQuery();
+            Console.WriteLine($"[SchitayKa] Схема обновлена на месте: добавлена колонка {table}.{col} (данные сохранены)");
+        }
     }
+
+    // 2) Проверяем остаточную схему; если по-прежнему устаревшая — пересоздаём копию с нуля.
+    var checks = new[] { "SELECT FamilyCode FROM Users LIMIT 1;", "SELECT 1 FROM Accounts LIMIT 1;", "SELECT 1 FROM FamilyInvitations LIMIT 1;" };
+    var bad = checks.Select(c => SqliteError(path, c)).FirstOrDefault(e => e is not null);
+    if (bad is not null)
+    {
+        Console.WriteLine($"[SchitayKa] Устаревшая схема БД ({bad}) — пересоздаю {path} ...");
+        using (var poolConn = new Microsoft.Data.Sqlite.SqliteConnection($"Data Source={path}"))
+            Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools();
+        File.Delete(path);
+        foreach (var sidecar in new[] { path + "-shm", path + "-wal" })
+            if (File.Exists(sidecar)) File.Delete(sidecar);
+    }
+}
+
+foreach (var copy in new[] { dbPath, Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "data", "app.db")) }
+        .Distinct(StringComparer.OrdinalIgnoreCase).Where(File.Exists))
+{
+    EnsureSchemaOk(copy);
 }
 
 builder.Services.AddDbContext<AppDbContext>(o => o.UseSqlite(connStr));
