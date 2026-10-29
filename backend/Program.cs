@@ -33,7 +33,8 @@ if (string.IsNullOrEmpty(connStr) || connStr.Contains("Data Source=data/app.db")
 // («Вызвано исключение ... no such column: u.FamilyCode») и не давали 500.
 // EnsureCreated() не обновляет существующую базу, поэтому любую копию app.db
 // (в data/, bin/... из старых запусков VS) с устаревшей схемой пересоздаём.
-var expectedCols = new[] { "SELECT FamilyCode FROM Users LIMIT 1;", "SELECT 1 FROM Accounts LIMIT 1;", "SELECT 1 FROM FamilyInvites LIMIT 1;" };
+// Таблицы/колонки актуальной схемы (имена как в EF: DbSet FamilyInvitations).
+var expectedCols = new[] { "SELECT FamilyCode FROM Users LIMIT 1;", "SELECT 1 FROM Accounts LIMIT 1;", "SELECT 1 FROM FamilyInvitations LIMIT 1;" };
 
 bool CopyHasCurrentSchema(string path)
 {
@@ -118,9 +119,17 @@ using (var scope = app.Services.CreateScope())
     // (см. начало файла) — здесь только создаём базу при её отсутствии.
     db.Database.EnsureCreated();
 
-    if (db.Users.Any(u => u.Email == "demo@schitayka.ru"))
+    var demoUser = db.Users.FirstOrDefault(u => u.Email == "demo@schitayka.ru");
+    if (demoUser is not null)
     {
-        Console.WriteLine("[SchitayKa] Демо-аккаунт готов: demo@schitayka.ru / demo123");
+        // Демо есть — при необходимости дозаполняем демо-контент (счета/семья/переводы),
+        // если база была создана более старым сидом.
+        if (!db.Accounts.Any(a => a.UserId == demoUser.Id) || !db.FamilyInvitations.Any(i => i.OwnerUserId == demoUser.Id))
+        {
+            Console.WriteLine("[SchitayKa] Демо-аккаунт найден, но демо-контент неполный — дозаполняю ...");
+            await SeedDemoDataAsync(db, demoUser);
+        }
+        Console.WriteLine("[SchitayKa] Демо-аккаунт готов: demo@schitayka.ru / demo123 (семья: spouse@schitayka.ru / spouse123)");
     }
     else
     {
@@ -131,72 +140,128 @@ using (var scope = app.Services.CreateScope())
             db.Database.EnsureCreated();
         }
 
-            string Hash(string pw) => SchitayKa.Api.Controllers.AuthController.HashPassword(pw);
-            var demo = new User { Email = "demo@schitayka.ru", Name = "Демо-пользователь", PasswordHash = Hash("demo123"), StartingBalance = 45000 };
-            db.Users.Add(demo);
-            await db.SaveChangesAsync(); // фиксируем Id пользователя
-    
-            SchitayKa.Api.Controllers.SeedCategories.SeedForUser(db, demo.Id);
-            await db.SaveChangesAsync(); // категории должны попасть в БД до поиска по имени
-            var cats = db.Categories.Where(c => c.UserId == demo.Id).ToList();
-            var cZarplata = cats.First(c => c.Name == "Зарплата");
-            var cProducts = cats.First(c => c.Name == "Продукты");
-            var cAuto = cats.First(c => c.Name == "Транспорт");
-            var cZhkkh = cats.First(c => c.Name == "ЖКХ");
-            var cFun = cats.First(c => c.Name == "Развлечения");
-    
-            var today = DateOnly.FromDateTime(DateTime.Today);
-            var m = new DateOnly(today.Year, today.Month, 1);
-            var prev = m.AddMonths(-1);
-    
-            db.Transactions.AddRange(new[]
-            {
-                new Transaction { Category = cZarplata, UserId = demo.Id, Type = TxType.Income, Amount = 95000, Date = prev, Comment = "Зарплата" },
-                new Transaction { Category = cProducts, UserId = demo.Id, Type = TxType.Expense, Amount = 21350, Date = prev, Comment = "Продукты за месяц" },
-                new Transaction { Category = cAuto, UserId = demo.Id, Type = TxType.Expense, Amount = 14700, Date = prev.AddDays(2), Comment = "Автокредит + бензин" },
-                new Transaction { Category = cZhkkh, UserId = demo.Id, Type = TxType.Expense, Amount = 8200, Date = prev, Comment = "ЖКХ" },
-                new Transaction { Category = cZarplata, UserId = demo.Id, Type = TxType.Income, Amount = 95000, Date = m, Comment = "Зарплата" },
-                new Transaction { Category = cProducts, UserId = demo.Id, Type = TxType.Expense, Amount = 12350, Date = m, Comment = "Продукты" },
-                new Transaction { Category = cAuto, UserId = demo.Id, Type = TxType.Expense, Amount = 9400, Date = m, Comment = "Бензин и парковка" },
-                new Transaction { Category = cZhkkh, UserId = demo.Id, Type = TxType.Expense, Amount = 8200, Date = m, Comment = "ЖКХ" },
-                new Transaction { Category = cFun, UserId = demo.Id, Type = TxType.Expense, Amount = 6500, Date = m.AddDays(3), Comment = "Концерт и кафе" },
-            });
-    
-            // Лимиты на текущий месяц
-            db.BudgetLimits.AddRange(
-                new BudgetLimit { UserId = demo.Id, CategoryId = cProducts.Id, Year = m.Year, Month = m.Month, Limit = 20000 },
-                new BudgetLimit { UserId = demo.Id, CategoryId = cAuto.Id, Year = m.Year, Month = m.Month, Limit = 8000 },
-                new BudgetLimit { UserId = demo.Id, CategoryId = cZhkkh.Id, Year = m.Year, Month = m.Month, Limit = 12000 },
-                new BudgetLimit { UserId = demo.Id, CategoryId = cFun.Id, Year = m.Year, Month = m.Month, Limit = 5000 });
-    
-            db.SavingsGoals.AddRange(
-                new SavingsGoal { UserId = demo.Id, Name = "Подушка безопасности", TargetAmount = 300000, CurrentAmount = 120000, Deadline = new DateOnly(today.Year, 12, 31) },
-                new SavingsGoal { UserId = demo.Id, Name = "Отпуск летом", TargetAmount = 150000, CurrentAmount = 4468.94m, Deadline = today.AddMonths(5) });
-    
-            // Счета: дебетовая карта с кэшбэком, кредитка (долг), наличные, вклад
-            var aDebit = new Account { UserId = demo.Id, Name = "Основная карта", Type = AccountType.DebitCard, StartingBalance = 30000, CashbackRate = 5, Color = "#2b6cb0" };
-            var aCredit = new Account { UserId = demo.Id, Name = "Кредитная «Кэшбэлка»", Type = AccountType.CreditCard, StartingBalance = 25000, CreditLimit = 120000, CashbackRate = 10, Color = "#e53e3e" };
-            var aCash = new Account { UserId = demo.Id, Name = "Наличные", Type = AccountType.Cash, StartingBalance = 8000, Color = "#38a169" };
-            var aDeposit = new Account { UserId = demo.Id, Name = "Вклад «Полугодие»", Type = AccountType.Deposit, StartingBalance = 100000, Color = "#805ad5" };
-            db.Accounts.AddRange(aDebit, aCredit, aCash, aDeposit);
-            await db.SaveChangesAsync(); // фиксируем Id счетов перед привязкой операций
-    
-            // Привяём часть демо-операций к счетам (покупки по кредитке — увеличивают долг)
-            var demoTxs = db.Transactions.Where(t => t.UserId == demo.Id).ToList();
-            foreach (var t in demoTxs)
-            {
-                if (t.Type == TxType.Income && t.CategoryId == cZarplata.Id) t.AccountId = aDebit.Id;      // зарплата на дебетовую
-                else if (t.CategoryId == cFun.Id) t.AccountId = aCredit.Id;                                 // развлечения — в кредит
-                else if (t.CategoryId == cAuto.Id) t.AccountId = aCash.Id;                                  // транспорт — наличными
-                else if (t.Type == TxType.Expense) t.AccountId = aDebit.Id;                                  // остальное — основная карта
-            }
-            // Погашение кредитки: перевод с дебетовой на кредитную (уменьшает долг)
-            db.Transactions.Add(new Transaction { Category = cZarplata, UserId = demo.Id, Type = TxType.Income, Amount = 15000, Date = m.AddDays(5), Comment = "Погашение кредитной карты", AccountId = aCredit.Id });
-    
-            await db.SaveChangesAsync();
-            
-        Console.WriteLine("[seed] Демо-данные созданы: demo@schitayka.ru / demo123");
+        string Hash(string pw) => SchitayKa.Api.Controllers.AuthController.HashPassword(pw);
+        var demo = new User { Email = "demo@schitayka.ru", Name = "Демо-пользователь", PasswordHash = Hash("demo123"), StartingBalance = 45000 };
+        db.Users.Add(demo);
+        await db.SaveChangesAsync(); // фиксируем Id пользователя
+
+        await SeedDemoDataAsync(db, demo);
+        Console.WriteLine("[seed] Демо-данные созданы: demo@schitayka.ru / demo123 (семья: spouse@schitayka.ru / spouse123)");
     }
+}
+
+// --- Единый сид демо-данных (используется и при первичном создании БД,
+//     и при авто-восстановлении) ---
+async Task SeedDemoDataAsync(AppDbContext db, User demo)
+{
+    // Категории: сидим только если их ещё нет (иначе SeedForUser создаст дубликаты)
+    if (!db.Categories.Any(c => c.UserId == demo.Id))
+        SchitayKa.Api.Controllers.SeedCategories.SeedForUser(db, demo.Id);
+    await db.SaveChangesAsync(); // категории должны попасть в БД до поиска по имени
+    var cats = db.Categories.Where(c => c.UserId == demo.Id).ToList();
+    var alreadySeeded = db.Transactions.Any(t => t.UserId == demo.Id); // дозаполнение без дублей операций
+    var cZarplata = cats.First(c => c.Name == "Зарплата");
+    var cProducts = cats.First(c => c.Name == "Продукты");
+    var cAuto = cats.First(c => c.Name == "Транспорт");
+    var cZhkkh = cats.First(c => c.Name == "ЖКХ");
+    var cFun = cats.First(c => c.Name == "Развлечения");
+    var cOther = cats.First(c => c.Name == "Прочее");
+
+    var today = DateOnly.FromDateTime(DateTime.Today);
+    var m = new DateOnly(today.Year, today.Month, 1);
+    var prev = m.AddMonths(-1);
+
+    if (!alreadySeeded)
+    db.Transactions.AddRange(new[]
+    {
+        new Transaction { Category = cZarplata, UserId = demo.Id, Type = TxType.Income, Amount = 95000, Date = prev, Comment = "Зарплата" },
+        new Transaction { Category = cProducts, UserId = demo.Id, Type = TxType.Expense, Amount = 21350, Date = prev, Comment = "Продукты за месяц" },
+        new Transaction { Category = cAuto, UserId = demo.Id, Type = TxType.Expense, Amount = 14700, Date = prev.AddDays(2), Comment = "Автокредит + бензин" },
+        new Transaction { Category = cZhkkh, UserId = demo.Id, Type = TxType.Expense, Amount = 8200, Date = prev, Comment = "ЖКХ" },
+        new Transaction { Category = cZarplata, UserId = demo.Id, Type = TxType.Income, Amount = 95000, Date = m, Comment = "Зарплата" },
+        new Transaction { Category = cProducts, UserId = demo.Id, Type = TxType.Expense, Amount = 12350, Date = m, Comment = "Продукты" },
+        new Transaction { Category = cAuto, UserId = demo.Id, Type = TxType.Expense, Amount = 9400, Date = m, Comment = "Бензин и парковка" },
+        new Transaction { Category = cZhkkh, UserId = demo.Id, Type = TxType.Expense, Amount = 8200, Date = m, Comment = "ЖКХ" },
+        new Transaction { Category = cFun, UserId = demo.Id, Type = TxType.Expense, Amount = 6500, Date = m.AddDays(3), Comment = "Концерт и кафе" },
+    });
+
+    // Лимиты на текущий месяц
+    if (!db.BudgetLimits.Any(l => l.UserId == demo.Id))
+    db.BudgetLimits.AddRange(
+        new BudgetLimit { UserId = demo.Id, CategoryId = cProducts.Id, Year = m.Year, Month = m.Month, Limit = 20000 },
+        new BudgetLimit { UserId = demo.Id, CategoryId = cAuto.Id, Year = m.Year, Month = m.Month, Limit = 8000 },
+        new BudgetLimit { UserId = demo.Id, CategoryId = cZhkkh.Id, Year = m.Year, Month = m.Month, Limit = 12000 },
+        new BudgetLimit { UserId = demo.Id, CategoryId = cFun.Id, Year = m.Year, Month = m.Month, Limit = 5000 });
+
+    if (!db.SavingsGoals.Any(g => g.UserId == demo.Id))
+    db.SavingsGoals.AddRange(
+        new SavingsGoal { UserId = demo.Id, Name = "Подушка безопасности", TargetAmount = 300000, CurrentAmount = 120000, Deadline = new DateOnly(today.Year, 12, 31) },
+        new SavingsGoal { UserId = demo.Id, Name = "Отпуск летом", TargetAmount = 150000, CurrentAmount = 4468.94m, Deadline = today.AddMonths(5) });
+
+    // Счета: дебетовая карта с кэшбэком, кредитка (долг), наличные, вклад
+    Account aDebit = new Account { UserId = demo.Id, Name = "Основная карта", Type = AccountType.DebitCard, StartingBalance = 30000, CashbackRate = 5, Color = "#2b6cb0" };
+    Account aCredit = new Account { UserId = demo.Id, Name = "Кредитная «Кэшбэлка»", Type = AccountType.CreditCard, StartingBalance = 25000, CreditLimit = 120000, CashbackRate = 10, Color = "#e53e3e" };
+    Account aCash = new Account { UserId = demo.Id, Name = "Наличные", Type = AccountType.Cash, StartingBalance = 8000, Color = "#38a169" };
+    Account aDeposit = new Account { UserId = demo.Id, Name = "Вклад «Полугодие»", Type = AccountType.Deposit, StartingBalance = 100000, Color = "#805ad5" };
+    var existingAccounts = db.Accounts.Where(a => a.UserId == demo.Id).ToList();
+    Account? ByName(string n) => existingAccounts.FirstOrDefault(a => a.Name == n);
+    aDebit = ByName("Основная карта") ?? aDebit;
+    aCredit = ByName("Кредитная «Кэшбэлка»") ?? aCredit;
+    aCash = ByName("Наличные") ?? aCash;
+    aDeposit = ByName("Вклад «Полугодие»") ?? aDeposit;
+    var toAdd = new[] { aDebit, aCredit, aCash, aDeposit }.Where(a => a.Id == 0).ToList();
+    if (toAdd.Count > 0)
+    {
+        db.Accounts.AddRange(toAdd);
+        await db.SaveChangesAsync(); // фиксируем Id счетов перед привязкой операций
+    }
+
+    if (!alreadySeeded)
+    {
+        // Привяжем часть демо-операций к счетам (покупки по кредитке — увеличивают долг)
+        var demoTxs = db.Transactions.Where(t => t.UserId == demo.Id).ToList();
+        foreach (var t in demoTxs)
+        {
+            if (t.Type == TxType.Income && t.CategoryId == cZarplata.Id) t.AccountId = aDebit.Id;      // зарплата на дебетовую
+            else if (t.CategoryId == cFun.Id) t.AccountId = aCredit.Id;                                 // развлечения — в кредит
+            else if (t.CategoryId == cAuto.Id) t.AccountId = aCash.Id;                                  // транспорт — наличными
+            else if (t.Type == TxType.Expense) t.AccountId = aDebit.Id;                                  // остальное — основная карта
+        }
+        db.Transactions.Add(new Transaction { Category = cZarplata, UserId = demo.Id, Type = TxType.Income, Amount = 15000, Date = m.AddDays(5), Comment = "Погашение кредитной карты", AccountId = aCredit.Id });
+    }
+
+    // Семья: демо-пользователь — владелец семейной группы, приглашение принято
+    if (string.IsNullOrEmpty(demo.FamilyCode)) demo.FamilyCode = "FAM-DEMO01";
+    db.Entry(demo).State = Microsoft.EntityFrameworkCore.EntityState.Modified;
+    var spouse = db.Users.FirstOrDefault(u => u.Email == "spouse@schitayka.ru");
+    if (spouse is null)
+    {
+        spouse = new User { Email = "spouse@schitayka.ru", Name = "Супруга", PasswordHash = SchitayKa.Api.Controllers.AuthController.HashPassword("spouse123"), FamilyCode = demo.FamilyCode };
+        db.Users.Add(spouse);
+        await db.SaveChangesAsync();
+    }
+    else spouse.FamilyCode = demo.FamilyCode;
+    if (!db.FamilyInvitations.Any(i => i.OwnerUserId == demo.Id))
+        db.FamilyInvitations.Add(new FamilyInvitation
+        {
+            OwnerUserId = demo.Id, Code = "INVITE-SP-01", Email = "spouse@schitayka.ru",
+            ExpiresAt = DateTime.UtcNow.AddDays(7), AcceptedAt = DateTime.UtcNow, AcceptedByUserId = spouse.Id,
+        });
+
+    // Переводы между счетами (пары расход/доход): вклад, погашение кредитки, наличные
+    void Transfer(string comment, decimal amount, Account from, Account to, int day)
+    {
+        db.Transactions.Add(new Transaction { Category = cOther, UserId = demo.Id, Type = TxType.Expense, Amount = amount, Date = m.AddDays(day), Comment = comment, AccountId = from.Id });
+        db.Transactions.Add(new Transaction { Category = cOther, UserId = demo.Id, Type = TxType.Income, Amount = amount, Date = m.AddDays(day), Comment = comment, AccountId = to.Id });
+    }
+    if (!db.Transactions.Any(t => t.UserId == demo.Id && t.Comment.StartsWith("Перевод")))
+    {
+        Transfer("Перевод: пополнение вклада", 20000, aDebit, aDeposit, 6);
+        Transfer("Перевод: погашение кредитной карты", 50000, aDebit, aCredit, 7);
+        Transfer("Перевод: снятие наличных", 5000, aDebit, aCash, 8);
+    }
+
+    await db.SaveChangesAsync();
 }
 
 app.UseSwagger();
