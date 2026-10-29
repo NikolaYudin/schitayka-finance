@@ -80,42 +80,46 @@ function Settings({ auth, categories, onReload }: {
 }) {
   return (
     <>
-      <div className="card">
-        <h3>⚙️ Аккаунт</h3>
-        <table>
-          <tbody>
-            <tr><td><b>Имя</b></td><td>{auth.user?.name}</td></tr>
-            <tr><td><b>Email</b></td><td>{auth.user?.email}</td></tr>
-          </tbody>
-        </table>
-        <StartingBalance auth={auth} />
-        <button className="btn danger-ghost" onClick={auth.logout}>Выйти</button>
-      </div>
-      <CategoriesCard categories={categories} onChanged={() => { onReload(); auth.refresh(); }} />
+      {/* Порядок разделов настроек: 1) Профиль, 2) Семья, 3) Категории */}
+      <ProfileCard auth={auth} />
       <FamilyCard />
+      <CategoriesCard categories={categories} onChanged={() => { onReload(); auth.refresh(); }} />
     </>
   );
 }
 
-// Стартовый баланс — «сколько денег на счетах сейчас», влияет на итоговый баланс в Обзоре
-function StartingBalance({ auth }: { auth: ReturnType<typeof useAuth> }) {
-  const [val, setVal] = useState(String(auth.user?.startingBalance ?? 0));
+// Профиль: имя, email, стартовый баланс, выход
+function ProfileCard({ auth }: { auth: ReturnType<typeof useAuth> }) {
+  const [name, setName] = useState(auth.user?.name ?? '');
+  const [bal, setBal] = useState(String(auth.user?.startingBalance ?? 0));
   const [msg, setMsg] = useState('');
+  const [err, setErr] = useState('');
   const save = async (e: React.FormEvent) => {
-    e.preventDefault(); setMsg('');
+    e.preventDefault(); setMsg(''); setErr('');
     try {
-      await api.post('/api/budget/start-balance', { startingBalance: Number(val.replace(',', '.')) || 0 });
+      await api.post('/api/family/profile', { name: name.trim(), startingBalance: Number(bal.replace(',', '.')) || 0 });
       setMsg('Сохранено ✓'); auth.refresh();
-    } catch (ex: any) { setMsg(ex.message); }
+    } catch (ex: any) { setErr(ex.message); }
   };
   return (
-    <form onSubmit={save} style={{ marginTop: 10 }}>
-      <label>Стартовый баланс на счетах, ₽
-        <input inputMode="decimal" value={val} onChange={e => setVal(e.target.value)} placeholder="0" />
-      </label>
-      {msg && <div className="muted">{msg}</div>}
-      <button className="btn primary small">Сохранить</button>
-    </form>
+    <div className="card">
+      <h3>👤 Профиль</h3>
+      <form onSubmit={save}>
+        <div className="form-row">
+          <label>Имя<input value={name} onChange={e => setName(e.target.value)} required placeholder="Как вас зовут?" /></label>
+          <label>Стартовый баланс на счетах, ₽
+            <input inputMode="decimal" value={bal} onChange={e => setBal(e.target.value)} placeholder="0" />
+          </label>
+        </div>
+        <div className="muted" style={{ margin: '4px 0' }}>Email: {auth.user?.email}</div>
+        {err && <div className="alert">{err}</div>}
+        {msg && <div className="muted">{msg}</div>}
+        <div className="form-row" style={{ gap: 8 }}>
+          <button className="btn primary small">Сохранить профиль</button>
+          <button type="button" className="btn danger-ghost small" onClick={auth.logout}>Выйти</button>
+        </div>
+      </form>
+    </div>
   );
 }
 

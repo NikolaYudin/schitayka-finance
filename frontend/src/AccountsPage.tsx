@@ -203,6 +203,10 @@ export function FamilyCard() {
     api.get<{ familyCode: string | null; members: FamilyMember[] }>('/api/family/members')
       .then(r => { setFamilyCode(r.familyCode); setMembers(r.members); })
       .catch(e => setErr(e.message));
+    // Показываем активный пригласительный код сразу при открытии карточки (если он уже создан)
+    api.get<{ code: string | null; expiresAt: string | null }>('/api/family/status')
+      .then(s => { if (s.code) { setInviteCode(s.code); setExpiresAt(s.expiresAt); } })
+      .catch(() => {});
   };
   useEffect(load, []);
 
@@ -231,6 +235,10 @@ export function FamilyCard() {
     if (inviteCode) navigator.clipboard?.writeText(inviteCode).then(() => setMsg('Код скопирован ✓')).catch(() => {});
   };
 
+  // Я создатель семьи — блок «вступить по коду» не показываем (создатель уже в своей семье)
+  const iAmOwner = !!members && members.some(m => m.isCreator);
+  const showJoinForm = !iAmOwner;
+
   return (
     <div className="card">
       <h3>👨‍👩‍👧 Семья</h3>
@@ -240,7 +248,12 @@ export function FamilyCard() {
           <table>
             <thead><tr><th>Участник</th><th>Email</th></tr></thead>
             <tbody>
-              {members.map(m => <tr key={m.id}><td><b>{m.name}</b></td><td className="muted">{m.email}</td></tr>)}
+              {members.map(m => (
+                <tr key={m.id}>
+                  <td><b>{m.name}</b>{m.isOwner && <span className="muted"> · создатель</span>}</td>
+                  <td className="muted">{m.email}</td>
+                </tr>
+              ))}
             </tbody>
           </table>
           <div className="muted" style={{ margin: '6px 0' }}>Код семьи: {familyCode}</div>
@@ -273,17 +286,21 @@ export function FamilyCard() {
               <button className="btn small" onClick={copy}>копировать</button>
             </div>
           )}
-          <form onSubmit={join} style={{ marginTop: 10 }}>
-            <div className="form-row">
-              <label>У меня есть код
-                <input value={joinCode} onChange={e => setJoinCode(e.target.value)} placeholder="напр. K7M2QX" maxLength={6}
-                  style={{ textTransform: 'uppercase' }} />
-              </label>
-              <button className="btn small" style={{ alignSelf: 'end' }}>Присоединиться</button>
-            </div>
-          </form>
         </>
       )}
+      {/* Модуль «вступить в семью по коду»: доступен всем, кто не является создателем семьи */}
+      {showJoinForm && (
+        <form onSubmit={join} style={{ marginTop: 10 }}>
+          <div className="form-row">
+            <label>У меня есть код
+              <input value={joinCode} onChange={e => setJoinCode(e.target.value)} placeholder="напр. K7M2QX" maxLength={6}
+                style={{ textTransform: 'uppercase' }} />
+            </label>
+            <button className="btn small" style={{ alignSelf: 'end' }}>Присоединиться</button>
+          </div>
+        </form>
+      )}
+      {iAmOwner && <div className="muted" style={{ marginTop: 8 }}>Вы создали эту семью — вступать по коду вам не нужно; приглашайте близких кнопкой выше.</div>}
       {msg && <div className="muted">{msg}</div>}
     </div>
   );

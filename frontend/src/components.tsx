@@ -1,5 +1,55 @@
 import { useEffect, useState } from 'react';
-import { Summary, Category, Tx, TxType, AccountInfo, api, fmt, MONTHS_RU } from './api';
+import { Summary, Category, Tx, TxType, AccountInfo, FamilyBoard, api, fmt, MONTHS_RU } from './api';
+
+const ACC_EMOJI: Record<number, string> = { 0: '💳', 1: '🏦', 2: '💵', 3: '📈', 4: '🧾' };
+
+// ---- Карточка на главной: колонка на пользователя семьи, внутри — счета с балансами ----
+function AccountsBoardCard() {
+  const [board, setBoard] = useState<FamilyBoard | null>(null);
+  const load = () => {
+    api.get<FamilyBoard>('/api/family/family-board').then(setBoard).catch(() => setBoard({ familyCode: null, columns: [] }));
+  };
+  useEffect(load, []);
+  if (!board) return <div className="card muted">Загрузка счетов…</div>;
+  const cols = board.columns;
+  const commonTotal = cols.reduce((s, c) => s + c.totalBalance, 0);
+  return (
+    <div className="card">
+      <h3>💳 Счета{board.familyCode ? ' семьи' : ''}{board.familyCode && <span className="muted"> · код {board.familyCode}</span>}</h3>
+      {cols.length === 0 || cols.every(c => c.accounts.length === 0)
+        ? <div className="muted">Счетов пока нет — добавьте их на странице «Счета».</div> : (
+        <>
+          <div className="board-columns">
+            {cols.map(c => (
+              <div className="board-col" key={c.userId}>
+                <div className="board-col-head">
+                  <b>{c.name}{c.isMe ? ' (вы)' : ''}</b>
+                  {c.isOwner && <span className="badge">создатель</span>}
+                </div>
+                <div className={`board-col-total ${c.totalBalance >= 0 ? 'pos' : 'neg'}`}>{fmt(c.totalBalance)}</div>
+                {c.accounts.length === 0
+                  ? <div className="muted small">нет счетов</div>
+                  : c.accounts.map(a => (
+                    <div className="board-acc" key={a.id} style={{ borderLeftColor: a.color }}>
+                      <span>{ACC_EMOJI[a.type]} {a.name}</span>
+                      <b className={a.type === 1 ? 'neg' : ''}>{fmt(a.balance)}</b>
+                      {a.type === 0 && a.cashbackRate > 0 && <small className="muted">кэшбэк {a.cashbackRate}%</small>}
+                      {a.type === 1 && a.creditLimit > 0 && <small className="muted">лимит {fmt(a.creditLimit)} · доступно {fmt(a.available)}</small>}
+                    </div>
+                  ))}
+              </div>
+            ))}
+          </div>
+          {cols.length > 1 && (
+            <div className={`metric ${commonTotal >= 0 ? 'pos' : 'neg'}`} style={{ marginTop: 8 }}>
+              <span>{fmt(commonTotal)}</span><small>вместе по семье</small>
+            </div>
+          )}
+        </>
+      )}
+    </div>
+  );
+}
 
 // ---- Дашборд: обзор бюджета + анализ + рекомендации ----
 export function Dashboard() {
@@ -25,6 +75,7 @@ export function Dashboard() {
 
   return (
     <>
+      <AccountsBoardCard />
       <div className="metric-box">
         <div className="metric"><span>{fmt(sum.monthIncome)}</span><small>Доход за месяц</small></div>
         <div className="metric"><span>{fmt(sum.monthExpense)}</span><small>Расход за месяц</small></div>

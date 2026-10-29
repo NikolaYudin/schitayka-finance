@@ -1,4 +1,5 @@
 using System.Security.Claims;
+using Microsoft.Extensions.DependencyInjection;
 using SchitayKa.Api.Data;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
@@ -98,11 +99,14 @@ public class TransactionsController : ControllerBase
     // Пересчёт баланса счёта при изменении набора операций.
     // Дебетовые/наличные/вклад: старт + доходы − расходы (+ начисленный кэшбэк).
     // Кредитные: старт = долг; покупки увеличивают долг, погашения — уменьшают.
-    private async Task RecalcAccounts(params int?[] accountIds)
+    private Task RecalcAccounts(params int?[] accountIds) => RecalcAccountsFor(Uid, accountIds);
+
+    // Публичный вариант: пересчёт для произвольного пользователя (используется для семейных операций)
+    public async Task RecalcAccountsFor(int userId, params int?[] accountIds)
     {
         foreach (var id in accountIds.Where(a => a.HasValue).Select(a => a!.Value).Distinct())
         {
-            var acc = await _db.Accounts.FirstOrDefaultAsync(a => a.Id == id && a.UserId == Uid);
+            var acc = await _db.Accounts.FirstOrDefaultAsync(a => a.Id == id && a.UserId == userId);
             if (acc is null) continue;
             var signed = await _db.Transactions.Where(t => t.AccountId == id)
                 .Select(t => new { t.Type, t.Amount }).ToListAsync();

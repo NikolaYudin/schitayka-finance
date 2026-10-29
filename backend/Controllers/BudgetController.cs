@@ -17,6 +17,60 @@ public class BudgetController : ControllerBase
     private int CurrentUserId => UserAccess.UidOf(User);
 
     public record StartBalanceDto(decimal StartingBalance);
+    public record TxCreateDto(int CategoryId, TxType Type, decimal Amount, DateOnly? Date, string? Comment, int? AccountId, int? ForUserId);
+
+    // Создать операцию для члена семьи (доступно только владельцу семейной группы)
+    [HttpPost("tx-for")]
+    public async Task<IActionResult> CreateTxForFamily(TxCreateDto dto)
+    {
+        var uid = CurrentUserId;
+        if (dto.Amount <= 0) return BadRequest(new { error = "Сумма должна быть больше нуля" });
+        var me = await _db.Users.FindAsync(uid);
+        if (me is null || string.IsNullOrEmpty(me.FamilyCode))
+            return BadRequest(new { error = "Вы не в семье" });
+        // Владелец группы: тот, кто создавал приглашения (есть FamilyInvitations с OwnerUserId) либо первый участник
+        var isOwner = await _db.FamilyInvitations.AnyAsync(i => i.OwnerUserId == uid && i.AcceptedAt != null);
+        if (!isOwner)
+        {
+            var firstMemberId = await _db.Users.Where(u => u.FamilyCode == me.FamilyCode).OrderBy(u => u.Id).Select(u => (int?)u.Id).FirstOrDefaultAsync();
+            isOwner = firstMemberId == uid;
+        }
+        if (!isOwner) return Forbid();
+        var target = await _db.Users.FirstOrDefaultAsync(u => u.Id == dto.ForUserId && u.FamilyCode == me.FamilyCode);
+        if (target is null) return BadRequest(new { error = "Пользователь не найден в вашей семье" });
+
+        var cat = await _db.Categories.FirstOrDefaultAsync(c => c.Id == dto.CategoryId && c.UserId == target.Id);
+        if (cat is null) return BadRequest(new { error = "Категория не найдена у этого пользователя" });
+        if (cat.Type != dto.Type) return BadRequest(new { error = "Тип операции не совпадает с категорией" });
+
+        int? accId = dto.AccountId ?? (await _db.Accounts.FirstOrDefaultAsync(a => a.UserId == target.Id && !a.IsArchived))?.Id;
+        if (accId.HasValue)
+        {
+            var acc = await _db.Accounts.FirstOrDefaultAsync(a => a.Id == accId.Value && a.UserId == target.Id && !a.IsArchived);
+            if (acc is null) return BadRequest(new { error = "Счёт не найден у этого пользователя" });
+        }
+        var tx = new Transaction
+        {
+            UserId = target.Id,
+            CategoryId = dto.CategoryId,
+            Type = dto.Type,
+            Amount = dto.Amount,
+            Date = dto.Date ?? DateOnly.FromDateTime(DateTime.Today),
+            Comment = dto.Comment?.Trim() ?? "",
+            AccountId = accId,
+        };
+        _db.Transactions.Add(tx);
+        await _db.SaveChangesAsync();
+        // Пересчёт баланса счёта получателя через логику TransactionsController
+        if (tx.AccountId is { } txAccId)
+        {
+            using var scope = HttpContext.RequestServices.CreateScope();
+            var txCtrl = scope.ServiceProvider.GetRequiredService<TransactionsController>();
+            await txCtrl.RecalcAccountsFor(target.Id, txAccId);
+            await _db.SaveChangesAsync();
+        }
+        return Ok(new { tx.Id });
+    }
 
     // Установить стартовый баланс («сколько денег на счетах сейчас»)
     [HttpPost("start-balance")]

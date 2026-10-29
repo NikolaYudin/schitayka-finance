@@ -43,7 +43,7 @@ export const api = {
 // ---- Типы ----
 export type TxType = 0 | 1; // 0 = доход, 1 = расход
 
-export interface UserInfo { id: number; email: string; name: string; startingBalance?: number; }
+export interface UserInfo { id: number; email: string; name: string; startingBalance?: number; familyCode?: string | null; }
 export interface Category { id: number; name: string; type: TxType; color: string; isSystem?: boolean; }
 export interface Tx {
   id: number; categoryId: number; type: TxType; amount: number; date: string;
@@ -56,7 +56,12 @@ export interface AccountInfo {
   creditLimit: number; cashbackRate: number; cashbackAccrued: number; color: string;
   isArchived: boolean; available: number; creditUsagePct: number | null;
 }
-export interface FamilyMember { id: number; name: string; email: string; }
+export interface FamilyMember { id: number; name: string; email: string; isOwner?: boolean; isCreator?: boolean; }
+export interface FamilyBoardColumn {
+  userId: number; name: string; email: string; isOwner: boolean; isMe: boolean;
+  totalBalance: number; accounts: AccountInfo[];
+}
+export interface FamilyBoard { familyCode: string | null; columns: FamilyBoardColumn[]; }
 export interface Goal {
   id: number; name: string; targetAmount: number; currentAmount: number;
   deadline: string | null; progress: number; monthsLeft: number | null; perMonth: number | null;

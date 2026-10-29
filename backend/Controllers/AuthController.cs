@@ -9,7 +9,7 @@ using Microsoft.IdentityModel.Tokens;
 
 namespace SchitayKa.Api.Controllers;
 
-public record RegisterDto(string Email, string Password, string Name);
+public record RegisterDto(string Email, string Password, string Name, string? InviteCode = null);
 public record LoginDto(string Email, string Password);
 
 [ApiController]
@@ -69,9 +69,30 @@ public class AuthController : ControllerBase
 
         // Стартовые категории для нового пользователя
         SeedCategories.SeedForUser(_db, user.Id);
+
+        // Регистрация по пригласительному коду семьи (необязательно): новый аккаунт сразу присоединяется к семье
+        string? joinedFamily = null;
+        var inviteCode = (dto.InviteCode ?? "").Trim().ToUpperInvariant();
+        if (inviteCode.Length > 0)
+        {
+            var invite = await _db.FamilyInvitations.FirstOrDefaultAsync(i => i.Code == inviteCode && i.AcceptedAt == null);
+            if (invite is not null && invite.ExpiresAt > DateTime.UtcNow)
+            {
+                var owner = await _db.Users.FindAsync(invite.OwnerUserId);
+                if (owner is not null && !string.IsNullOrEmpty(owner.FamilyCode))
+                {
+                    user.FamilyCode = owner.FamilyCode;
+                    invite.AcceptedAt = DateTime.UtcNow;
+                    invite.AcceptedByUserId = user.Id;
+                    joinedFamily = owner.FamilyCode;
+                }
+            }
+            // Неверный/просроченный код не блокирует регистрацию — пользователь просто останется без семьи.
+        }
+
         await _db.SaveChangesAsync();
 
-        return Ok(new { token = BuildJwt(user), user = new { user.Id, user.Email, user.Name } });
+        return Ok(new { token = BuildJwt(user), user = new { user.Id, user.Email, user.Name }, familyCode = joinedFamily });
     }
 
     [HttpPost("login")]
@@ -91,7 +112,7 @@ public class AuthController : ControllerBase
         var uid = int.Parse(User.FindFirstValue(ClaimTypes.NameIdentifier)!);
         var user = await _db.Users.FindAsync(uid);
         if (user is null) return Unauthorized();
-        return Ok(new { user.Id, user.Email, user.Name, user.StartingBalance });
+        return Ok(new { user.Id, user.Email, user.Name, user.StartingBalance, user.FamilyCode });
     }
 
     // ---------- Яндекс OAuth (authorization code flow, server-side) ----------

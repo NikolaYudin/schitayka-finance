@@ -264,6 +264,7 @@ var NewTableCols = new (string Table, (string Col, string Def)[] Cols)[]
         ("Name", "TEXT NOT NULL"),
         ("Type", "INTEGER NOT NULL"),
         ("StartingBalance", "TEXT NOT NULL"),
+        ("Balance", "TEXT NOT NULL DEFAULT '0'"),
         ("CreditLimit", "TEXT NOT NULL DEFAULT '0'"),
         ("CashbackRate", "TEXT NOT NULL DEFAULT '0'"),
         ("CashbackAccrued", "TEXT NOT NULL DEFAULT '0'"),
@@ -403,16 +404,53 @@ if (!File.Exists(dbPath))
     using var initCtx = new AppDbContext(opts);
     initCtx.Database.EnsureCreated();
 }
-else
+
+// Идемпотентная «починка» схемы для баз, созданных в разных версиях приложения:
+// недостающие таблицы и колонки добавляются прямым SQL (данные сохраняются).
+void RepairSchema(AppDbContext ctx)
 {
-    // База есть: убедимся, что демо-аккаунт существует (мог быть потерян при удалении bin-копии).
-    var opts = new DbContextOptionsBuilder<AppDbContext>().UseSqlite(connStr).Options;
-    using var checkCtx = new AppDbContext(opts);
+    void Exec(string sql)
+    {
+        try
+        {
+            var conn = ctx.Database.GetDbConnection();
+            if (conn.State != System.Data.ConnectionState.Open) conn.Open();
+            using var cmd = conn.CreateCommand();
+            cmd.CommandText = sql;
+            cmd.ExecuteNonQuery();
+        }
+        catch (Microsoft.Data.Sqlite.SqliteException ex)
+        {
+            Console.WriteLine($"[SchitayKa] repair skip: {ex.Message}");
+        }
+    }
+    // Колонки актуальной модели EF — точечно долечиваем старые базы вместо пересоздания.
+    foreach (var (t, c, def) in AddCols)
+        Exec($"ALTER TABLE \"{t}\" ADD COLUMN \"{c}\" {def};");
+    foreach (var nt in NewTableCols)
+    {
+        var cols = string.Join(", ", nt.Cols.Select(c => $"\"{c.Col}\" {c.Def}"));
+        Exec($"CREATE TABLE IF NOT EXISTS \"{nt.Table}\" ({cols});");
+        // Таблица могла существовать в старом формате без части колонок.
+        foreach (var (c, def) in nt.Cols.Where(c => c.Col != "Id"))
+            Exec($"ALTER TABLE \"{nt.Table}\" ADD COLUMN \"{c}\" {def};");
+    }
+    Exec("CREATE UNIQUE INDEX IF NOT EXISTS \"IX_FamilyInvitations_Code\" ON \"FamilyInvitations\" (\"Code\");");
+    Exec("CREATE INDEX IF NOT EXISTS \"IX_Accounts_UserId\" ON \"Accounts\" (\"UserId\");");
+}
+
+using (var fixCtx = new AppDbContext(new DbContextOptionsBuilder<AppDbContext>().UseSqlite(connStr).Options))
+    RepairSchema(fixCtx);
+
+using (var checkCtx = new AppDbContext(new DbContextOptionsBuilder<AppDbContext>().UseSqlite(connStr).Options))
+{
+    // Убедимся, что демо-аккаунт существует (мог быть потерян при удалении bin-копии или пересоздании).
     if (!checkCtx.Users.Any(u => u.Email == "demo@schitayka.ru"))
     {
         Console.WriteLine("[SchitayKa] В основной базе нет демо-аккаунта — пересоздаю её с чистым сидом ...");
         checkCtx.Database.EnsureDeleted();
         checkCtx.Database.EnsureCreated();
+        RepairSchema(checkCtx);
     }
 }
 
@@ -467,12 +505,14 @@ using (var scope = app.Services.CreateScope())
     {
         // Демо есть — при необходимости дозаполняем демо-контент (счета/семья/переводы),
         // если база была создана более старым сидом.
-        if (!db.Accounts.Any(a => a.UserId == demoUser.Id) || !db.FamilyInvitations.Any(i => i.OwnerUserId == demoUser.Id))
+        if (!db.Accounts.Any(a => a.UserId == demoUser.Id)
+            || !db.FamilyInvitations.Any(i => i.OwnerUserId == demoUser.Id && i.AcceptedAt != null)
+            || !db.FamilyInvitations.Any(i => i.OwnerUserId == demoUser.Id && i.AcceptedAt == null && i.ExpiresAt > DateTime.UtcNow))
         {
             Console.WriteLine("[SchitayKa] Демо-аккаунт найден, но демо-контент неполный — дозаполняю ...");
             await SeedDemoDataAsync(db, demoUser);
         }
-        Console.WriteLine("[SchitayKa] Демо-аккаунт готов: demo@schitayka.ru / demo123 (семья: spouse@schitayka.ru / spouse123)");
+        Console.WriteLine("[SchitayKa] Демо-аккаунт готов: demo@schitayka.ru / demo123 (семья: spouse@schitayka.ru / spouse123). Активный пригласительный код: FAM2026");
     }
     else
     {
@@ -584,12 +624,50 @@ async Task SeedDemoDataAsync(AppDbContext db, User demo)
         await db.SaveChangesAsync();
     }
     else spouse.FamilyCode = demo.FamilyCode;
-    if (!db.FamilyInvitations.Any(i => i.OwnerUserId == demo.Id))
+    // Два приглашения: принятое (история) и активное — чтобы в демо можно было попробовать «вступить по коду»
+    if (!db.FamilyInvitations.Any(i => i.OwnerUserId == demo.Id && i.AcceptedAt != null))
         db.FamilyInvitations.Add(new FamilyInvitation
         {
             OwnerUserId = demo.Id, Code = "INVITE-SP-01", Email = "spouse@schitayka.ru",
             ExpiresAt = DateTime.UtcNow.AddDays(7), AcceptedAt = DateTime.UtcNow, AcceptedByUserId = spouse.Id,
         });
+    var activeInvite = db.FamilyInvitations.FirstOrDefault(i => i.OwnerUserId == demo.Id && i.AcceptedAt == null);
+    if (activeInvite is null)
+    {
+        activeInvite = new FamilyInvitation
+        {
+            OwnerUserId = demo.Id, Code = "FAM2026", Email = "родственникам",
+            CreatedAt = DateTime.UtcNow, ExpiresAt = DateTime.UtcNow.AddDays(30),
+        };
+        db.FamilyInvitations.Add(activeInvite);
+    }
+    else
+    {
+        // Держим активный демо-код всегда рабочим: обновляем срок, при необходимости — код
+        // (уникальность Code в БД может мешать выставить FAM2026 — тогда оставляем существующий).
+        activeInvite.ExpiresAt = DateTime.UtcNow.AddDays(30);
+        if (activeInvite.Code != "FAM2026" && !db.FamilyInvitations.Any(i => i.Code == "FAM2026"))
+            activeInvite.Code = "FAM2026";
+        db.Entry(activeInvite).State = Microsoft.EntityFrameworkCore.EntityState.Modified;
+    }
+
+    // Счета супруги (дебетовая карта + наличные), чтобы на главной была видна колонка второго пользователя
+    var spAccounts = db.Accounts.Where(a => a.UserId == spouse.Id).ToList();
+    Account? SpByName(string n) => spAccounts.FirstOrDefault(a => a.Name == n);
+    var spCard = SpByName("Карта супруги") ?? new Account { UserId = spouse.Id, Name = "Карта супруги", Type = AccountType.DebitCard, StartingBalance = 25000, CashbackRate = 5, Color = "#dd6b20" };
+    var spCash = SpByName("Наличные (семья)") ?? new Account { UserId = spouse.Id, Name = "Наличные (семья)", Type = AccountType.Cash, StartingBalance = 4000, Color = "#38a169" };
+    var spToAdd = new[] { spCard, spCash }.Where(a => a.Id == 0).ToList();
+    if (spToAdd.Count > 0) { db.Accounts.AddRange(spToAdd); await db.SaveChangesAsync(); }
+    var spCats = db.Categories.Where(c => c.UserId == spouse.Id).ToList();
+    var spProducts = spCats.FirstOrDefault(c => c.Type == TxType.Expense) ?? cProducts;
+    var spIncome = spCats.FirstOrDefault(c => c.Type == TxType.Income) ?? cZarplata;
+    if (!db.Transactions.Any(t => t.UserId == spouse.Id))
+    {
+        db.Transactions.AddRange(
+            new Transaction { Category = spIncome, UserId = spouse.Id, Type = TxType.Income, Amount = 60000, Date = m, Comment = "Зарплата", AccountId = spCard.Id },
+            new Transaction { Category = spProducts, UserId = spouse.Id, Type = TxType.Expense, Amount = 7800, Date = m.AddDays(2), Comment = "Продукты", AccountId = spCard.Id },
+            new Transaction { Category = spProducts, UserId = spouse.Id, Type = TxType.Expense, Amount = 1500, Date = m.AddDays(4), Comment = "Кafe с подругами", AccountId = spCash.Id });
+    }
 
     // Переводы между счетами (пары расход/доход): вклад, погашение кредитки, наличные
     void Transfer(string comment, decimal amount, Account from, Account to, int day)
