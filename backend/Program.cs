@@ -7,6 +7,146 @@ using System.Text.Json.Serialization;
 
 var builder = WebApplication.CreateBuilder(args);
 
+// --- Автосборка фронтенда при старте ---
+// backend/wwwroot пересобирается сам, если его нет или исходники frontend/ новее бандла.
+// Выполняется ДО создания приложения, чтобы сервер всегда отдавал актуальный index.html.
+// Отключается переменной окружения SCHITAYKA_AUTOBUILD_FRONTEND=false (или 0).
+static void EnsureFrontendBuilt()
+{
+    try
+    {
+        var flag = Environment.GetEnvironmentVariable("SCHITAYKA_AUTOBUILD_FRONTEND");
+        if (string.Equals(flag, "false", StringComparison.OrdinalIgnoreCase) || flag == "0") return;
+
+        // frontend/ ищём рядом с папкой проекта/бинарников (VS запускает из bin/Debug/net8.0)
+        string[] bases = { AppContext.BaseDirectory, Directory.GetCurrentDirectory() };
+        string? frontendDir = null, wwwrootDir = null;
+        foreach (var b in bases)
+        {
+            var dir = new DirectoryInfo(b);
+            for (int depth = 0; dir != null && depth < 6; depth++, dir = dir.Parent)
+            {
+                var fe = Path.Combine(dir.FullName, "frontend", "package.json");
+                var wr = Path.Combine(dir.FullName, "backend", "wwwroot", "index.html");
+                if (File.Exists(fe)) { frontendDir = Path.Combine(dir.FullName, "frontend"); break; }
+            }
+            if (frontendDir is not null)
+            {
+                var root = Directory.GetParent(frontendDir)!.FullName;
+                wwwrootDir = Path.Combine(root, "backend", "wwwroot");
+                break;
+            }
+        }
+        if (frontendDir is null) return; // структура проекта не найдена — молча пропускаем
+
+        // Нужна ли сборка: нет бандла ИЛИ любой исходник/конфиг свежее index.html
+        var indexPath = Path.Combine(wwwrootDir!, "index.html");
+        bool needsBuild = !File.Exists(indexPath);
+        DateTime lastWrite = DateTime.MinValue;
+        if (!needsBuild)
+        {
+            lastWrite = File.GetLastWriteTimeUtc(indexPath);
+            var srcDir = Path.Combine(frontendDir, "src");
+            IEnumerable<string> files = Enumerable.Empty<string>();
+            if (Directory.Exists(srcDir))
+                files = Directory.EnumerateFiles(srcDir, "*.*", SearchOption.AllDirectories);
+            files = files.Concat(new[]
+            {
+                Path.Combine(frontendDir, "index.html"),
+                Path.Combine(frontendDir, "package.json"),
+                Path.Combine(frontendDir, "vite.config.ts"),
+                Path.Combine(frontendDir, "tsconfig.json"),
+            });
+            foreach (var f in files)
+            {
+                try { if (File.GetLastWriteTimeUtc(f) > lastWrite) { needsBuild = true; break; } } catch { }
+            }
+        }
+        if (!needsBuild) return;
+
+        // npm должен быть в PATH
+        static bool Have(string exe)
+        {
+            var sep = OperatingSystem.IsWindows() ? ';' : ':';
+            var name = OperatingSystem.IsWindows() ? exe + ".cmd" : exe;
+            foreach (var p in (Environment.GetEnvironmentVariable("PATH") ?? "").Split(sep))
+            {
+                if (p.Trim().Length == 0) continue;
+                try { if (File.Exists(Path.Combine(p.Trim(), name))) return true; } catch { }
+            }
+            return false;
+        }
+        if (!Have("npm"))
+        {
+            Console.WriteLine("[SchitayKa] npm не найден в PATH — автосборка фронтенда пропущена.");
+            return;
+        }
+
+        var nodeModules = Path.Combine(frontendDir, "node_modules");
+        var pkgLock = Path.Combine(frontendDir, "package-lock.json");
+        bool depsOk = Directory.Exists(nodeModules)
+            && (!File.Exists(pkgLock)
+                || Directory.GetFileSystemEntries(nodeModules).Length > 0
+                   && File.GetLastWriteTimeUtc(pkgLock) <= File.GetLastWriteTimeUtc(Path.Combine(nodeModules, ".package-lock.json")));
+        // Если package-lock новее установленного .package-lock.json — досстанавливаем зависимости
+        var innerLock = Path.Combine(nodeModules, ".package-lock.json");
+        if (depsOk && File.Exists(pkgLock) && File.Exists(innerLock)
+            && File.GetLastWriteTimeUtc(pkgLock) > File.GetLastWriteTimeUtc(innerLock))
+            depsOk = false;
+
+        Console.WriteLine($"[SchitayKa] Frontend устарел — собираю автоматически ({frontendDir})...");
+        static int RunNpm(string args, string workDir)
+        {
+            var psi = new System.Diagnostics.ProcessStartInfo
+            {
+                FileName = OperatingSystem.IsWindows() ? "cmd.exe" : "/bin/sh",
+                WorkingDirectory = workDir,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                UseShellExecute = false,
+                CreateNoWindow = true,
+            };
+            if (OperatingSystem.IsWindows()) { psi.Arguments = "/c npm " + args; }
+            else { psi.ArgumentList.Add("-c"); psi.ArgumentList.Add("npm " + System.Text.RegularExpressions.Regex.Replace(args, "\"([^\" ]+)\"", "'$1'")); }
+            using var proc = System.Diagnostics.Process.Start(psi)!;
+            var stdoutTask = proc.StandardOutput.ReadToEndAsync();
+            var stderrTask = proc.StandardError.ReadToEndAsync();
+            if (!proc.WaitForExit(300_000))
+            {
+                try { proc.Kill(entireProcessTree: true); } catch { }
+                Console.WriteLine("[SchitayKa] npm " + args + ": превышен таймаут 5 мин.");
+                return -1;
+            }
+            var outp = stdoutTask.GetAwaiter().GetResult();
+            var errp = stderrTask.GetAwaiter().GetResult();
+            var tail = string.Join(Environment.NewLine,
+                (outp + Environment.NewLine + errp).Split('\n')
+                    .Where(l => l.Trim().Length > 0).TakeLast(8));
+            Console.WriteLine(tail);
+            return proc.ExitCode;
+        }
+
+        if (!depsOk)
+        {
+            Console.WriteLine("[SchitayKa] Устанавливаю зависимости (npm install)...");
+            if (RunNpm("install", frontendDir) != 0)
+            {
+                Console.WriteLine("[SchitayKa] WARNING: npm install завершился с ошибкой — использую текущий wwwroot.");
+                return;
+            }
+        }
+        if (RunNpm("run build", frontendDir) != 0)
+            Console.WriteLine("[SchitayKa] WARNING: npm run build завершился с ошибкой — использую текущий wwwroot.");
+        else
+            Console.WriteLine("[SchitayKa] Фронтенд собран в backend/wwwroot.");
+    }
+    catch (Exception ex)
+    {
+        Console.WriteLine($"[SchitayKa] Автосборка фронтенда пропущена: {ex.Message}");
+    }
+}
+EnsureFrontendBuilt();
+
 // Ключ JWT: из конфигурации, либо сгенерированный при старте (dev)
 var jwtKey = builder.Configuration["Jwt:Key"];
 if (string.IsNullOrEmpty(jwtKey))
