@@ -27,14 +27,6 @@ var connStr = builder.Configuration.GetConnectionString("Default");
 if (string.IsNullOrEmpty(connStr) || connStr.Contains("Data Source=data/app.db"))
     connStr = $"Data Source={dbPath}";
 
-// --- Конечная защита от устаревших копий БД (NET "no such column: FamilyCode") ---
-// Если в конфигурации указан относительный путь "data/app.db" — всегда переписываем его
-// на абсолютный <папка проекта>/data/app.db. Это гарантирует, что и EF, и raw-SQLite
-// проверка ниже работают с ОДНИМ и тем же файлом, независимо от текущей папки процесса
-// (Visual Studio запускает сервер из bin\Debug\net8.0).
-if (connStr.Contains("Data Source=data/app.db"))
-    connStr = $"Data Source={dbPath}";
-
 // --- Жёсткая самонастройка схемы: демо работает ВСЕГДА ---
 // Проверка выполняется ДО регистрации DbContext и до первого подключения EF,
 // чтобы исключаемые SqliteException не всплывали в отладчике Visual Studio
@@ -56,9 +48,43 @@ string? SqliteError(string path, string sql)
     catch (Microsoft.Data.Sqlite.SqliteException ex) { return ex.SqliteErrorCode == 1 ? ex.Message : null; }
 }
 
+// DDL недостающих таблиц — совпадает с EF-моделью (sqlite-типы как генерирует EnsureCreated)
+var TableDdls = new (string Table, string Ddl)[]
+{
+    ("Accounts", @"CREATE TABLE IF NOT EXISTS ""Accounts"" (
+        ""Id"" INTEGER NOT NULL CONSTRAINT ""PK_Accounts"" PRIMARY KEY AUTOINCREMENT,
+        ""UserId"" INTEGER NOT NULL,
+        ""Name"" TEXT NOT NULL,
+        ""Type"" INTEGER NOT NULL,
+        ""StartingBalance"" TEXT NOT NULL,
+        ""CreditLimit"" TEXT NOT NULL DEFAULT '0',
+        ""CashbackRate"" TEXT NOT NULL DEFAULT '0',
+        ""CashbackAccrued"" TEXT NOT NULL DEFAULT '0',
+        ""Color"" TEXT NULL,
+        ""IsArchived"" INTEGER NOT NULL DEFAULT 0,
+        ""CreatedAt"" TEXT NOT NULL NOT NULL,
+        CONSTRAINT ""FK_Accounts_Users_UserId"" FOREIGN KEY (""UserId"") REFERENCES ""Users"" (""Id"") ON DELETE CASCADE);"),
+    ("FamilyInvitations", @"CREATE TABLE IF NOT EXISTS ""FamilyInvitations"" (
+        ""Id"" INTEGER NOT NULL CONSTRAINT ""PK_FamilyInvitations"" PRIMARY KEY AUTOINCREMENT,
+        ""OwnerUserId"" INTEGER NOT NULL,
+        ""Code"" TEXT NOT NULL,
+        ""Email"" TEXT NULL,
+        ""CreatedAt"" TEXT NOT NULL NOT NULL,
+        ""ExpiresAt"" TEXT NOT NULL,
+        ""AcceptedAt"" TEXT NULL,
+        ""AcceptedByUserId"" INTEGER NULL,
+        CONSTRAINT ""FK_FamilyInvitations_Users_OwnerUserId"" FOREIGN KEY (""OwnerUserId"") REFERENCES ""Users"" (""Id"") ON DELETE CASCADE);"),
+};
+
 void EnsureSchemaOk(string path)
 {
     if (!File.Exists(path)) return; // база будет создана EnsureCreated() с актуальной схемой
+    try { EnsureSchemaOkCore(path); }
+    catch (Exception ex) { Console.WriteLine($"[SchitayKa] Не удалось починить схему {path}: {ex.Message}"); }
+}
+
+void EnsureSchemaOkCore(string path)
+{
 
     // 1) Мелкие расхождения лечим на месте: недостающие колонки добавляем через ALTER TABLE,
     //    данные пользователя при этом СОХРАНЯЮТСЯ (например, старый app.db без FamilyCode).
@@ -69,6 +95,8 @@ void EnsureSchemaOk(string path)
     };
     foreach (var (table, col, def) in addCols)
     {
+        // Таблицы может ещё не существовать (создадим на шаге 2) — тогда пропускаем ALTER.
+        if (SqliteError(path, $"SELECT 1 FROM \"{table}\" LIMIT 1;") is not null) continue;
         var err = SqliteError(path, $"SELECT \"{col}\" FROM \"{table}\" LIMIT 1;");
         if (err is not null && err.Contains("no such column"))
         {
@@ -81,24 +109,60 @@ void EnsureSchemaOk(string path)
         }
     }
 
-    // 2) Проверяем остаточную схему; если по-прежнему устаревшая — пересоздаём копию с нуля.
+    // 2) Недостающие таблицы создаём по DDL актуальной модели (данные сохраняются).
+    foreach (var (table, ddl) in TableDdls)
+    {
+        if (SqliteError(path, $"SELECT 1 FROM \"{table}\" LIMIT 1;") is null) continue;
+        using var conn = new Microsoft.Data.Sqlite.SqliteConnection($"Data Source={path};Pooling=False");
+        conn.Open();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = ddl;
+        cmd.ExecuteNonQuery();
+        Console.WriteLine($"[SchitayKa] Схема обновлена на месте: создана таблица {table} (данные сохранены)");
+    }
+
+    // 3) Если после всех починок схема всё ещё не читается — крайний случай: пересоздаём копию с нуля.
     var checks = new[] { "SELECT FamilyCode FROM Users LIMIT 1;", "SELECT 1 FROM Accounts LIMIT 1;", "SELECT 1 FROM FamilyInvitations LIMIT 1;" };
     var bad = checks.Select(c => SqliteError(path, c)).FirstOrDefault(e => e is not null);
     if (bad is not null)
     {
-        Console.WriteLine($"[SchitayKa] Устаревшая схема БД ({bad}) — пересоздаю {path} ...");
+        Console.WriteLine($"[SchitayKa] Невосстановимая схема БД ({bad}) — пересоздаю {path} ...");
         using (var poolConn = new Microsoft.Data.Sqlite.SqliteConnection($"Data Source={path}"))
             Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools();
         File.Delete(path);
         foreach (var sidecar in new[] { path + "-shm", path + "-wal" })
             if (File.Exists(sidecar)) File.Delete(sidecar);
+        return;
     }
+
+    // 4) Схема актуальна, но база могла быть создана старым приложением без демо-пользователя.
+    //    Добавляем демо-аккаунт на месте (BCrypt-хэш пароля), остальной демо-контент досеет Program ниже.
+    try
+    {
+        using var conn = new Microsoft.Data.Sqlite.SqliteConnection($"Data Source={path};Pooling=False");
+        conn.Open();
+        using var q = conn.CreateCommand();
+        q.CommandText = "SELECT COUNT(*) FROM Users WHERE Email='demo@schitayka.ru';";
+        if (Convert.ToInt64(q.ExecuteScalar()) == 0)
+        {
+            using var ins = conn.CreateCommand();
+            ins.CommandText = @"INSERT INTO Users (Email, Name, PasswordHash, StartingBalance, FamilyCode, CreatedAt)
+VALUES ('demo@schitayka.ru', 'Демо-пользователь', @h, '45000', NULL, datetime('now'));";
+            ins.Parameters.AddWithValue("@h", SchitayKa.Api.Controllers.AuthController.HashPassword("demo123"));
+            ins.ExecuteNonQuery();
+            Console.WriteLine("[SchitayKa] Демо-аккаунт добавлен в существующую базу (данные пользователя сохранены)");
+        }
+    }
+    catch (Exception ex) { Console.WriteLine($"[SchitayKa] Не удалось добавить демо-аккаунт: {ex.Message}"); }
 }
 
-foreach (var copy in new[] { dbPath, Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "data", "app.db")) }
-        .Distinct(StringComparer.OrdinalIgnoreCase).Where(File.Exists))
+// Если базы вообще нет — создаём её сразу (через отдельный контекст, без пула EF-хэндлов
+// в main-контексте). Позднейший db.Database.EnsureCreated() увидит готовый файл и ничего не сделает.
+if (!File.Exists(dbPath))
 {
-    EnsureSchemaOk(copy);
+    var opts = new DbContextOptionsBuilder<AppDbContext>().UseSqlite(connStr).Options;
+    using var initCtx = new AppDbContext(opts);
+    initCtx.Database.EnsureCreated();
 }
 
 builder.Services.AddDbContext<AppDbContext>(o => o.UseSqlite(connStr));
@@ -132,9 +196,20 @@ using (var scope = app.Services.CreateScope())
     var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
 
     // --- Самовосстановление: демо работает ВСЕГДА ---
-    // Копии БД с устаревшей схемой уже пересозданы ДО регистрации DbContext
-    // (см. начало файла) — здесь только создаём базу при её отсутствии.
+    // 1) Если базы нет — EnsureCreated создаёт её сразу с актуальной схемой.
     db.Database.EnsureCreated();
+    // 2) Если база есть со СТАРОЙ схемой — EnsureCreated её молча оставляет как есть,
+    //    поэтому чиним схему НА МЕСТЕ (ALTER TABLE / CREATE TABLE), данные сохраняются.
+    //    Вызываем после EnsureCreated: к этому моменту EF ещё не выполнял ни одного
+    //    запроса к Users, а значит отладчик VS не покажет «первое исключение».
+    foreach (var copy in new[] { dbPath, Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "data", "app.db")) }
+            .Distinct(StringComparer.OrdinalIgnoreCase))
+    {
+        EnsureSchemaOk(copy);
+    }
+    // 3) Схема могла измениться извне — сбрасываем пулы соединений EF, чтобы следующие
+    //    запросы использовали свежие sqlite-хэндлы.
+    Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools();
 
     var demoUser = db.Users.FirstOrDefault(u => u.Email == "demo@schitayka.ru");
     if (demoUser is not null)
