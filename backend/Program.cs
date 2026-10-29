@@ -171,6 +171,27 @@ static void EnsureFrontendBuilt()
 }
 EnsureFrontendBuilt();
 
+// wwwroot мог отсутствовать до автосборки выше — статические веб-ассеты ASP.NET Core
+// падают с DirectoryNotFoundException, если папки нет на момент CreateBuilder.
+// Гарантируем её существование (в dev-режиме содержимое отдаётся ручным обработчиком).
+try
+{
+    var wrProbe = Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "wwwroot");
+    if (!Directory.Exists(wrProbe))
+    {
+        // ищем папку проекта так же, как в EnsureFrontendBuilt
+        foreach (var b in new[] { AppContext.BaseDirectory, Directory.GetCurrentDirectory() })
+        {
+            var d = new DirectoryInfo(b);
+            for (int i = 0; d != null && i < 6; i++, d = d.Parent)
+                if (Directory.Exists(Path.Combine(d.FullName, "backend", "wwwroot")) || File.Exists(Path.Combine(d.FullName, "backend", "SchitayKa.Api.csproj")))
+                { Directory.CreateDirectory(Path.Combine(d.FullName, "backend", "wwwroot")); break; }
+        }
+        Directory.CreateDirectory(Path.Combine(builder.Environment.ContentRootPath, "wwwroot"));
+    }
+}
+catch { }
+
 // Ключ JWT: из конфигурации, либо сгенерированный при старте (dev)
 var jwtKey = builder.Configuration["Jwt:Key"];
 if (string.IsNullOrEmpty(jwtKey))
