@@ -50,7 +50,7 @@ public class AccountsController : ControllerBase
     private static object Project(Account a) => new
     {
         a.Id, a.Name, a.Type, typeName = AccountTypeNames.Ru(a.Type),
-        a.Balance, a.CreditLimit, a.CashbackRate, a.CashbackAccrued, a.Color, a.IsArchived,
+        a.Balance, a.StartingBalance, a.CreditLimit, a.CashbackRate, a.CashbackAccrued, a.Color, a.IsArchived,
         // полезная информация для карточки счёта
         available = a.Type == AccountType.CreditCard && a.CreditLimit > 0
             ? Math.Max(0, a.CreditLimit - a.Balance) : (a.Type == AccountType.CreditCard ? 0 : a.Balance),

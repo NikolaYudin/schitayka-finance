@@ -1,15 +1,17 @@
 import { useEffect, useState } from 'react';
 import { useAuth } from './auth';
-import { api, Category } from './api';
+import { api, Category, AccountInfo } from './api';
 import LoginPage from './LoginPage';
 import { Dashboard, Journal, QuickTxModal } from './components';
 import { GoalsPage } from './GoalsPage';
+import { AccountsPage } from './AccountsPage';
+import { FamilyCard } from './AccountsPage';
 
-type Route = '' | 'journal' | 'goals' | 'settings' | 'login';
+type Route = '' | 'journal' | 'accounts' | 'goals' | 'settings' | 'login';
 function useHashRoute(): [Route, (r: Route) => void] {
   const parse = (): Route => {
     const h = location.hash.replace(/^#\/?/, '').split('?')[0];
-    return (h === 'journal' || h === 'goals' || h === 'settings' || h === 'login') ? h : '';
+    return (h === 'journal' || h === 'accounts' || h === 'goals' || h === 'settings' || h === 'login') ? h : '';
   };
   const [route, setRoute] = useState<Route>(parse);
   useEffect(() => {
@@ -25,12 +27,16 @@ export default function App() {
   const [route, go] = useHashRoute();
   const [showQuick, setShowQuick] = useState(false);
   const [cats, setCats] = useState<Category[]>([]);
+  const [accounts, setAccounts] = useState<AccountInfo[]>([]);
   const [tick, setTick] = useState(0); // перезагрузка дашборда после сохранения
 
-  // Категории для быстрой операции
+  // Категории и счета для быстрой операции
   useEffect(() => {
-    if (auth.user) api.get<Category[]>('/api/categories').then(setCats).catch(() => {});
-  }, [auth.user]);
+    if (auth.user) {
+      api.get<Category[]>('/api/categories').then(setCats).catch(() => {});
+      api.get<AccountInfo[]>('/api/accounts').then(setAccounts).catch(() => {});
+    }
+  }, [auth.user, tick]);
 
   if (auth.loading) return <div className="app"><div className="card muted">Проверка сессии…</div></div>;
   if (!auth.user) { if (route !== 'login') location.hash = '#/login'; return <LoginPage auth={auth} />; }
@@ -44,6 +50,7 @@ export default function App() {
       </header>
 
       {route === 'journal' ? <Journal key={tick} />
+        : route === 'accounts' ? <AccountsPage key={tick} onChanged={() => setTick(t => t + 1)} />
         : route === 'goals' ? <GoalsPage key={tick} />
         : route === 'settings' ? <Settings auth={auth} categories={cats} onReload={() => setTick(t => t + 1)} />
         : <Dashboard key={tick} />}
@@ -53,12 +60,13 @@ export default function App() {
         <button className="fab" title="Добавить операцию" onClick={() => setShowQuick(true)}>＋</button>
       )}
       {showQuick && (
-        <QuickTxModal categories={cats}
+        <QuickTxModal categories={cats} accounts={accounts}
           onClose={() => setShowQuick(false)} onSaved={() => setTick(t => t + 1)} />
       )}
 
       <nav className="bottom-nav">
         <a href="#/" className={route === '' ? 'active' : ''} onClick={() => go('')}>📊 Обзор</a>
+        <a href="#/accounts" className={route === 'accounts' ? 'active' : ''} onClick={() => go('accounts')}>💳 Счета</a>
         <a href="#/journal" className={route === 'journal' ? 'active' : ''} onClick={() => go('journal')}>🗂 Журнал</a>
         <a href="#/goals" className={route === 'goals' ? 'active' : ''} onClick={() => go('goals')}>🎯 Цели</a>
         <a href="#/settings" className={route === 'settings' ? 'active' : ''} onClick={() => go('settings')}>⚙️ Настройки</a>
@@ -84,6 +92,7 @@ function Settings({ auth, categories, onReload }: {
         <button className="btn danger-ghost" onClick={auth.logout}>Выйти</button>
       </div>
       <CategoriesCard categories={categories} onChanged={() => { onReload(); auth.refresh(); }} />
+      <FamilyCard />
     </>
   );
 }

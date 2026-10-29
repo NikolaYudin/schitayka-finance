@@ -52,7 +52,7 @@ export interface Tx {
 }
 export type AccountType = 0 | 1 | 2 | 3 | 4; // дебет, кредит, наличные, вклад, прочее
 export interface AccountInfo {
-  id: number; name: string; type: AccountType; typeName: string; balance: number;
+  id: number; name: string; type: AccountType; typeName: string; balance: number; startingBalance: number;
   creditLimit: number; cashbackRate: number; cashbackAccrued: number; color: string;
   isArchived: boolean; available: number; creditUsagePct: number | null;
 }

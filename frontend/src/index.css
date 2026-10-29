@@ -155,3 +155,11 @@ label > input, label > select { margin-top: 4px; }
   .metric span { font-size: 1.05em; }
   table { font-size: .85em; }
 }
+
+/* Карточки счетов */
+.account-card { border: 1px solid var(--border); border-left: 5px solid #2b6cb0; border-radius: 10px; padding: 10px 12px; margin-bottom: 10px; background: #fbfdff; }
+.account-head { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; }
+.account-balance { font-size: 1.3em; font-weight: 700; color: var(--primary); margin: 4px 0; }
+.account-actions { display: flex; gap: 6px; margin-top: 6px; }
+.account-form { border-top: 1px dashed var(--border); margin-top: 12px; padding-top: 12px; }
+.account-form h4 { margin: 0 0 8px; color: var(--primary); }
