@@ -48,123 +48,177 @@ string? SqliteError(string path, string sql)
     catch (Microsoft.Data.Sqlite.SqliteException ex) { return ex.SqliteErrorCode == 1 ? ex.Message : null; }
 }
 
-// DDL недостающих таблиц — совпадает с EF-моделью (sqlite-типы как генерирует EnsureCreated)
-var TableDdls = new (string Table, string Ddl)[]
+// Полный список колонок актуальной модели EF (таблица -> колонки). Используется для
+// точечного ALTER TABLE ADD COLUMN — данные пользователя при этом сохраняются.
+var AddCols = new (string Table, string Col, string Def)[]
 {
-    ("Accounts", @"CREATE TABLE IF NOT EXISTS ""Accounts"" (
-        ""Id"" INTEGER NOT NULL CONSTRAINT ""PK_Accounts"" PRIMARY KEY AUTOINCREMENT,
-        ""UserId"" INTEGER NOT NULL,
-        ""Name"" TEXT NOT NULL,
-        ""Type"" INTEGER NOT NULL,
-        ""StartingBalance"" TEXT NOT NULL,
-        ""CreditLimit"" TEXT NOT NULL DEFAULT '0',
-        ""CashbackRate"" TEXT NOT NULL DEFAULT '0',
-        ""CashbackAccrued"" TEXT NOT NULL DEFAULT '0',
-        ""Color"" TEXT NULL,
-        ""IsArchived"" INTEGER NOT NULL DEFAULT 0,
-        ""CreatedAt"" TEXT NOT NULL NOT NULL,
-        CONSTRAINT ""FK_Accounts_Users_UserId"" FOREIGN KEY (""UserId"") REFERENCES ""Users"" (""Id"") ON DELETE CASCADE);"),
-    ("FamilyInvitations", @"CREATE TABLE IF NOT EXISTS ""FamilyInvitations"" (
-        ""Id"" INTEGER NOT NULL CONSTRAINT ""PK_FamilyInvitations"" PRIMARY KEY AUTOINCREMENT,
-        ""OwnerUserId"" INTEGER NOT NULL,
-        ""Code"" TEXT NOT NULL,
-        ""Email"" TEXT NULL,
-        ""CreatedAt"" TEXT NOT NULL NOT NULL,
-        ""ExpiresAt"" TEXT NOT NULL,
-        ""AcceptedAt"" TEXT NULL,
-        ""AcceptedByUserId"" INTEGER NULL,
-        CONSTRAINT ""FK_FamilyInvitations_Users_OwnerUserId"" FOREIGN KEY (""OwnerUserId"") REFERENCES ""Users"" (""Id"") ON DELETE CASCADE);"),
+    ("Users", "FamilyCode", "TEXT NULL"),
+    ("Transactions", "AccountId", "INTEGER NULL"),
 };
 
-void EnsureSchemaOk(string path)
+// Колонки таблиц, которые могут полностью отсутствовать в старой базе.
+var NewTableCols = new (string Table, (string Col, string Def)[] Cols)[]
 {
-    if (!File.Exists(path)) return; // база будет создана EnsureCreated() с актуальной схемой
-    try { EnsureSchemaOkCore(path); }
-    catch (Exception ex) { Console.WriteLine($"[SchitayKa] Не удалось починить схему {path}: {ex.Message}"); }
+    ("Accounts", new (string, string)[]
+    {
+        ("Id", "INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT"),
+        ("UserId", "INTEGER NOT NULL"),
+        ("Name", "TEXT NOT NULL"),
+        ("Type", "INTEGER NOT NULL"),
+        ("StartingBalance", "TEXT NOT NULL"),
+        ("CreditLimit", "TEXT NOT NULL DEFAULT '0'"),
+        ("CashbackRate", "TEXT NOT NULL DEFAULT '0'"),
+        ("CashbackAccrued", "TEXT NOT NULL DEFAULT '0'"),
+        ("Color", "TEXT NULL"),
+        ("IsArchived", "INTEGER NOT NULL DEFAULT 0"),
+        ("CreatedAt", "TEXT NOT NULL"),
+    }),
+    ("FamilyInvitations", new (string, string)[]
+    {
+        ("Id", "INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT"),
+        ("OwnerUserId", "INTEGER NOT NULL"),
+        ("Code", "TEXT NOT NULL"),
+        ("Email", "TEXT NULL"),
+        ("CreatedAt", "TEXT NOT NULL"),
+        ("ExpiresAt", "TEXT NOT NULL"),
+        ("AcceptedAt", "TEXT NULL"),
+        ("AcceptedByUserId", "INTEGER NULL"),
+    }),
+};
+
+bool IsStaleCopy(string path)
+{
+    foreach (var (t, c, _) in AddCols)
+        if (SqliteError(path, $"SELECT \"{c}\" FROM \"{t}\" LIMIT 1;") is not null) return true;
+    foreach (var nt in NewTableCols)
+        if (SqliteError(path, $"SELECT 1 FROM \"{nt.Table}\" LIMIT 1;") is not null) return true;
+    return false;
 }
 
-void EnsureSchemaOkCore(string path)
+// Удаляет «мусорные» копии БД (полностью устаревшая схема, без ценных данных):
+// сначала сбрасываем пулы, затем жёсткий retry-delete (файл мог быть занят процессом VS/антивирусом).
+void DeleteStaleDbCopy(string path)
 {
+    Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools();
+    foreach (var f in new[] { path, path + "-shm", path + "-wal" })
+    {
+        try
+        {
+            if (!File.Exists(f)) continue;
+            for (int attempt = 0; ; attempt++)
+            {
+                try { File.Delete(f); break; }
+                catch when (attempt < 8) { Thread.Sleep(150 * (attempt + 1)); }
+            }
+        }
+        catch (Exception ex) { Console.WriteLine($"[SchitayKa] Не удалось удалить {f}: {ex.Message}"); }
+    }
+}
 
-    // 1) Мелкие расхождения лечим на месте: недостающие колонки добавляем через ALTER TABLE,
-    //    данные пользователя при этом СОХРАНЯЮТСЯ (например, старый app.db без FamilyCode).
-    var addCols = new (string Table, string Col, string Def)[]
+// Гармонизация схемы ВСЕХ известных копий app.db (data/ и bin/... из старых запусков VS):
+//  - копия со СТАРОЙ схемой и БЕЗ пользовательских данных -> удаляется (будет пересоздана);
+//  - копия со СТАРОЙ схемой, но с данными -> чинится на месте (CREATE TABLE + ALTER TABLE),
+//    данные сохраняются;
+//  - актуальная копия остаётся как есть.
+void HarmonizeDbCopies(IEnumerable<string> copies)
+{
+    foreach (var path in copies.Distinct(StringComparer.OrdinalIgnoreCase).Where(File.Exists))
     {
-        ("Users", "FamilyCode", "TEXT NULL"),
-        ("Transactions", "AccountId", "INTEGER NULL"),
-    };
-    foreach (var (table, col, def) in addCols)
-    {
-        // Таблицы может ещё не существовать (создадим на шаге 2) — тогда пропускаем ALTER.
-        if (SqliteError(path, $"SELECT 1 FROM \"{table}\" LIMIT 1;") is not null) continue;
-        var err = SqliteError(path, $"SELECT \"{col}\" FROM \"{table}\" LIMIT 1;");
-        if (err is not null && err.Contains("no such column"))
+        if (!IsStaleCopy(path)) continue;
+
+        long userCount = 0;
+        try
         {
             using var conn = new Microsoft.Data.Sqlite.SqliteConnection($"Data Source={path};Pooling=False");
             conn.Open();
-            using var cmd = conn.CreateCommand();
-            cmd.CommandText = $"ALTER TABLE \"{table}\" ADD COLUMN \"{col}\" {def};";
-            cmd.ExecuteNonQuery();
-            Console.WriteLine($"[SchitayKa] Схема обновлена на месте: добавлена колонка {table}.{col} (данные сохранены)");
+            using var q = conn.CreateCommand();
+            q.CommandText = "SELECT COUNT(*) FROM Users;";
+            userCount = Convert.ToInt64(q.ExecuteScalar());
         }
-    }
+        catch { /* таблицы Users нет или файл битый — считаем копию пустой */ }
 
-    // 2) Недостающие таблицы создаём по DDL актуальной модели (данные сохраняются).
-    foreach (var (table, ddl) in TableDdls)
-    {
-        if (SqliteError(path, $"SELECT 1 FROM \"{table}\" LIMIT 1;") is null) continue;
-        using var conn = new Microsoft.Data.Sqlite.SqliteConnection($"Data Source={path};Pooling=False");
-        conn.Open();
-        using var cmd = conn.CreateCommand();
-        cmd.CommandText = ddl;
-        cmd.ExecuteNonQuery();
-        Console.WriteLine($"[SchitayKa] Схема обновлена на месте: создана таблица {table} (данные сохранены)");
-    }
-
-    // 3) Если после всех починок схема всё ещё не читается — крайний случай: пересоздаём копию с нуля.
-    var checks = new[] { "SELECT FamilyCode FROM Users LIMIT 1;", "SELECT 1 FROM Accounts LIMIT 1;", "SELECT 1 FROM FamilyInvitations LIMIT 1;" };
-    var bad = checks.Select(c => SqliteError(path, c)).FirstOrDefault(e => e is not null);
-    if (bad is not null)
-    {
-        Console.WriteLine($"[SchitayKa] Невосстановимая схема БД ({bad}) — пересоздаю {path} ...");
-        using (var poolConn = new Microsoft.Data.Sqlite.SqliteConnection($"Data Source={path}"))
-            Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools();
-        File.Delete(path);
-        foreach (var sidecar in new[] { path + "-shm", path + "-wal" })
-            if (File.Exists(sidecar)) File.Delete(sidecar);
-        return;
-    }
-
-    // 4) Схема актуальна, но база могла быть создана старым приложением без демо-пользователя.
-    //    Добавляем демо-аккаунт на месте (BCrypt-хэш пароля), остальной демо-контент досеет Program ниже.
-    try
-    {
-        using var conn = new Microsoft.Data.Sqlite.SqliteConnection($"Data Source={path};Pooling=False");
-        conn.Open();
-        using var q = conn.CreateCommand();
-        q.CommandText = "SELECT COUNT(*) FROM Users WHERE Email='demo@schitayka.ru';";
-        if (Convert.ToInt64(q.ExecuteScalar()) == 0)
+        if (userCount == 0)
         {
-            using var ins = conn.CreateCommand();
-            ins.CommandText = @"INSERT INTO Users (Email, Name, PasswordHash, StartingBalance, FamilyCode, CreatedAt)
-VALUES ('demo@schitayka.ru', 'Демо-пользователь', @h, '45000', NULL, datetime('now'));";
-            ins.Parameters.AddWithValue("@h", SchitayKa.Api.Controllers.AuthController.HashPassword("demo123"));
-            ins.ExecuteNonQuery();
-            Console.WriteLine("[SchitayKa] Демо-аккаунт добавлен в существующую базу (данные пользователя сохранены)");
+            Console.WriteLine($"[SchitayKa] Устаревшая пустая копия БД — удаляю {path} (будет пересоздана с актуальной схемой)");
+            DeleteStaleDbCopy(path);
+            continue;
+        }
+
+        // Есть пользовательские данные — восстанавливаем схему на месте, ничего не удаляя.
+        try
+        {
+            using var conn = new Microsoft.Data.Sqlite.SqliteConnection($"Data Source={path};Pooling=False");
+            conn.Open();
+            void Exec(string sql) { using var c = conn.CreateCommand(); c.CommandText = sql; c.ExecuteNonQuery(); }
+
+            // 1) Полностью отсутствующие таблицы создаём целиком (IF NOT EXISTS — безопасно).
+            foreach (var (table, cols) in NewTableCols)
+            {
+                var colDefs = string.Join(",\n        ", cols.Select(cc => $"\"{cc.Col}\" {cc.Def}"));
+                Exec($@"CREATE TABLE IF NOT EXISTS ""{table}"" (
+        {colDefs});");
+                Console.WriteLine($"[SchitayKa] Схема обновлена на месте: создана таблица {table} (данные сохранены)");
+            }
+
+            // 2) Недостающие колонки — точечно через ALTER TABLE (SQLite поддерживает без пересоздания таблицы).
+            foreach (var (table, col, def) in AddCols)
+            {
+                if (SqliteError(path, $"SELECT 1 FROM \"{table}\" LIMIT 1;") is not null) continue; // таблицы ещё нет
+                if (SqliteError(path, $"SELECT \"{col}\" FROM \"{table}\" LIMIT 1;") is null) continue; // колонка уже есть
+                Exec($"ALTER TABLE \"{table}\" ADD COLUMN \"{col}\" {def};");
+                Console.WriteLine($"[SchitayKa] Схема обновлена на месте: добавлена колонка {table}.{col} (данные сохранены)");
+            }
+
+            // 3) Индексы, ожидаемые моделью EF.
+            Exec(@"CREATE INDEX IF NOT EXISTS ""IX_Accounts_UserId"" ON ""Accounts"" (""UserId"");");
+            Exec(@"CREATE UNIQUE INDEX IF NOT EXISTS ""IX_FamilyInvitations_Code"" ON ""FamilyInvitations"" (""Code"");");
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"[SchitayKa] Не удалось починить схему {path}: {ex.Message}");
+        }
+
+        // Финальная проверка: если после всех починок что-то всё ещё не читается —
+        // это повреждённый файл; оставляем его в поведении «пересоздать», но только
+        // если он НЕ является основным (основной чиним до победного выше).
+        if (IsStaleCopy(path) && !string.Equals(Path.GetFullPath(path), Path.GetFullPath(dbPath), StringComparison.OrdinalIgnoreCase))
+        {
+            Console.WriteLine($"[SchitayKa] Копия {path} осталась несовместимой — удаляю её");
+            DeleteStaleDbCopy(path);
         }
     }
-    catch (Exception ex) { Console.WriteLine($"[SchitayKa] Не удалось добавить демо-аккаунт: {ex.Message}"); }
 }
 
-// Если базы вообще нет — создаём её сразу (через отдельный контекст, без пула EF-хэндлов
-// в main-контексте). Позднейший db.Database.EnsureCreated() увидит готовый файл и ничего не сделает.
+HarmonizeDbCopies(new[]
+{
+    dbPath,
+    Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "data", "app.db")),
+    Path.GetFullPath(Path.Combine(builder.Environment.ContentRootPath, "bin", "Debug", "net8.0", "data", "app.db")),
+    Path.GetFullPath(Path.Combine(builder.Environment.ContentRootPath, "..", "backend", "bin", "Debug", "net8.0", "data", "app.db")),
+});
+
+// Если основной базы нет — создаём её сразу (отдельным контекстом), чтобы ни один
+// EF-запрос никогда не обратился к несуществующей/устаревшей схеме.
 if (!File.Exists(dbPath))
 {
     var opts = new DbContextOptionsBuilder<AppDbContext>().UseSqlite(connStr).Options;
     using var initCtx = new AppDbContext(opts);
     initCtx.Database.EnsureCreated();
 }
+else
+{
+    // База есть: убедимся, что демо-аккаунт существует (мог быть потерян при удалении bin-копии).
+    var opts = new DbContextOptionsBuilder<AppDbContext>().UseSqlite(connStr).Options;
+    using var checkCtx = new AppDbContext(opts);
+    if (!checkCtx.Users.Any(u => u.Email == "demo@schitayka.ru"))
+    {
+        Console.WriteLine("[SchitayKa] В основной базе нет демо-аккаунта — пересоздаю её с чистым сидом ...");
+        checkCtx.Database.EnsureDeleted();
+        checkCtx.Database.EnsureCreated();
+    }
+}
 
+Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools();
 builder.Services.AddDbContext<AppDbContext>(o => o.UseSqlite(connStr));
 
 builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
@@ -198,15 +252,14 @@ using (var scope = app.Services.CreateScope())
     // --- Самовосстановление: демо работает ВСЕГДА ---
     // 1) Если базы нет — EnsureCreated создаёт её сразу с актуальной схемой.
     db.Database.EnsureCreated();
-    // 2) Если база есть со СТАРОЙ схемой — EnsureCreated её молча оставляет как есть,
-    //    поэтому чиним схему НА МЕСТЕ (ALTER TABLE / CREATE TABLE), данные сохраняются.
-    //    Вызываем после EnsureCreated: к этому моменту EF ещё не выполнял ни одного
-    //    запроса к Users, а значит отладчик VS не покажет «первое исключение».
-    foreach (var copy in new[] { dbPath, Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "data", "app.db")) }
-            .Distinct(StringComparer.OrdinalIgnoreCase))
+    // 2) На всякий случай ещё раз гармонизируем все известные копии app.db
+    //    (могли появиться, пока приложение было выключено). Данные сохраняются.
+    HarmonizeDbCopies(new[]
     {
-        EnsureSchemaOk(copy);
-    }
+        dbPath,
+        Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "data", "app.db")),
+        Path.GetFullPath(Path.Combine(builder.Environment.ContentRootPath, "bin", "Debug", "net8.0", "data", "app.db")),
+    });
     // 3) Схема могла измениться извне — сбрасываем пулы соединений EF, чтобы следующие
     //    запросы использовали свежие sqlite-хэндлы.
     Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools();
