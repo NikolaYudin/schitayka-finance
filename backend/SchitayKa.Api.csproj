@@ -23,12 +23,20 @@
     <Content Remove="wwwroot\**" />
   </ItemGroup>
 
-  <Target Name="_CopyWebRootAfterBuild" AfterTargets="Build;Publish">
+  <Target Name="_CopyWebRootAfterBuild" AfterTargets="Build">
     <ItemGroup>
       <_WpSrc Include="$(MSBuildProjectDirectory)\wwwroot\**" />
     </ItemGroup>
     <Copy SourceFiles="@(_WpSrc)" DestinationFolder="$([System.IO.Path]::Combine($(OutDir), 'wwwroot', '%(RecursiveDir)'))" SkipUnchangedFiles="true" Condition="'@(_WpSrc)'!=''" />
-    <Copy SourceFiles="@(_WpSrc)" DestinationFolder="$([System.IO.Path]::Combine($(PublishDir), 'wwwroot', '%(RecursiveDir)'))" SkipUnchangedFiles="true" Condition="'@(_WpSrc)'!='' And '$(IsPublishing)'=='true'" />
+  </Target>
+
+  <!-- При публикации (dotnet publish / VS "Опубликовать") копируем собранный бандл напрямую в PublishDir -->
+  <Target Name="_CopyWebRootToPublish" AfterTargets="Publish">
+    <ItemGroup>
+      <_PubWpSrc Include="$(MSBuildProjectDirectory)\wwwroot\**" />
+    </ItemGroup>
+    <Copy SourceFiles="@(_PubWpSrc)" DestinationFolder="$([System.IO.Path]::GetFullPath('$(PublishDir)wwwroot\%(RecursiveDir)'))" SkipUnchangedFiles="false" Condition="'@(_PubWpSrc)'!='' And '$(PublishDir)'!=''" />
+    <Message Importance="high" Text="[SchitayKa] wwwroot скопирован в публикацию: $(PublishDir)wwwroot" Condition="'@(_PubWpSrc)'!=''" />
   </Target>
 
   <!-- Автосборка фронтенда при сборке проекта, если установлен Node.js и есть node_modules.

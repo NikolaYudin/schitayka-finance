@@ -16,3 +16,4 @@ Thumbs.db
 
 # локальная база SQLite (демо-данные пересоздаются при запуске)
 backend/data/
+publish/
