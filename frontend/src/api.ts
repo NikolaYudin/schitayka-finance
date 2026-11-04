@@ -55,6 +55,7 @@ export interface AccountInfo {
   id: number; name: string; type: AccountType; typeName: string; balance: number; startingBalance: number;
   creditLimit: number; cashbackRate: number; cashbackAccrued: number; color: string;
   isArchived: boolean; available: number; creditUsagePct: number | null;
+  ownerId?: number; ownerName?: string;
 }
 export interface FamilyMember { id: number; name: string; email: string; isOwner?: boolean; isCreator?: boolean; }
 export interface FamilyBoardColumn {
