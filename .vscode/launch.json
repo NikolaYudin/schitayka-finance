@@ -1,0 +1,29 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "SchitayKa: backend (5023)",
+      "type": "coreclr",
+      "request": "launch",
+      "preLaunchTask": "build-backend",
+      "program": "dotnet",
+      "args": [
+        "run",
+        "--no-build",
+        "--project",
+        "${workspaceFolder}/backend/SchitayKa.Api.csproj"
+      ],
+      "cwd": "${workspaceFolder}/backend",
+      "env": {
+        "ASPNETCORE_ENVIRONMENT": "Development",
+        "ASPNETCORE_URLS": "http://localhost:5023"
+      },
+      "serverReadyAction": {
+        "pattern": "Now listening on: http://localhost:5023",
+        "uriFormat": "http://localhost:5023",
+        "action": "openExternally"
+      },
+      "console": "integratedTerminal"
+    }
+  ]
+}

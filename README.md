@@ -49,6 +49,17 @@ cd ../backend && dotnet run                    # http://localhost:5023
 Режим разработки без сборки SPA: `cd frontend && npm run dev` (Vite проксирует `/api` на :5023,
 а бэкенд в Development сам проксирует страницы на Vite, если wwwroot отсутствует).
 
+## Запуск в VS Code
+1. Установите расширение **C#** (`ms-dotnettools.csharp`).
+2. Откройте папку репозитория целиком (**File → Open Folder**), а не только `frontend`.
+3. Нажмите **F5** → конфигурация «SchitayKa: backend (5023)»: VS Code выполнит `dotnet restore`,
+   сборку и запустит сервер; браузер откроется на <http://localhost:5023>.
+   Порт 5023 зафиксирован в `Program.cs`, поэтому он одинаков при любом способе запуска
+   (VS, VS Code, `dotnet run`) и совпадает с прокси Vite.
+4. Быстрый путь без отладчика: терминал → `cd backend && dotnet run`.
+   Команду `dotnet run` внутри `frontend` выполнять не нужно — там нет .NET-проекта.
+   Для фронтенда в dev-режиме используйте задачу **Tasks → Run Task → frontend-dev (vite :5173)**.
+
 ## API (кратко)
 | Метод | Путь | Описание |
 |---|---|---|

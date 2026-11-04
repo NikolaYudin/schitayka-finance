@@ -7,6 +7,15 @@ using System.Text.Json.Serialization;
 
 var builder = WebApplication.CreateBuilder(args);
 
+// --- Фиксированный порт HTTP-сервера ---
+// Порт всегда 5023 (совпадает с прокси Vite в frontend/vite.config.ts), независимо от
+// профиля запуска (VS / VS Code / dotnet run из папки backend). Если переменная окружения
+// ASPNETCORE_URLS задана явно — используется она.
+if (string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("ASPNETCORE_URLS")))
+{
+    builder.WebHost.UseUrls("http://localhost:5023");
+}
+
 // --- Автосборка фронтенда при старте ---
 // backend/wwwroot пересобирается сам, если его нет или исходники frontend/ новее бандла.
 // Выполняется ДО создания приложения, чтобы сервер всегда отдавал актуальный index.html.
