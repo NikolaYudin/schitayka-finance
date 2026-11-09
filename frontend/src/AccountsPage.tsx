@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { AccountInfo, AccountType, FamilyMember, api, fmt, AccountRule, AccountAlert, ReserveLoan } from './api';
 
-const TYPE_EMOJI: Record<AccountType, string> = { 0: '💳', 1: '🏦', 2: '💵', 3: '📈', 4: '🧾' };
+const TYPE_LABEL: Record<AccountType, string> = { 0: 'Дебетовая карта', 1: 'Кредитная карта', 2: 'Наличные', 3: 'Вклад', 4: 'Прочее' };
 
 // ---- Страница «Счета»: карточки счетов + форма добавления/редактирования ----
 export function AccountsPage({ onChanged }: { onChanged?: () => void }) {
@@ -90,7 +90,7 @@ export function AccountsPage({ onChanged }: { onChanged?: () => void }) {
 
   return (
     <div className="card">
-      <h3>💳 Счета</h3>
+      <h3>Счета</h3>
       {err && <div className="alert">{err}</div>}
       {!list ? <div className="muted">Загрузка…</div> : (
         <>
@@ -103,7 +103,7 @@ export function AccountsPage({ onChanged }: { onChanged?: () => void }) {
             {list.map(a => (
             <div className="account-card" key={a.id} style={{ borderLeftColor: a.color }}>
               <div className="account-head">
-                <b>{TYPE_EMOJI[a.type]} {a.name}</b>
+                <b>{a.name}</b>
                 <span className="muted">{a.typeName}{a.isArchived ? ' · архив' : ''}</span>
               </div>
               <div className="account-balance">{fmt(a.balance)}</div>
@@ -124,14 +124,14 @@ export function AccountsPage({ onChanged }: { onChanged?: () => void }) {
 
               {minRulesFor(a).map(r => (
                 <div key={r.id} className={`badge-row ${minBreached(a, r) ? 'badge-danger' : ''}`}>
-                  🛑 Неснижаемый остаток: {fmt(r.threshold ?? 0)}
+                  Неснижаемый остаток: {fmt(r.threshold ?? 0)}
                   {minBreached(a, r) && <span className="badge badge-danger">нарушен</span>}
                 </div>
               ))}
               {reserveRulesFor(a).map(r => (
                 <div className="limit-row" key={r.id}>
                   <div className="limit-head">
-                    <span>🛟 Резерв: {fmt(r.threshold ?? 0)} · свободно {fmt(freeOf(r, a))}</span>
+                    <span>Резерв: {fmt(r.threshold ?? 0)} · свободно {fmt(freeOf(r, a))}</span>
                     <button className="btn small" onClick={() => takeLoan(a, r)}>Взять из резерва</button>
                   </div>
                 </div>
@@ -152,12 +152,12 @@ export function AccountsPage({ onChanged }: { onChanged?: () => void }) {
               ))}
 
               <div className="account-actions">
-                <button className="btn small" onClick={() => setEditing({ ...a })}>✏️</button>
+                <button className="btn small" onClick={() => setEditing({ ...a })}>Изменить</button>
                 {a.type !== 1 && a.cashbackRate >= 0 && (
-                  <button className="btn small" title="Зачислить кэшбэк" onClick={() => adjust(a, 'cashback')}>🎁</button>
+                  <button className="btn small" title="Зачислить кэшбэк" onClick={() => adjust(a, 'cashback')}>Кэшбэк</button>
                 )}
                 <button className="btn small" title="Корректировать баланс" onClick={() => adjust(a, 'adjust')}>±</button>
-                <button className="btn small" title={a.isArchived ? 'Вернуть из архива' : 'В архив'} onClick={() => archive(a)}>🗄</button>
+                <button className="btn small" title={a.isArchived ? 'Вернуть из архива' : 'В архив'} onClick={() => archive(a)}>Архив</button>
                 <button className="btn danger-ghost small" onClick={() => del(a)}>✕</button>
               </div>
             </div>
@@ -220,11 +220,11 @@ function AccountForm({ account, onClose, onSaved }: {
       </label>
       <label>Тип
         <select value={type} onChange={e => setType(Number(e.target.value) as AccountType)}>
-          <option value={0}>💳 Дебетовая карта</option>
-          <option value={1}>🏦 Кредитная карта</option>
-          <option value={2}>💵 Наличные</option>
-          <option value={3}>📈 Вклад / накопительный</option>
-          <option value={4}>🧾 Прочее</option>
+          <option value={0}>Дебетовая карта</option>
+          <option value={1}>Кредитная карта</option>
+          <option value={2}>Наличные</option>
+          <option value={3}>Вклад / накопительный</option>
+          <option value={4}>Прочее</option>
         </select>
       </label>
       <div className="form-row">

@@ -31,12 +31,12 @@ function Sidebar({ route, setRoute, collapsed, setCollapsed, theme }: {
   route: Route; setRoute: (r: Route) => void;
   collapsed: boolean; setCollapsed: (b: boolean) => void; theme: ThemeController;
 }) {
-  const items: { to: Route; label: string; icon: string }[] = [
-    { to: '', label: 'Обзор', icon: '📊' },
-    { to: 'accounts', label: 'Счета', icon: '💳' },
-    { to: 'journal', label: 'Журнал', icon: '🗂' },
-    { to: 'goals', label: 'Цели', icon: '🎯' },
-    { to: 'settings', label: 'Настройки', icon: '⚙️' },
+  const items: { to: Route; label: string }[] = [
+    { to: '', label: 'Обзор' },
+    { to: 'accounts', label: 'Счета' },
+    { to: 'journal', label: 'Журнал' },
+    { to: 'goals', label: 'Цели' },
+    { to: 'settings', label: 'Настройки' },
   ];
 
   return (
@@ -53,7 +53,6 @@ function Sidebar({ route, setRoute, collapsed, setCollapsed, theme }: {
             className={`nav-item ${route === i.to ? 'active' : ''}`}
             onClick={() => { setRoute(i.to); if (collapsed) setCollapsed(false); }}
           >
-            <span className="nav-icon">{i.icon}</span>
             {!collapsed && i.label}
           </button>
         ))}
@@ -64,7 +63,7 @@ function Sidebar({ route, setRoute, collapsed, setCollapsed, theme }: {
           title={theme.resolved === 'dark' ? 'Включить светлую тему' : 'Включить тёмную тему'}
           onClick={theme.toggle} aria-label={theme.resolved === 'dark' ? 'Светлая тема' : 'Тёмная тема'}
         >
-          {theme.resolved === 'dark' ? '☀️' : '🌙'}
+          {theme.resolved === 'dark' ? '☀' : '☾'}
         </button>
         <button
           type="button" className="btn icon"
@@ -72,7 +71,7 @@ function Sidebar({ route, setRoute, collapsed, setCollapsed, theme }: {
           onClick={() => setCollapsed(!collapsed)}
           aria-label={collapsed ? 'Развернуть навигацию' : 'Свернуть навигацию'}
         >
-          {collapsed ? '↗' : '↖'}
+          {collapsed ? '›' : '‹'}
         </button>
       </div>
     </aside>
@@ -91,7 +90,7 @@ function TopBar() {
         <input type="text" placeholder="Поиск операций, счетов, категорий" />
       </div>
       <div className="titlebar-right">
-        <button type="button" className="btn icon" title="Свернуть окно">➖</button>
+        <button type="button" className="btn icon" title="Свернуть окно">—</button>
         <button type="button" className="btn icon" title="Развернуть окно">□</button>
         <button type="button" className="btn icon danger" title="Закрыть окно" onClick={() => window.close?.()} aria-label="Закрыть">✕</button>
       </div>
@@ -159,7 +158,7 @@ export default function App() {
 
         {/* FAB доступна на основных экранах */}
         {route !== 'settings' && (
-          <button className="fab" title="Добавить операцию" onClick={() => setShowQuick(true)}>＋</button>
+          <button className="fab" title="Добавить операцию" onClick={() => setShowQuick(true)}>+</button>
         )}
         {showQuick && (
           <QuickTxModal categories={cats} accounts={accounts}
@@ -179,7 +178,7 @@ function Settings({ auth, categories, theme, onReload }: {
   return (
     <>
       <div className="card">
-        <h3>⚙️ Аккаунт</h3>
+        <h3>Аккаунт</h3>
         <table>
           <tbody>
             <tr><td><b>Имя</b></td><td>{auth.user?.name}</td></tr>
@@ -187,7 +186,9 @@ function Settings({ auth, categories, theme, onReload }: {
           </tbody>
         </table>
         <StartingBalance auth={auth} />
-        <button className="btn danger-ghost" onClick={auth.logout}>Выйти</button>
+        <div className="action-row">
+          <button className="btn danger-ghost" onClick={auth.logout}>Выйти</button>
+        </div>
       </div>
       <AppearanceCard theme={theme} />
       <CategoriesCard categories={categories} onChanged={() => { onReload(); auth.refresh(); }} />
@@ -199,13 +200,13 @@ function Settings({ auth, categories, theme, onReload }: {
 // Оформление: светлая / тёмная / системная тема
 function AppearanceCard({ theme }: { theme: ThemeController }) {
   const options: { value: ThemeMode; icon: string; label: string }[] = [
-    { value: 'light', icon: '☀️', label: 'Светлая' },
-    { value: 'dark', icon: '🌙', label: 'Тёмная' },
-    { value: 'system', icon: '🖥️', label: 'Системная' },
+    { value: 'light', icon: '☀', label: 'Светлая' },
+    { value: 'dark', icon: '☾', label: 'Тёмная' },
+    { value: 'system', icon: '⌂', label: 'Системная' },
   ];
   return (
     <div className="card">
-      <h3>🎨 Оформление</h3>
+      <h3>Оформление</h3>
       <div className="muted">Тема применяется сразу и запоминается на этом устройстве.</div>
       <div className="segmented">
         {options.map(o => (
@@ -267,7 +268,7 @@ function CategoriesCard({ categories, onChanged }: { categories: Category[]; onC
 
   return (
     <div className="card">
-      <h3>🏷 Категории</h3>
+      <h3>Категории</h3>
       <table>
         <thead><tr><th>Категория</th><th>Тип</th><th></th></tr></thead>
         <tbody>

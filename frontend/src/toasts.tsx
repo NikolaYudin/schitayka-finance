@@ -26,7 +26,7 @@ export function ToastProvider({ children }: { children: ReactNode }) {
         {toasts.map(t => (
           <div key={t.id} className={`toast toast-${t.level}`} onClick={() => dismiss(t.id)}>
             <span>{t.text}</span>
-            <button type="button" className="toast-close" aria-label="закрыть">✕</button>
+            <button type="button" className="toast-close" aria-label="закрыть">×</button>
           </div>
         ))}
       </div>

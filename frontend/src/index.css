@@ -271,8 +271,8 @@ button, input, select, textarea { font: inherit; color: inherit; }
 }
 .titlebar-search input::placeholder { color: var(--wb-text-muted); }
 .titlebar-search::before {
-  content: '🔍'; position: absolute; left: 12px; top: 50%; transform: translateY(-50%);
-  font-size: 14px; pointer-events: none; color: var(--wb-text-muted);
+  content: ''; position: absolute; left: 12px; top: 50%; transform: translateY(-50%);
+  width: 0; height: 0; pointer-events: none;
 }
 .titlebar-right { display: flex; align-items: center; gap: 8px; }
 
@@ -290,7 +290,7 @@ button, input, select, textarea { font: inherit; color: inherit; }
   width: 100%;
   display: flex;
   flex-direction: column;
-  gap: 24px;
+  gap: 32px;
 }
 
 /* ---------- Карточки ---------- */
@@ -305,6 +305,7 @@ button, input, select, textarea { font: inherit; color: inherit; }
               box-shadow 150ms var(--wb-easing-out),
               border-color 150ms var(--wb-easing-out);
   will-change: transform;
+  margin-bottom: 20px;
 }
 .card:hover {
   box-shadow: var(--wb-shadow-md);
@@ -391,6 +392,14 @@ button, input, select, textarea { font: inherit; color: inherit; }
   border-radius: var(--wb-radius-sm);
 }
 .btn.ghost:hover { background: var(--wb-hover-bg); color: var(--wb-text-primary); }
+
+/* Ряд действий — кнопки с отступами между собой */
+.action-row {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-top: 16px;
+}
 
 /* ---------- Формы ---------- */
 label {

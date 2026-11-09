@@ -8,8 +8,8 @@ export function GoalsPage() {
     <>
       <div className="card">
         <div className="tabs">
-          <button className={`tab ${tab === 'goals' ? 'active' : ''}`} onClick={() => setTab('goals')}>🎯 Цели</button>
-          <button className={`tab ${tab === 'limits' ? 'active' : ''}`} onClick={() => setTab('limits')}>📊 Лимиты месяца</button>
+          <button className={`tab ${tab === 'goals' ? 'active' : ''}`} onClick={() => setTab('goals')}>Цели</button>
+          <button className={`tab ${tab === 'limits' ? 'active' : ''}`} onClick={() => setTab('limits')}>Лимиты месяца</button>
         </div>
         {tab === 'goals' ? <Goals /> : <Limits />}
       </div>

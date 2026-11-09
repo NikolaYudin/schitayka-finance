@@ -55,7 +55,7 @@ export function Dashboard() {
       </div>
 
       <div className="card">
-        <h3>💡 Персональные рекомендации</h3>
+        <h3>Персональные рекомендации</h3>
         {sum.recommendations.map((r, i) => (
           <div key={i} className={`rec rec-${r.level}`}>
             <span className="rec-icon">{r.icon}</span>
@@ -65,7 +65,7 @@ export function Dashboard() {
       </div>
 
       <div className="card">
-        <h3>📈 Динамика (6 мес.) · норма сбережений {sum.savingsRate}%</h3>
+        <h3>Динамика (6 мес.) · норма сбережений {sum.savingsRate}%</h3>
         {months.length === 0 ? <div className="muted">Пока нет данных</div> : (
           <div className="chart">
             {months.map(m => (
@@ -82,7 +82,7 @@ export function Dashboard() {
       </div>
 
       <div className="card">
-        <h3>🥧 Структура расходов ({MONTHS_RU[sum.month - 1]})</h3>
+        <h3>Структура расходов ({MONTHS_RU[sum.month - 1]})</h3>
         {sum.expenseShare.length === 0 ? <div className="muted">В этом месяце расходов пока нет</div> : (
           <div className="stack-bar-wrap">
             <div className="stack-bar">
@@ -104,7 +104,7 @@ export function Dashboard() {
       </div>
 
       <div className="card">
-        <h3>📊 Лимиты категорий ({MONTHS_RU[sum.month - 1]})</h3>
+        <h3>Лимиты категорий ({MONTHS_RU[sum.month - 1]})</h3>
         {sum.limits.length === 0 &&
           <div className="muted">Лимиты не заданы — настройте в разделе «Цели» → Лимиты</div>}
         {sum.limits.map(l => {
@@ -124,7 +124,7 @@ export function Dashboard() {
 
       {sum.goals.length > 0 && (
         <div className="card">
-          <h3>🎯 Финансовые цели</h3>
+          <h3>Финансовые цели</h3>
           {sum.goals.map(g => (
             <div className="limit-row" key={g.id}>
               <div className="limit-head">
@@ -144,7 +144,7 @@ export function Dashboard() {
 
       {sum.alerts.length > 0 && (
         <div className="card">
-          <h3>🚨 Уведомления по правилам счетов</h3>
+          <h3>Уведомления по правилам счетов</h3>
           {sum.alerts.map(a => (
             <div key={a.id} className={`alert-row ${a.level === 'danger' ? 'alert-danger' : 'alert-warn'}`}>
               <div className="alert-msg">{a.message}</div>
@@ -164,7 +164,7 @@ export function Dashboard() {
 
       {sum.reserves.length > 0 && (
         <div className="card">
-          <h3>🛟 Резерв на экстренные нужды</h3>
+          <h3>Резерв на экстренные нужды</h3>
           {sum.reserves.map(r => {
             const pct = r.threshold > 0 ? Math.min(100, (r.free / r.threshold) * 100) : 0;
             const broken = r.free <= 0;
@@ -211,8 +211,8 @@ export function Dashboard() {
       )}
 
       <div className="card">
-        <h3>🧾 Последние операции</h3>
-        {recent.length === 0 ? <div className="muted">В этом месяце операций нет. Нажмите ＋ внизу справа.</div> :
+        <h3>Последние операции</h3>
+        {recent.length === 0 ? <div className="muted">В этом месяце операций нет. Нажмите + внизу справа.</div> :
           recent.map(t => <TxRow key={t.id} tx={t} />)}
       </div>
     </>
@@ -291,8 +291,8 @@ export function QuickTxModal({ categories, accounts = [], onClose, onSaved }: {
       <form className="modal" onClick={e => e.stopPropagation()} onSubmit={submit}>
         <h3>Новая операция</h3>
         <div className="tabs">
-          <button type="button" className={`tab ${type === 0 ? 'active' : ''}`} onClick={() => setType(0)}>💰 Доход</button>
-          <button type="button" className={`tab ${type === 1 ? 'active' : ''}`} onClick={() => setType(1)}>💸 Расход</button>
+          <button type="button" className={`tab ${type === 0 ? 'active' : ''}`} onClick={() => setType(0)}>Доход</button>
+          <button type="button" className={`tab ${type === 1 ? 'active' : ''}`} onClick={() => setType(1)}>Расход</button>
         </div>
         <label>Категория
           <select value={categoryId} onChange={e => setCategoryId(Number(e.target.value))}>
@@ -357,7 +357,7 @@ export function Journal() {
 
   return (
     <div className="card">
-      <h3>🗂 Журнал</h3>
+      <h3>Журнал</h3>
       <label>Месяц<input type="month" value={ym} onChange={e => setYm(e.target.value)} /></label>
       {err && <div className="alert">{err}</div>}
       {!txs ? <div className="muted">Загрузка…</div> : txs.length === 0 ? <div className="muted">Нет операций за этот месяц</div> : (

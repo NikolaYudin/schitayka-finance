@@ -65,7 +65,7 @@ export function AccountRulesCard() {
 
   return (
     <div className="card">
-      <h3>🛡️ Правила счетов</h3>
+      <h3>Правила счетов</h3>
       <div className="tabs">
         {KIND_TABS.map(k => (
           <button key={k} type="button" className={`tab ${kind === k ? 'active' : ''}`} onClick={() => setKind(k)}>
@@ -103,7 +103,7 @@ export function AccountRulesCard() {
         <RuleForm key={kind} kind={kind} accounts={accounts} cats={cats} onSave={save} onSaved={reload} />
       </div>
       <button className="btn primary" onClick={() => { /* форма всегда в режиме «новое правило» */ }}>
-        ＋ Новое правило
+        Новое правило
       </button>
     </div>
   );
