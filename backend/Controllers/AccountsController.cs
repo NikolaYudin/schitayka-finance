@@ -12,16 +12,20 @@ namespace SchitayKa.Api.Controllers;
 public class AccountsController : ControllerBase
 {
     private readonly AppDbContext _db;
-    public AccountsController(AppDbContext db) { _db = db; }
+    private readonly SchitayKa.Api.Services.AccountRulesService _rules;
+    public AccountsController(AppDbContext db, SchitayKa.Api.Services.AccountRulesService rules)
+    { _db = db; _rules = rules; }
     private int Uid => UserAccess.UidOf(User);
 
     public record AccountDto(string Name, AccountType Type, decimal Balance,
-                             decimal? CreditLimit, decimal? CashbackRate, string? Color);
+                             decimal? CreditLimit, decimal? CashbackRate, string? Color, bool? Archived = null);
 
-    // Полный пересчёт остатков всех активных счетов (старт + операции + кэшбэк)
+    // Полный пересчёт остатков всех счетов (старт + операции + кэшбэк).
+    // Архивные счета тоже пересчитываем — иначе при возврате из архива
+    // баланс оказался бы устаревшим; в итоги и выбор они при этом не попадают.
     private async Task RecalcAllAccounts(int uid)
     {
-        var ids = await _db.Accounts.Where(a => a.UserId == uid && !a.IsArchived)
+        var ids = await _db.Accounts.Where(a => a.UserId == uid)
             .Select(a => (int?)a.Id).ToListAsync();
         foreach (var id in ids)
         {
@@ -63,6 +67,7 @@ public class AccountsController : ControllerBase
     {
         if (Uid < 0) return Unauthorized(new { error = "Требуется вход" });
         await RecalcAllAccounts(Uid); // остатки всегда актуальны относительно операций
+        await _rules.EvaluateAllAsync(Uid);
         var q = _db.Accounts.Where(a => a.UserId == Uid);
         if (!includeArchived) q = q.Where(a => !a.IsArchived);
         var list = await q.OrderBy(a => a.Type).ThenBy(a => a.Name).ToListAsync();
@@ -89,10 +94,12 @@ public class AccountsController : ControllerBase
             CreditLimit = dto.Type == AccountType.CreditCard ? (dto.CreditLimit ?? 0) : 0,
             CashbackRate = dto.CashbackRate is > 0 and <= 100 ? dto.CashbackRate.Value : 0,
             Color = string.IsNullOrWhiteSpace(dto.Color) ? DefaultColor(dto.Type) : dto.Color,
+            IsArchived = dto.Archived ?? false,
         };
         _db.Accounts.Add(acc);
         await _db.SaveChangesAsync();
         await RecalcAllAccounts(Uid);
+        await _rules.EvaluateAllAsync(Uid);
         return Ok(Project(acc));
     }
 
@@ -113,8 +120,10 @@ public class AccountsController : ControllerBase
         acc.CreditLimit = dto.Type == AccountType.CreditCard ? (dto.CreditLimit ?? 0) : 0;
         acc.CashbackRate = dto.CashbackRate is > 0 and <= 100 ? dto.CashbackRate.Value : 0;
         if (!string.IsNullOrWhiteSpace(dto.Color)) acc.Color = dto.Color;
+        if (dto.Archived is { } archived) acc.IsArchived = archived;
         await _db.SaveChangesAsync();
         await RecalcAllAccounts(Uid);
+        await _rules.EvaluateAllAsync(Uid);
         return Ok(Project(acc));
     }
 
@@ -130,6 +139,7 @@ public class AccountsController : ControllerBase
         if (acc.StartingBalance < 0) acc.StartingBalance = 0;
         await _db.SaveChangesAsync();
         await RecalcAllAccounts(Uid);
+        await _rules.EvaluateAllAsync(Uid);
         return Ok(Project(acc));
     }
 
@@ -145,6 +155,7 @@ public class AccountsController : ControllerBase
         acc.StartingBalance += dto.Amount;
         await _db.SaveChangesAsync();
         await RecalcAllAccounts(Uid);
+        await _rules.EvaluateAllAsync(Uid);
         return Ok(Project(acc));
     }
 
@@ -156,6 +167,7 @@ public class AccountsController : ControllerBase
         if (acc is null) return NotFound();
         _db.Accounts.Remove(acc); // операции останутся, AccountId станет NULL (SetNull)
         await _db.SaveChangesAsync();
+        await _rules.EvaluateAllAsync(Uid);
         return Ok();
     }
 

@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { AccountInfo, AccountType, FamilyMember, api, fmt } from './api';
+import { AccountInfo, AccountType, FamilyMember, api, fmt, AccountRule, AccountAlert, ReserveLoan } from './api';
 
 const TYPE_EMOJI: Record<AccountType, string> = { 0: '💳', 1: '🏦', 2: '💵', 3: '📈', 4: '🧾' };
 
@@ -9,12 +9,24 @@ export function AccountsPage({ onChanged }: { onChanged?: () => void }) {
   const [err, setErr] = useState('');
   const [editing, setEditing] = useState<AccountInfo | null>(null); // null = нет формы, объект (id 0) = новая
   const [showArchived, setShowArchived] = useState(false);
+  const [rules, setRules] = useState<AccountRule[]>([]);
+  const [alerts, setAlerts] = useState<AccountAlert[]>([]);
+  const [loans, setLoans] = useState<ReserveLoan[]>([]);
 
   const load = () => {
     api.get<AccountInfo[]>(`/api/accounts?includeArchived=${showArchived}`)
       .then(setList).catch(e => setErr(e.message));
   };
-  useEffect(load, [showArchived]);
+  const loadRules = () => {
+    api.get<AccountRule[]>('/api/account-rules').then(setRules).catch(() => {});
+  };
+  const loadAlerts = () => {
+    api.get<AccountAlert[]>('/api/alerts').then(setAlerts).catch(() => {});
+  };
+  const loadLoans = () => {
+    api.get<ReserveLoan[]>('/api/reserve-loans?activeOnly=true').then(setLoans).catch(() => {});
+  };
+  useEffect(() => { load(); loadRules(); loadAlerts(); loadLoans(); }, [showArchived]);
 
   const afterChange = () => { load(); onChanged?.(); };
 
@@ -52,6 +64,30 @@ export function AccountsPage({ onChanged }: { onChanged?: () => void }) {
   const debt = (list ?? []).filter(a => !a.isArchived && a.type === 1)
     .reduce((s, a) => s + a.balance, 0);
 
+  const minRulesFor = (a: AccountInfo) => rules.filter(r => r.kind === 1 && r.isEnabled && r.accountId === a.id);
+  const reserveRulesFor = (a: AccountInfo) => rules.filter(r => r.kind === 2 && r.isEnabled && (r.accountId === a.id || r.accountId === null));
+  const loansFor = (a: AccountInfo) => loans.filter(l => l.accountId === a.id);
+  const minBreached = (a: AccountInfo, r: AccountRule): boolean => {
+    const th = r.threshold ?? 0;
+    return a.type === 1 ? a.balance > th : a.balance < th;
+  };
+  const freeOf = (r: AccountRule, a: AccountInfo): number => {
+    const taken = loansFor(a).filter(l => l.ruleId === r.id).reduce((s, l) => s + l.amount, 0);
+    return Math.max(0, Math.min(a.balance, r.threshold ?? 0) - taken);
+  };
+  const takeLoan = async (a: AccountInfo, r: AccountRule) => {
+    const raw = prompt(`Сколько взять из резерва «${r.name}» на счёт «${a.name}»?`, '1000');
+    if (raw === null) return;
+    const amount = Number(raw.replace(',', '.')) || 0;
+    if (amount <= 0) { alert('Укажите сумму'); return; }
+    try { await api.post('/api/reserve-loans', { accountId: a.id, amount, ruleId: r.id }); afterChange(); }
+    catch (e: any) { alert(e.message); }
+  };
+  const returnLoan = async (id: number) => {
+    try { await api.post(`/api/reserve-loans/${id}/return`, {}); afterChange(); }
+    catch (e: any) { alert(e.message); }
+  };
+
   return (
     <div className="card">
       <h3>💳 Счета</h3>
@@ -63,7 +99,8 @@ export function AccountsPage({ onChanged }: { onChanged?: () => void }) {
             <div className={`metric ${debt > 0 ? 'neg' : ''}`}><span>{fmt(debt)}</span><small>долг по кредиткам</small></div>
           </div>
           {list.length === 0 && <div className="muted">Счетов пока нет — добавьте первый.</div>}
-          {list.map(a => (
+          <div className="accounts-grid">
+            {list.map(a => (
             <div className="account-card" key={a.id} style={{ borderLeftColor: a.color }}>
               <div className="account-head">
                 <b>{TYPE_EMOJI[a.type]} {a.name}</b>
@@ -84,6 +121,36 @@ export function AccountsPage({ onChanged }: { onChanged?: () => void }) {
               {a.type === 0 && a.cashbackRate > 0 && (
                 <div className="muted" style={{ marginTop: 2 }}>кэшбэк {a.cashbackRate}% · начислено {fmt(a.cashbackAccrued)}</div>
               )}
+
+              {minRulesFor(a).map(r => (
+                <div key={r.id} className={`badge-row ${minBreached(a, r) ? 'badge-danger' : ''}`}>
+                  🛑 Неснижаемый остаток: {fmt(r.threshold ?? 0)}
+                  {minBreached(a, r) && <span className="badge badge-danger">нарушен</span>}
+                </div>
+              ))}
+              {reserveRulesFor(a).map(r => (
+                <div className="limit-row" key={r.id}>
+                  <div className="limit-head">
+                    <span>🛟 Резерв: {fmt(r.threshold ?? 0)} · свободно {fmt(freeOf(r, a))}</span>
+                    <button className="btn small" onClick={() => takeLoan(a, r)}>Взять из резерва</button>
+                  </div>
+                </div>
+              ))}
+              {loansFor(a).map(l => (
+                <div className="tx-item" key={l.id}>
+                  <div className="tx-main">
+                    <div className="t">Заём из резерва: {fmt(l.amount)}</div>
+                    <div className="s">срок возврата {new Date(l.dueDate).toLocaleDateString('ru-RU')}{l.isOverdue ? ' · просрочен' : ''}</div>
+                  </div>
+                  <button className="btn small" onClick={() => returnLoan(l.id)}>Вернул</button>
+                </div>
+              ))}
+              {alerts.filter(al => al.accountId === a.id).map(al => (
+                <div key={al.id} className={`alert-row ${al.level === 'danger' ? 'alert-danger' : 'alert-warn'}`}>
+                  <div className="alert-msg">{al.message}</div>
+                </div>
+              ))}
+
               <div className="account-actions">
                 <button className="btn small" onClick={() => setEditing({ ...a })}>✏️</button>
                 {a.type !== 1 && a.cashbackRate >= 0 && (
@@ -95,6 +162,7 @@ export function AccountsPage({ onChanged }: { onChanged?: () => void }) {
               </div>
             </div>
           ))}
+          </div>
           <label className="muted" style={{ display: 'flex', gap: 6, alignItems: 'center', marginTop: 8 }}>
             <input type="checkbox" checked={showArchived} onChange={e => setShowArchived(e.target.checked)} />
             показывать архивные

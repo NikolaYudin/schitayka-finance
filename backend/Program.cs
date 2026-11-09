@@ -1,8 +1,10 @@
 using System.Text;
 using SchitayKa.Api.Data;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
+using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
+using System.Text.Json;
 using System.Text.Json.Serialization;
 
 var builder = WebApplication.CreateBuilder(args);
@@ -205,10 +207,17 @@ try
 }
 catch { }
 
-// Ключ JWT: из конфигурации, либо сгенерированный при старте (dev)
+// Ключ JWT: в Development допускаем генерацию при старте,
+// в остальных средах ключ обязателен — иначе сессии слетали бы при каждом рестарте.
 var jwtKey = builder.Configuration["Jwt:Key"];
-if (string.IsNullOrEmpty(jwtKey))
+if (string.IsNullOrWhiteSpace(jwtKey))
 {
+    if (!builder.Environment.IsDevelopment())
+    {
+        throw new InvalidOperationException(
+            "Jwt:Key не задан. Укажите ключ через переменную окружения Jwt__Key, " +
+            "user-secrets или appsettings.{Environment}.json — в рабочем режиме автогенерация запрещена.");
+    }
     jwtKey = Convert.ToHexString(System.Security.Cryptography.RandomNumberGenerator.GetBytes(32));
     builder.Configuration["Jwt:Key"] = jwtKey;
 }
@@ -252,6 +261,9 @@ var AddCols = new (string Table, string Col, string Def)[]
 {
     ("Users", "FamilyCode", "TEXT NULL"),
     ("Transactions", "AccountId", "INTEGER NULL"),
+    // Появился позже первых версий схемы; нужен, чтобы legacy-база
+    // соответствовала baseline-миграции InitialCreate.
+    ("Accounts", "Balance", "TEXT NOT NULL DEFAULT '0'"),
 };
 
 // Колонки таблиц, которые могут полностью отсутствовать в старой базе.
@@ -264,6 +276,7 @@ var NewTableCols = new (string Table, (string Col, string Def)[] Cols)[]
         ("Name", "TEXT NOT NULL"),
         ("Type", "INTEGER NOT NULL"),
         ("StartingBalance", "TEXT NOT NULL"),
+        ("Balance", "TEXT NOT NULL DEFAULT '0'"),
         ("CreditLimit", "TEXT NOT NULL DEFAULT '0'"),
         ("CashbackRate", "TEXT NOT NULL DEFAULT '0'"),
         ("CashbackAccrued", "TEXT NOT NULL DEFAULT '0'"),
@@ -395,29 +408,72 @@ HarmonizeDbCopies(new[]
     Path.GetFullPath(Path.Combine(builder.Environment.ContentRootPath, "..", "backend", "bin", "Debug", "net8.0", "data", "app.db")),
 });
 
-// Если основной базы нет — создаём её сразу (отдельным контекстом), чтобы ни один
-// EF-запрос никогда не обратился к несуществующей/устаревшей схеме.
-if (!File.Exists(dbPath))
+// --- EF Core Migrations ---
+// Новая БД создаётся и обновляется только через Migrate().
+// Старая база, созданная EnsureCreated (без __EFMigrationsHistory), один раз
+// помечается как «InitialCreate уже применён», после чего к ней применяются
+// последующие миграции. Данные пользователей при этом не пересоздаются.
+const string InitialMigrationId = "20261109065002_InitialCreate";
+
+bool TableExists(string path, string table)
 {
-    var opts = new DbContextOptionsBuilder<AppDbContext>().UseSqlite(connStr).Options;
-    using var initCtx = new AppDbContext(opts);
-    initCtx.Database.EnsureCreated();
-}
-else
-{
-    // База есть: убедимся, что демо-аккаунт существует (мог быть потерян при удалении bin-копии).
-    var opts = new DbContextOptionsBuilder<AppDbContext>().UseSqlite(connStr).Options;
-    using var checkCtx = new AppDbContext(opts);
-    if (!checkCtx.Users.Any(u => u.Email == "demo@schitayka.ru"))
+    try
     {
-        Console.WriteLine("[SchitayKa] В основной базе нет демо-аккаунта — пересоздаю её с чистым сидом ...");
-        checkCtx.Database.EnsureDeleted();
-        checkCtx.Database.EnsureCreated();
+        using var conn = new Microsoft.Data.Sqlite.SqliteConnection($"Data Source={path};Pooling=False");
+        conn.Open();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name=$name;";
+        cmd.Parameters.AddWithValue("$name", table);
+        return Convert.ToInt64(cmd.ExecuteScalar()) > 0;
     }
+    catch { return false; }
 }
 
+void BaselineLegacyDatabase(string path)
+{
+    using var conn = new Microsoft.Data.Sqlite.SqliteConnection($"Data Source={path};Pooling=False");
+    conn.Open();
+    void Exec(string sql) { using var c = conn.CreateCommand(); c.CommandText = sql; c.ExecuteNonQuery(); }
+    Exec(@"CREATE TABLE IF NOT EXISTS ""__EFMigrationsHistory"" (
+        ""MigrationId"" TEXT NOT NULL CONSTRAINT ""PK___EFMigrationsHistory"" PRIMARY KEY,
+        ""ProductVersion"" TEXT NOT NULL);");
+    Exec($@"INSERT OR IGNORE INTO ""__EFMigrationsHistory"" (""MigrationId"", ""ProductVersion"")
+            VALUES ('{InitialMigrationId}', '8.0.11');");
+}
+
+void PrepareDatabase()
+{
+    var opts = new DbContextOptionsBuilder<AppDbContext>().UseSqlite(connStr).Options;
+    using var db = new AppDbContext(opts);
+
+    if (!File.Exists(dbPath))
+    {
+        Console.WriteLine("[SchitayKa] База не найдена — создаю через EF-миграции ...");
+        db.Database.Migrate();
+        return;
+    }
+
+    if (!TableExists(dbPath, "__EFMigrationsHistory"))
+    {
+        if (!TableExists(dbPath, "Users"))
+        {
+            Console.WriteLine("[SchitayKa] Пустой/повреждённый файл БД — пересоздаю через миграции.");
+            db.Database.EnsureDeleted();
+            db.Database.Migrate();
+            return;
+        }
+
+        Console.WriteLine("[SchitayKa] Legacy-база без истории миграций — baseline InitialCreate (данные сохраняются).");
+        BaselineLegacyDatabase(dbPath);
+    }
+
+    db.Database.Migrate();
+}
+
+PrepareDatabase();
 Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools();
 builder.Services.AddDbContext<AppDbContext>(o => o.UseSqlite(connStr));
+builder.Services.AddScoped<SchitayKa.Api.Services.AccountRulesService>();
 
 builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
     .AddJwtBearer(o =>
@@ -436,31 +492,47 @@ builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
     });
 
 builder.Services.AddControllers().AddJsonOptions(o =>
-    o.JsonSerializerOptions.ReferenceHandler = ReferenceHandler.IgnoreCycles);
+{
+    o.JsonSerializerOptions.ReferenceHandler = ReferenceHandler.IgnoreCycles;
+    o.JsonSerializerOptions.Converters.Add(new FlexibleEnumConverter());
+});
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();
 
+// Ограничение частоты запросов для чувствительных endpoint'ов (вход/регистрация).
+// Политика "auth" подключается атрибутом [EnableRateLimiting("auth")] в AuthController.
+builder.Services.AddRateLimiter(o =>
+{
+    o.RejectionStatusCode = StatusCodes.Status429TooManyRequests;
+    // Отдельное окно на каждый IP: 10 попыток входа/регистрации в минуту.
+    o.AddPolicy("auth", context =>
+        System.Threading.RateLimiting.RateLimitPartition.GetFixedWindowLimiter(
+            partitionKey: context.Connection.RemoteIpAddress?.ToString() ?? "unknown",
+            factory: _ => new System.Threading.RateLimiting.FixedWindowRateLimiterOptions
+            {
+                PermitLimit = 10,
+                Window = TimeSpan.FromMinutes(1),
+                QueueLimit = 0,
+                AutoReplenishment = true,
+            }));
+});
+
 var app = builder.Build();
 
-// создание БД (для прода можно заменить на EF Migrations)
+// Схема уже приведена к актуальной через EF-миграции в PrepareDatabase().
 using (var scope = app.Services.CreateScope())
 {
     var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
 
-    // --- Самовосстановление: демо работает ВСЕГДА ---
-    // 1) Если базы нет — EnsureCreated создаёт её сразу с актуальной схемой.
-    db.Database.EnsureCreated();
-    // 2) На всякий случай ещё раз гармонизируем все известные копии app.db
-    //    (могли появиться, пока приложение было выключено). Данные сохраняются.
-    HarmonizeDbCopies(new[]
+    // Разрушительное пересоздание БД — только по явному флагу.
+    var reseedDemo = string.Equals(Environment.GetEnvironmentVariable("SCHITAYKA_RESEED_DEMO"),
+        "true", StringComparison.OrdinalIgnoreCase);
+    if (reseedDemo)
     {
-        dbPath,
-        Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "data", "app.db")),
-        Path.GetFullPath(Path.Combine(builder.Environment.ContentRootPath, "bin", "Debug", "net8.0", "data", "app.db")),
-    });
-    // 3) Схема могла измениться извне — сбрасываем пулы соединений EF, чтобы следующие
-    //    запросы использовали свежие sqlite-хэндлы.
-    Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools();
+        Console.WriteLine("[SchitayKa] SCHITAYKA_RESEED_DEMO=true — пересоздаю базу с чистым демо-сидом ...");
+        await db.Database.EnsureDeletedAsync();
+        db.Database.Migrate();
+    }
 
     var demoUser = db.Users.FirstOrDefault(u => u.Email == "demo@schitayka.ru");
     if (demoUser is not null)
@@ -476,13 +548,8 @@ using (var scope = app.Services.CreateScope())
     }
     else
     {
-        if (db.Users.Any())
-        {
-            Console.WriteLine("[SchitayKa] Демо-аккаунт отсутствует — пересоздаю базу с чистым сидом ...");
-            await db.Database.EnsureDeletedAsync();
-            db.Database.EnsureCreated();
-        }
-
+        // Демо-аккаунта нет — создаём только его, НЕ удаляя других пользователей.
+        // Полный reseed доступен лишь через SCHITAYKA_RESEED_DEMO=true (см. выше).
         string Hash(string pw) => SchitayKa.Api.Controllers.AuthController.HashPassword(pw);
         var demo = new User { Email = "demo@schitayka.ru", Name = "Демо-пользователь", PasswordHash = Hash("demo123"), StartingBalance = 45000 };
         db.Users.Add(demo);
@@ -570,7 +637,7 @@ async Task SeedDemoDataAsync(AppDbContext db, User demo)
             else if (t.CategoryId == cAuto.Id) t.AccountId = aCash.Id;                                  // транспорт — наличными
             else if (t.Type == TxType.Expense) t.AccountId = aDebit.Id;                                  // остальное — основная карта
         }
-        db.Transactions.Add(new Transaction { Category = cZarplata, UserId = demo.Id, Type = TxType.Income, Amount = 15000, Date = m.AddDays(5), Comment = "Погашение кредитной карты", AccountId = aCredit.Id });
+        db.Transactions.Add(new Transaction { Category = cZarplata, UserId = demo.Id, Type = TxType.Income, Amount = 15000, Date = m.AddDays(5), Comment = "Погашение кредитной карты", AccountId = aCredit.Id, IsTransfer = true });
     }
 
     // Семья: демо-пользователь — владелец семейной группы, приглашение принято
@@ -594,8 +661,8 @@ async Task SeedDemoDataAsync(AppDbContext db, User demo)
     // Переводы между счетами (пары расход/доход): вклад, погашение кредитки, наличные
     void Transfer(string comment, decimal amount, Account from, Account to, int day)
     {
-        db.Transactions.Add(new Transaction { Category = cOther, UserId = demo.Id, Type = TxType.Expense, Amount = amount, Date = m.AddDays(day), Comment = comment, AccountId = from.Id });
-        db.Transactions.Add(new Transaction { Category = cOther, UserId = demo.Id, Type = TxType.Income, Amount = amount, Date = m.AddDays(day), Comment = comment, AccountId = to.Id });
+        db.Transactions.Add(new Transaction { Category = cOther, UserId = demo.Id, Type = TxType.Expense, Amount = amount, Date = m.AddDays(day), Comment = comment, AccountId = from.Id, IsTransfer = true });
+        db.Transactions.Add(new Transaction { Category = cOther, UserId = demo.Id, Type = TxType.Income, Amount = amount, Date = m.AddDays(day), Comment = comment, AccountId = to.Id, IsTransfer = true });
     }
     if (!db.Transactions.Any(t => t.UserId == demo.Id && t.Comment.StartsWith("Перевод")))
     {
@@ -725,6 +792,7 @@ app.Use(async (ctx, next) =>
     await next();
 });
 
+app.UseRateLimiter();
 app.UseAuthentication();
 app.UseAuthorization();
 
@@ -763,3 +831,31 @@ app.MapFallback("/{*path}", async ctx =>
 });
 
 app.Run();
+
+// Гибкий JSON-конвертер для enum: принимает числа и строки ("Kind"/"TxType"),
+// отдаёт числа — фронтенд и API остаются числовыми.
+public sealed class FlexibleEnumConverter : System.Text.Json.Serialization.JsonConverterFactory
+{
+    public override bool CanConvert(Type typeToConvert) => typeToConvert.IsEnum;
+
+    public override System.Text.Json.Serialization.JsonConverter CreateConverter(Type typeToConvert, System.Text.Json.JsonSerializerOptions options)
+        => (System.Text.Json.Serialization.JsonConverter)Activator.CreateInstance(
+            typeof(FlexibleEnumConverter<>).MakeGenericType(typeToConvert))!;
+}
+
+public sealed class FlexibleEnumConverter<T> : System.Text.Json.Serialization.JsonConverter<T> where T : struct, Enum
+{
+    public override T Read(ref Utf8JsonReader reader, Type typeToConvert, System.Text.Json.JsonSerializerOptions options)
+    {
+        if (reader.TokenType == JsonTokenType.Number)
+        {
+            _ = reader.TryGetInt32(out var i);
+            return (T)Enum.ToObject(typeof(T), i);
+        }
+        var s = reader.GetString();
+        return (T)Enum.Parse(typeof(T), s ?? string.Empty, true);
+    }
+
+    public override void Write(Utf8JsonWriter writer, T value, System.Text.Json.JsonSerializerOptions options)
+        => writer.WriteNumberValue(Convert.ToInt32(value));
+}

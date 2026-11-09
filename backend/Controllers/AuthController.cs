@@ -4,6 +4,7 @@ using System.Security.Cryptography;
 using System.Text;
 using SchitayKa.Api.Data;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
 
@@ -14,6 +15,7 @@ public record LoginDto(string Email, string Password);
 
 [ApiController]
 [Route("api/auth")]
+[EnableRateLimiting("auth")]
 public class AuthController : ControllerBase
 {
     private readonly AppDbContext _db;

@@ -13,6 +13,9 @@ public class AppDbContext : DbContext
     public DbSet<BudgetLimit> BudgetLimits => Set<BudgetLimit>();
     public DbSet<Account> Accounts => Set<Account>();
     public DbSet<FamilyInvitation> FamilyInvitations => Set<FamilyInvitation>();
+    public DbSet<AccountRule> AccountRules => Set<AccountRule>();
+    public DbSet<AccountAlert> AccountAlerts => Set<AccountAlert>();
+    public DbSet<ReserveLoan> ReserveLoans => Set<ReserveLoan>();
 
     protected override void OnModelCreating(ModelBuilder mb)
     {
@@ -36,7 +39,7 @@ public class AppDbContext : DbContext
             .HasOne(l => l.User).WithMany(u => u.BudgetLimits).HasForeignKey(l => l.UserId);
         mb.Entity<BudgetLimit>()
             .HasOne(l => l.Category).WithMany(c => c.Limits).HasForeignKey(l => l.CategoryId);
-        mb.Entity<BudgetLimit>().HasIndex(l => new { l.UserId, l.CategoryId, l.Month }).IsUnique();
+        mb.Entity<BudgetLimit>().HasIndex(l => new { l.UserId, l.CategoryId, l.Year, l.Month }).IsUnique();
 
         mb.Entity<Account>()
             .HasOne(a => a.User).WithMany(u => u.Accounts).HasForeignKey(a => a.UserId);
@@ -47,6 +50,35 @@ public class AppDbContext : DbContext
             .OnDelete(DeleteBehavior.SetNull);
 
         mb.Entity<FamilyInvitation>().HasIndex(i => i.Code).IsUnique();
+
+        // --- Правила счетов, уведомления и займы из резерва ---
+        mb.Entity<AccountRule>().HasIndex(r => new { r.UserId, r.Priority });
+        mb.Entity<AccountRule>()
+            .HasOne(r => r.User).WithMany().HasForeignKey(r => r.UserId).OnDelete(DeleteBehavior.Cascade);
+        mb.Entity<AccountRule>()
+            .HasOne(r => r.Account).WithMany().HasForeignKey(r => r.AccountId).OnDelete(DeleteBehavior.Cascade);
+        mb.Entity<AccountRule>()
+            .HasOne<Category>().WithMany().HasForeignKey(r => r.MatchCategoryId).OnDelete(DeleteBehavior.SetNull);
+        mb.Entity<AccountRule>()
+            .HasOne<Category>().WithMany().HasForeignKey(r => r.SetCategoryId).OnDelete(DeleteBehavior.SetNull);
+
+        mb.Entity<AccountAlert>().HasIndex(a => new { a.UserId, a.AccountId, a.ResolvedAt });
+        mb.Entity<AccountAlert>()
+            .HasOne<User>().WithMany().HasForeignKey(a => a.UserId).OnDelete(DeleteBehavior.Cascade);
+        mb.Entity<AccountAlert>()
+            .HasOne<Account>().WithMany().HasForeignKey(a => a.AccountId).OnDelete(DeleteBehavior.SetNull);
+        mb.Entity<AccountAlert>()
+            .HasOne<AccountRule>().WithMany().HasForeignKey(a => a.RuleId).OnDelete(DeleteBehavior.SetNull);
+
+        mb.Entity<ReserveLoan>().HasIndex(l => new { l.UserId, l.ReturnedAt, l.DueDate });
+        mb.Entity<ReserveLoan>()
+            .HasOne<User>().WithMany().HasForeignKey(l => l.UserId).OnDelete(DeleteBehavior.Cascade);
+        mb.Entity<ReserveLoan>()
+            .HasOne<Account>().WithMany().HasForeignKey(l => l.AccountId).OnDelete(DeleteBehavior.Cascade);
+        mb.Entity<ReserveLoan>()
+            .HasOne<AccountRule>().WithMany().HasForeignKey(l => l.RuleId).OnDelete(DeleteBehavior.SetNull);
+        mb.Entity<ReserveLoan>()
+            .HasOne<Transaction>().WithMany().HasForeignKey(l => l.TransactionId).OnDelete(DeleteBehavior.SetNull);
     }
 }
 
@@ -110,6 +142,9 @@ public class Transaction
     public string Comment { get; set; } = "";
     public int? AccountId { get; set; }              // счёт, к которому относится операция
     public Account? Account { get; set; }
+    // Перевод между своими счетами (пара расход+доход): не считается доходом/расходом
+    // в аналитике и рекомендациях, но влияет на балансы счетов.
+    public bool IsTransfer { get; set; }
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
 }
 
@@ -169,4 +204,68 @@ public class BudgetLimit
     public int Year { get; set; }
     public int Month { get; set; }                   // 1..12
     public decimal Limit { get; set; }
+}
+
+// ---- Правила счетов ----
+public enum AccountRuleKind { AutoAssign = 0, MinBalance = 1, EmergencyReserve = 2 }
+
+public class AccountRule
+{
+    public int Id { get; set; }
+    public int UserId { get; set; }
+    public User User { get; set; } = null!;
+    public string Name { get; set; } = "";
+    public AccountRuleKind Kind { get; set; }
+    public bool IsEnabled { get; set; } = true;
+    public int Priority { get; set; } = 100;          // меньше = раньше (для AutoAssign)
+
+    // Для AutoAssign и MinBalance — обязателен; для EmergencyReserve null = общий резерв.
+    public int? AccountId { get; set; }
+    public Account? Account { get; set; }
+
+    // --- AutoAssign ---
+    public TxType? TxType { get; set; }
+    public int? MatchCategoryId { get; set; }
+    public string? CommentContains { get; set; }
+    public decimal? AmountMin { get; set; }
+    public decimal? AmountMax { get; set; }
+    public int? SetCategoryId { get; set; }           // опционально: автокатегория
+
+    // --- MinBalance / EmergencyReserve ---
+    public decimal? Threshold { get; set; }            // минимальный остаток / размер резерва
+    public int? DefaultReturnDays { get; set; }        // срок возврата займа из резерва
+    public bool NotifyInApp { get; set; } = true;
+
+    public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
+}
+
+// Уведомление по правилу счёта: неснижаемый остаток или нарушение резерва.
+public class AccountAlert
+{
+    public int Id { get; set; }
+    public int UserId { get; set; }
+    public int? AccountId { get; set; }                // null — уведомление по общему резерву
+    public int? RuleId { get; set; }
+    public string Kind { get; set; } = "";             // MinBalance | ReserveBroken | ReserveOverdue
+    public string Level { get; set; } = "warn";        // warn | danger
+    public string Message { get; set; } = "";
+    public decimal BalanceSnapshot { get; set; }
+    public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
+    public DateTime? ResolvedAt { get; set; }
+    public DateTime? DismissedAt { get; set; }
+}
+
+// Заём из резерва: деньги потрачены, пользователю нужно вернуть их в резерв.
+public class ReserveLoan
+{
+    public int Id { get; set; }
+    public int UserId { get; set; }
+    public int AccountId { get; set; }
+    public int? RuleId { get; set; }
+    public decimal Amount { get; set; }
+    public DateTime TakenAt { get; set; } = DateTime.UtcNow;
+    public DateTime DueDate { get; set; }
+    public DateTime? ReturnedAt { get; set; }
+    public int? TransactionId { get; set; }
+    public string Comment { get; set; } = "";
 }

@@ -49,6 +49,7 @@ export interface Tx {
   id: number; categoryId: number; type: TxType; amount: number; date: string;
   comment: string; categoryName?: string; categoryColor?: string;
   accountId?: number | null; accountName?: string | null;
+  isTransfer?: boolean;
 }
 export type AccountType = 0 | 1 | 2 | 3 | 4; // дебет, кредит, наличные, вклад, прочее
 export interface AccountInfo {
@@ -65,13 +66,63 @@ export interface LimitRow { id: number; categoryId: number; limit: number; name:
 export interface ShareRow { categoryId: number; name: string; color: string; total: number; }
 export interface MonthRow { year: number; month: number; income: number; expense: number; }
 export interface Recommendation { level: 'danger' | 'warn' | 'info' | 'good'; icon: string; text: string; }
+export type AccountRuleKind = 0 | 1 | 2; // 0 автоподстановка, 1 неснижаемый остаток, 2 резерв
+export interface AccountRule {
+  id: number; name: string; kind: AccountRuleKind; kindName: string;
+  isEnabled: boolean; priority: number;
+  accountId: number | null; accountName: string | null;
+  txType: TxType | null; matchCategoryId: number | null; matchCategoryName: string | null;
+  commentContains: string | null; amountMin: number | null; amountMax: number | null;
+  setCategoryId: number | null; setCategoryName: string | null;
+  threshold: number | null; defaultReturnDays: number | null; notifyInApp: boolean;
+  createdAt: string;
+}
+export interface AccountAlert {
+  id: number; accountId: number | null; ruleId: number | null; kind: string;
+  level: 'warn' | 'danger'; message: string; balanceSnapshot: number; createdAt: string;
+  accountName: string | null;
+}
+export interface ReserveLoan {
+  id: number; accountId: number; accountName: string | null; ruleId: number | null;
+  amount: number; takenAt: string; dueDate: string; returnedAt: string | null;
+  transactionId: number | null; comment: string; isOverdue: boolean;
+}
+export interface ReserveInfo {
+  ruleId: number; ruleName: string; accountId: number | null; accountName: string | null;
+  threshold: number; balance: number; taken: number; free: number;
+}
 export interface Summary {
-  year: number; month: number; startingBalance: number;
-  balance: number; monthIncome: number; monthExpense: number; totalBalance: number; savingsRate: number;
-  byMonth: MonthRow[]; expenseShare: ShareRow[]; limits: LimitRow[]; goals: Goal[];
-  accounts: Pick<AccountInfo, 'id'|'name'|'type'|'typeName'|'balance'|'creditLimit'|'cashbackRate'|'cashbackAccrued'|'color'>[];
+  year: number;
+  month: number;
+  startingBalance: number;
+  balance: number;
+  monthIncome: number;
+  monthExpense: number;
+  totalBalance: number;
+  savingsRate: number;
+  byMonth: MonthRow[];
+  expenseShare: ShareRow[];
+  limits: LimitRow[];
+  goals: Goal[];
+  accounts: AccountSummaryRow[];
   cashbackTotal: number;
   recommendations: Recommendation[];
+  alerts: AccountAlert[];
+  reserveLoans: ReserveLoan[];
+  reserves: ReserveInfo[];
+  reserveTaken: number;
+}
+
+export interface AccountSummaryRow {
+  id: number;
+  name: string;
+  type: AccountType;
+  typeName: string;
+  balance: number;
+  creditLimit: number;
+  cashbackRate: number;
+  cashbackAccrued: number;
+  color: string;
 }
 
 export const fmt = (n: number) => new Intl.NumberFormat('ru-RU', { maximumFractionDigits: 0 }).format(n) + ' ₽';

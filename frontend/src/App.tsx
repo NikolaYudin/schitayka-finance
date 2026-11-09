@@ -6,6 +6,9 @@ import { Dashboard, Journal, QuickTxModal } from './components';
 import { GoalsPage } from './GoalsPage';
 import { AccountsPage } from './AccountsPage';
 import { FamilyCard } from './AccountsPage';
+import { useTheme, type ThemeController, type ThemeMode } from './theme';
+import { ToastProvider } from './toasts';
+import { AccountRulesCard } from './AccountRulesCard';
 
 type Route = '' | 'journal' | 'accounts' | 'goals' | 'settings' | 'login';
 function useHashRoute(): [Route, (r: Route) => void] {
@@ -24,6 +27,7 @@ function useHashRoute(): [Route, (r: Route) => void] {
 
 export default function App() {
   const auth = useAuth();
+  const theme = useTheme();
   const [route, go] = useHashRoute();
   const [showQuick, setShowQuick] = useState(false);
   const [cats, setCats] = useState<Category[]>([]);
@@ -38,21 +42,42 @@ export default function App() {
     }
   }, [auth.user, tick]);
 
+  // Навигация — только в эффекте, а не в теле рендера (иначе side effect при каждом рендере).
+  useEffect(() => {
+    if (auth.loading) return;
+    if (!auth.user) {
+      if (route !== 'login') go('login');
+    } else if (route === 'login') {
+      go('');
+    }
+  }, [auth.loading, auth.user, route]);
+
   if (auth.loading) return <div className="app"><div className="card muted">Проверка сессии…</div></div>;
-  if (!auth.user) { if (route !== 'login') location.hash = '#/login'; return <LoginPage auth={auth} />; }
-  if (route === 'login') { go(''); }
+  if (!auth.user) return <LoginPage auth={auth} />;
 
   return (
+    <ToastProvider>
     <div className="app">
       <header className="topbar">
         <h1 className="logo">🧮 СчитайКа</h1>
-        <span className="muted">личный учёт финансов</span>
+        <div className="topbar-actions">
+          <span className="muted">личный учёт финансов</span>
+          <button
+            type="button"
+            className="theme-toggle"
+            onClick={theme.toggle}
+            title={theme.resolved === 'dark' ? 'Включить светлую тему' : 'Включить тёмную тему'}
+            aria-label={theme.resolved === 'dark' ? 'Включить светлую тему' : 'Включить тёмную тему'}
+          >
+            {theme.resolved === 'dark' ? '☀️' : '🌙'}
+          </button>
+        </div>
       </header>
 
       {route === 'journal' ? <Journal key={tick} />
         : route === 'accounts' ? <AccountsPage key={tick} onChanged={() => setTick(t => t + 1)} />
         : route === 'goals' ? <GoalsPage key={tick} />
-        : route === 'settings' ? <Settings auth={auth} categories={cats} onReload={() => setTick(t => t + 1)} />
+        : route === 'settings' ? <Settings auth={auth} categories={cats} theme={theme} onReload={() => setTick(t => t + 1)} />
         : <Dashboard key={tick} />}
 
       {/* FAB доступна на основных экранах */}
@@ -71,12 +96,13 @@ export default function App() {
         <a href="#/goals" className={route === 'goals' ? 'active' : ''} onClick={() => go('goals')}>🎯 Цели</a>
         <a href="#/settings" className={route === 'settings' ? 'active' : ''} onClick={() => go('settings')}>⚙️ Настройки</a>
       </nav>
-    </div>
+      </div>
+    </ToastProvider>
   );
 }
 
-function Settings({ auth, categories, onReload }: {
-  auth: ReturnType<typeof useAuth>; categories: Category[]; onReload: () => void;
+function Settings({ auth, categories, theme, onReload }: {
+  auth: ReturnType<typeof useAuth>; categories: Category[]; theme: ThemeController; onReload: () => void;
 }) {
   return (
     <>
@@ -91,9 +117,38 @@ function Settings({ auth, categories, onReload }: {
         <StartingBalance auth={auth} />
         <button className="btn danger-ghost" onClick={auth.logout}>Выйти</button>
       </div>
+      <AppearanceCard theme={theme} />
       <CategoriesCard categories={categories} onChanged={() => { onReload(); auth.refresh(); }} />
       <FamilyCard />
+      <AccountRulesCard />
     </>
+  );
+}
+
+// Оформление: светлая / тёмная / системная тема
+function AppearanceCard({ theme }: { theme: ThemeController }) {
+  const options: { value: ThemeMode; icon: string; label: string }[] = [
+    { value: 'light', icon: '☀️', label: 'Светлая' },
+    { value: 'dark', icon: '🌙', label: 'Тёмная' },
+    { value: 'system', icon: '🖥️', label: 'Системная' },
+  ];
+  return (
+    <div className="card">
+      <h3>🎨 Оформление</h3>
+      <div className="muted">Тема применяется сразу и запоминается на этом устройстве.</div>
+      <div className="segmented">
+        {options.map(o => (
+          <button
+            key={o.value}
+            type="button"
+            className={`btn ${theme.mode === o.value ? 'active' : ''}`}
+            onClick={() => theme.setMode(o.value)}
+          >
+            {o.icon} {o.label}
+          </button>
+        ))}
+      </div>
+    </div>
   );
 }
 

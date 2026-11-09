@@ -1,11 +1,14 @@
-import { useEffect, useState } from 'react';
-import { Summary, Category, Tx, TxType, AccountInfo, api, fmt, MONTHS_RU } from './api';
+import { useEffect, useRef, useState } from 'react';
+import { Summary, Category, Tx, TxType, AccountInfo, api, fmt, MONTHS_RU, AccountAlert, ReserveInfo, ReserveLoan } from './api';
+import { useToast } from './toasts';
 
 // ---- Дашборд: обзор бюджета + анализ + рекомендации ----
 export function Dashboard() {
   const [sum, setSum] = useState<Summary | null>(null);
   const [recent, setRecent] = useState<Tx[]>([]);
   const [err, setErr] = useState('');
+  const toast = useToast();
+  const seenAlerts = useRef<Set<number>>(new Set());
 
   const reload = () => {
     const now = new Date();
@@ -15,6 +18,23 @@ export function Dashboard() {
     ]).then(([s, t]) => { setSum(s); setRecent(t); }).catch(e => setErr(e.message));
   };
   useEffect(reload, []);
+
+  // Тосты на новые активные уведомления (после закрытия/развязки не спамим).
+  useEffect(() => {
+    const alerts = sum?.alerts ?? [];
+    for (const a of alerts) {
+      if (seenAlerts.current.has(a.id)) continue;
+      seenAlerts.current.add(a.id);
+      toast(a.level === 'danger' ? 'danger' : 'warn', `⚠️ ${a.message}`);
+    }
+  }, [sum, toast]);
+
+  const dismissAlert = async (id: number) => {
+    try { await api.post(`/api/alerts/${id}/dismiss`); reload(); } catch { /* ignore */ }
+  };
+  const returnLoan = async (id: number) => {
+    try { await api.post(`/api/reserve-loans/${id}/return`, {}); reload(); } catch { /* ignore */ }
+  };
 
   if (err) return <div className="alert">{err}</div>;
   if (!sum) return <div className="muted card">Загрузка…</div>;
@@ -122,6 +142,74 @@ export function Dashboard() {
         </div>
       )}
 
+      {sum.alerts.length > 0 && (
+        <div className="card">
+          <h3>🚨 Уведомления по правилам счетов</h3>
+          {sum.alerts.map(a => (
+            <div key={a.id} className={`alert-row ${a.level === 'danger' ? 'alert-danger' : 'alert-warn'}`}>
+              <div className="alert-msg">{a.message}</div>
+              <div className="muted" style={{ marginTop: 2 }}>
+                {a.kind === 'MinBalance' ? 'Неснижаемый остаток'
+                  : a.kind === 'ReserveBroken' ? 'Нарушение резерва'
+                  : a.kind === 'ReserveOverdue' ? 'Просроченный заём' : a.kind}
+                {a.accountName ? ` · счёт «${a.accountName}»` : ''}
+              </div>
+              <div style={{ marginTop: 6 }}>
+                <button className="btn small" onClick={() => dismissAlert(a.id)}>✓ Увидел</button>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {sum.reserves.length > 0 && (
+        <div className="card">
+          <h3>🛟 Резерв на экстренные нужды</h3>
+          {sum.reserves.map(r => {
+            const pct = r.threshold > 0 ? Math.min(100, (r.free / r.threshold) * 100) : 0;
+            const broken = r.free <= 0;
+            return (
+              <div className="limit-row" key={r.ruleId}>
+                <div className="limit-head">
+                  <span><b>{r.accountName ?? 'Общий резерв'}</b> · {r.ruleName}</span>
+                  <span className={broken ? 'badge badge-danger' : 'badge badge-muted'}>
+                    свободно {fmt(r.free)} из {fmt(r.threshold)}
+                  </span>
+                </div>
+                <div className="progress">
+                  <div className={broken ? 'over' : ''} style={{ width: `${pct}%`, background: broken ? undefined : 'var(--success)' }} />
+                </div>
+                <div className="muted" style={{ marginTop: 2 }}>
+                  Резерв {fmt(r.threshold)} · взято из резерва {fmt(r.taken)}
+                  {(() => {
+                    const loan = sum.reserveLoans.find(l => l.ruleId === r.ruleId);
+                    return loan ? ` · вернуть до ${new Date(loan.dueDate).toLocaleDateString('ru-RU')}` : '';
+                  })()}
+                </div>
+              </div>
+            );
+          })}
+          {sum.reserveLoans.length > 0 && (
+            <div style={{ marginTop: 8 }}>
+              {sum.reserveLoans.map(l => (
+                <div className="tx-item" key={l.id}>
+                  <div className="tx-main">
+                    <div className="t">Заём из резерва: {fmt(l.amount)}</div>
+                    <div className="s">
+                      {l.accountName ? `счёт «${l.accountName}» · ` : ''}
+                      {l.comment ? `${l.comment} · ` : ''}
+                      срок возврата {new Date(l.dueDate).toLocaleDateString('ru-RU')}
+                      {l.isOverdue ? ' · ПРОСРОЧЕН' : ''}
+                    </div>
+                  </div>
+                  <button className="btn small" onClick={() => returnLoan(l.id)}>Вернул</button>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
       <div className="card">
         <h3>🧾 Последние операции</h3>
         {recent.length === 0 ? <div className="muted">В этом месяце операций нет. Нажмите ＋ внизу справа.</div> :
@@ -138,7 +226,7 @@ export function TxRow({ tx, onDelete }: { tx: Tx; onDelete?: (id: number) => voi
       <div className="tx-dot" style={{ background: tx.categoryColor || '#718096' }} />
       <div className="tx-main">
         <div className="t">{tx.categoryName}{tx.comment ? ` — ${tx.comment}` : ''}</div>
-        <div className="s">{new Date(tx.date).toLocaleDateString('ru-RU')}{tx.accountName ? ` · ${tx.accountName}` : ''}</div>
+        <div className="s">{new Date(tx.date).toLocaleDateString('ru-RU')}{tx.accountName ? ` · ${tx.accountName}` : ''}{tx.isTransfer ? ' · перевод' : ''}</div>
       </div>
       <div className={`tx-sum ${income ? 'income' : 'expense'}`}>{income ? '+' : '−'}{fmt(tx.amount)}</div>
       {onDelete && <button className="btn danger-ghost small" onClick={() => onDelete(tx.id)}>✕</button>}
@@ -159,16 +247,42 @@ export function QuickTxModal({ categories, accounts = [], onClose, onSaved }: {
   const [accountId, setAccountId] = useState<number | null>(accounts[0]?.id ?? null);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState('');
+  const [reserves, setReserves] = useState<ReserveInfo[]>([]);
+  const [warn, setWarn] = useState<{ reserve: ReserveInfo; amount: number } | null>(null);
 
   useEffect(() => { if (cats.length && !cats.some(c => c.id === categoryId)) setCategoryId(cats[0].id); }, [type]);
+  useEffect(() => {
+    api.get<{ reserves: ReserveInfo[] }>('/api/budget/summary').then(s => setReserves(s.reserves ?? [])).catch(() => {});
+  }, []);
+
+  const saveTxn = async () => {
+    await api.post('/api/transactions', {
+      categoryId, type, amount: Number(amount.replace(',', '.')), date, comment, accountId,
+    });
+    onSaved(); onClose();
+  };
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault(); setErr(''); setBusy(true);
+    const acc = accounts.find(a => a.id === accountId) || null;
+    const amountVal = Number(amount.replace(',', '.')) || 0;
+    const reserve = type === 1 && acc ? reserves.find(r => r.accountId === acc.id || r.accountId === null) : undefined;
+    // Расход мог бы опустить баланс ниже свободного резерва — мягкое предупреждение + оформление займа.
+    if (reserve && acc && acc.balance - amountVal < reserve.free) {
+      setWarn({ reserve, amount: amountVal });
+      setBusy(false);
+      return;
+    }
+    try { await saveTxn(); } catch (ex: any) { setErr(ex.message); } finally { setBusy(false); }
+  };
+
+  const takeLoan = async () => {
+    if (!warn) return;
+    setBusy(true); setErr('');
     try {
-      await api.post('/api/transactions', {
-        categoryId, type, amount: Number(amount.replace(',', '.')), date, comment, accountId,
-      });
-      onSaved(); onClose();
+      await api.post('/api/reserve-loans', { accountId: accountId!, amount: warn.amount, ruleId: warn.reserve.ruleId });
+      await saveTxn();
+      setWarn(null);
     } catch (ex: any) { setErr(ex.message); } finally { setBusy(false); }
   };
 
@@ -198,6 +312,18 @@ export function QuickTxModal({ categories, accounts = [], onClose, onSaved }: {
           </label>
         )}
         <label>Комментарий<input value={comment} onChange={e => setComment(e.target.value)} placeholder="необязательно" /></label>
+        {warn && (
+          <div className={`alert-row ${warn.reserve.free <= 0 ? 'alert-danger' : 'alert-warn'}`}>
+            <div className="alert-msg">
+              ⚠️ Трата {fmt(warn.amount)} может затронуть резерв «{warn.reserve.ruleName}» (свободно {fmt(warn.reserve.free)}).
+              Оформить это как заём из резерва?
+            </div>
+            <div className="form-row" style={{ gap: 8, marginTop: 8 }}>
+              <button type="button" className="btn primary small" disabled={busy} onClick={takeLoan}>Оформить заём из резерва</button>
+              <button type="button" className="btn small" disabled={busy} onClick={() => setWarn(null)}>Просто сохранить</button>
+            </div>
+          </div>
+        )}
         {err && <div className="alert">{err}</div>}
         <button className="btn primary block" disabled={busy || !cats.length}>{busy ? '…' : 'Сохранить'}</button>
       </form>
@@ -226,8 +352,8 @@ export function Journal() {
     catch (e: any) { alert(e.message); }
   };
 
-  const totalIn = (txs ?? []).filter(t => t.type === 0).reduce((s, t) => s + t.amount, 0);
-  const totalOut = (txs ?? []).filter(t => t.type === 1).reduce((s, t) => s + t.amount, 0);
+  const totalIn = (txs ?? []).filter(t => t.type === 0 && !t.isTransfer).reduce((s, t) => s + t.amount, 0);
+  const totalOut = (txs ?? []).filter(t => t.type === 1 && !t.isTransfer).reduce((s, t) => s + t.amount, 0);
 
   return (
     <div className="card">

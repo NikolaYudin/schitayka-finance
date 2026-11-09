@@ -12,7 +12,9 @@ namespace SchitayKa.Api.Controllers;
 public class BudgetController : ControllerBase
 {
     private readonly AppDbContext _db;
-    public BudgetController(AppDbContext db) { _db = db; }
+    private readonly SchitayKa.Api.Services.AccountRulesService _rules;
+    public BudgetController(AppDbContext db, SchitayKa.Api.Services.AccountRulesService rules)
+    { _db = db; _rules = rules; }
 
     private int CurrentUserId => UserAccess.UidOf(User);
 
@@ -38,24 +40,80 @@ public class BudgetController : ControllerBase
         if (uid < 0) return Unauthorized(new { error = "Требуется вход" });
         if (year <= 0 || month <= 0) { year = DateTime.Today.Year; month = DateTime.Today.Month; }
 
+        // Обновляем уведомления по правилам счетов перед отдачей сводки:
+        // срок займа мог наступить без новых операций.
+        await _rules.EvaluateAllAsync(uid);
+
         var user = await _db.Users.FindAsync(uid);
         var txs = await _db.Transactions.Where(t => t.UserId == uid).ToListAsync();
         var cats = await _db.Categories.Where(c => c.UserId == uid).ToListAsync();
         var limits = await _db.BudgetLimits.Where(l => l.UserId == uid && l.Year == year && l.Month == month).ToListAsync();
         var accounts = await _db.Accounts.Where(a => a.UserId == uid && !a.IsArchived).ToListAsync();
 
+        var alerts = await _db.AccountAlerts
+            .Where(a => a.UserId == uid && a.ResolvedAt == null && a.DismissedAt == null)
+            .OrderBy(a => a.Level == "danger" ? 0 : 1).ThenByDescending(a => a.CreatedAt)
+            .Select(a => new
+            {
+                a.Id, a.AccountId, a.RuleId, a.Kind, a.Level, a.Message, a.BalanceSnapshot, a.CreatedAt,
+                accountName = a.AccountId == null ? null
+                    : _db.Accounts.Where(x => x.Id == a.AccountId).Select(x => x.Name).FirstOrDefault(),
+            })
+            .ToListAsync();
+
+        var reserveLoans = await _db.ReserveLoans
+            .Where(l => l.UserId == uid && l.ReturnedAt == null)
+            .OrderBy(l => l.DueDate).ThenByDescending(l => l.Id)
+            .Select(l => new
+            {
+                l.Id, l.AccountId, l.RuleId, l.Amount, l.TakenAt, l.DueDate, l.Comment,
+                accountName = _db.Accounts.Where(a => a.Id == l.AccountId).Select(a => a.Name).FirstOrDefault(),
+                isOverdue = l.DueDate < DateTime.UtcNow.Date,
+            })
+            .ToListAsync();
+
+        var reserveRules = await _db.AccountRules
+            .Where(r => r.UserId == uid && r.Kind == AccountRuleKind.EmergencyReserve
+                        && r.IsEnabled && r.Threshold != null)
+            .OrderBy(r => r.AccountId == null ? 0 : 1).ThenBy(r => r.Id)
+            .ToListAsync();
+
+        var totalNonCredit = accounts.Where(a => a.Type != AccountType.CreditCard).Sum(a => a.Balance);
+        var reserveTaken = reserveLoans.Sum(l => l.Amount);
+        var reserves = reserveRules.Select(r =>
+        {
+            var balance = r.AccountId is { } aid
+                ? accounts.FirstOrDefault(a => a.Id == aid)?.Balance ?? 0
+                : totalNonCredit;
+            var taken = r.AccountId is { } aid2
+                ? reserveLoans.Where(l => l.AccountId == aid2).Sum(l => l.Amount)
+                : reserveTaken;
+            var threshold = r.Threshold ?? 0;
+            return new
+            {
+                ruleId = r.Id, ruleName = r.Name, r.AccountId,
+                accountName = r.AccountId is { } ra
+                    ? accounts.FirstOrDefault(a => a.Id == ra)?.Name
+                    : null,
+                threshold, balance, taken,
+                free = SchitayKa.Api.Services.AccountRulesService.FreeReserve(balance, threshold, taken),
+            };
+        }).ToList();
+
         // Итог по счетам: активные счета минус долги по кредиткам.
         // Если счетов нет — считаем по старому механизму (стартовый баланс + все операции).
+        // Переводы между своими счетами не доход и не расход: они влияют только на балансы.
+        var analytics = txs.Where(t => !t.IsTransfer).ToList();
         decimal totalBalance = accounts.Count > 0
             ? accounts.Sum(a => a.Type == AccountType.CreditCard ? -a.Balance : a.Balance)
-            : (user?.StartingBalance ?? 0) + txs.Sum(t => t.Type == TxType.Income ? t.Amount : -t.Amount);
+            : (user?.StartingBalance ?? 0) + analytics.Sum(t => t.Type == TxType.Income ? t.Amount : -t.Amount);
         var cashbackTotal = accounts.Sum(a => a.CashbackAccrued);
 
-        var nowMonth = txs.Where(t => t.Date.Year == year && t.Date.Month == month).ToList();
+        var nowMonth = analytics.Where(t => t.Date.Year == year && t.Date.Month == month).ToList();
         var income = nowMonth.Where(t => t.Type == TxType.Income).Sum(t => t.Amount);
         var expense = nowMonth.Where(t => t.Type == TxType.Expense).Sum(t => t.Amount);
 
-        var byMonth = txs.GroupBy(t => new { t.Date.Year, t.Date.Month })
+        var byMonth = analytics.GroupBy(t => new { t.Date.Year, t.Date.Month })
             .OrderBy(g => g.Key.Year).ThenBy(g => g.Key.Month)
             .Select(g => new
             {
@@ -133,6 +191,10 @@ public class BudgetController : ControllerBase
             }),
             cashbackTotal,
             recommendations,
+            alerts,
+            reserveLoans,
+            reserves,
+            reserveTaken,
         });
     }
 
@@ -189,7 +251,7 @@ public class BudgetController : ControllerBase
         }
 
         // 5. Подушка безопасности
-        var avgExpense = txs.Where(t => t.Type == TxType.Expense)
+        var avgExpense = txs.Where(t => !t.IsTransfer && t.Type == TxType.Expense)
             .GroupBy(t => new { t.Date.Year, t.Date.Month })
             .Select(g => g.Sum(t => t.Amount)).DefaultIfEmpty(0).Average();
         var cushionMonths = avgExpense > 0 ? Math.Round(((decimal?)goals.Sum(g => g.CurrentAmount) ?? 0) / avgExpense, 1) : 0;

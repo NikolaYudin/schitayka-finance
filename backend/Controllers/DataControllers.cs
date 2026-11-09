@@ -90,10 +90,13 @@ public class CategoriesController : ControllerBase
 public class TransactionsController : ControllerBase
 {
     private readonly AppDbContext _db;
-    public TransactionsController(AppDbContext db) { _db = db; }
+    private readonly SchitayKa.Api.Services.AccountRulesService _rules;
+    public TransactionsController(AppDbContext db, SchitayKa.Api.Services.AccountRulesService rules)
+    { _db = db; _rules = rules; }
     private int Uid => UserAccess.UidOf(User);
 
-    public record TxDto(int CategoryId, TxType Type, decimal Amount, DateOnly Date, string? Comment, int? AccountId);
+    public record TxDto(int CategoryId, TxType Type, decimal Amount, DateOnly Date, string? Comment, int? AccountId,
+                        bool IsTransfer = false);
 
     // Пересчёт баланса счёта при изменении набора операций.
     // Дебетовые/наличные/вклад: старт + доходы − расходы (+ начисленный кэшбэк).
@@ -135,7 +138,7 @@ public class TransactionsController : ControllerBase
             .Take(Math.Clamp(take, 1, 500))
             .Select(t => new
             {
-                t.Id, t.CategoryId, t.Type, t.Amount, t.Date, t.Comment, t.AccountId,
+                t.Id, t.CategoryId, t.Type, t.Amount, t.Date, t.Comment, t.AccountId, t.IsTransfer,
                 categoryName = t.Category.Name, categoryColor = t.Category.Color,
                 accountName = t.Account!.Name,
             })
@@ -148,10 +151,21 @@ public class TransactionsController : ControllerBase
     {
         if (Uid < 0) return Unauthorized(new { error = "Требуется вход" });
         if (dto.Amount <= 0) return BadRequest(new { error = "Сумма должна быть больше нуля" });
-        var cat = await _db.Categories.FirstOrDefaultAsync(c => c.Id == dto.CategoryId && c.UserId == Uid);
+
+        // 0.1: автоподстановка счёта и (опционально) категории по правилам.
+        var match = await _rules.MatchAssignmentAsync(Uid,
+            new SchitayKa.Api.Services.AccountRulesService.RuleCandidate(
+                dto.Type, dto.Amount, dto.Comment, dto.CategoryId));
+        var effectiveCategoryId = dto.CategoryId;
+        if (match?.SetCategoryId is { } setCat
+            && await _db.Categories.AnyAsync(c => c.Id == setCat && c.UserId == Uid))
+            effectiveCategoryId = setCat;
+        var effectiveAccountId = dto.AccountId ?? match?.AccountId;
+
+        var cat = await _db.Categories.FirstOrDefaultAsync(c => c.Id == effectiveCategoryId && c.UserId == Uid);
         if (cat is null) return BadRequest(new { error = "Категория не найдена" });
-        if (dto.AccountId is { } accId && !await _db.Accounts.AnyAsync(a => a.Id == accId && a.UserId == Uid))
-            return BadRequest(new { error = "Счёт не найден" });
+        if (effectiveAccountId is { } accId && !await _db.Accounts.AnyAsync(a => a.Id == accId && a.UserId == Uid && !a.IsArchived))
+            return BadRequest(new { error = "Счёт не найден или находится в архиве" });
 
         var tx = new Transaction
         {
@@ -161,13 +175,16 @@ public class TransactionsController : ControllerBase
             Amount = dto.Amount,
             Date = dto.Date,
             Comment = dto.Comment?.Trim() ?? "",
-            AccountId = dto.AccountId,
+            AccountId = effectiveAccountId,
+            IsTransfer = dto.IsTransfer,
         };
         _db.Transactions.Add(tx);
         await _db.SaveChangesAsync();
-        await RecalcAccounts(dto.AccountId);
+        await RecalcAccounts(dto.AccountId, effectiveAccountId);
         await _db.SaveChangesAsync();
-        return Ok(new { tx.Id, tx.CategoryId, tx.Type, tx.Amount, tx.Date, tx.Comment, tx.AccountId });
+        await _rules.EvaluateAllAsync(Uid);
+        return Ok(new { tx.Id, tx.CategoryId, tx.Type, tx.Amount, tx.Date, tx.Comment, tx.AccountId, tx.IsTransfer,
+            appliedRuleId = match?.RuleId });
     }
 
     [HttpPut("{id:int}")]
@@ -179,15 +196,18 @@ public class TransactionsController : ControllerBase
         var cat = await _db.Categories.FirstOrDefaultAsync(c => c.Id == dto.CategoryId && c.UserId == Uid);
         if (cat is null) return BadRequest(new { error = "Категория не найдена" });
         if (dto.Amount <= 0) return BadRequest(new { error = "Сумма должна быть больше нуля" });
-        if (dto.AccountId is { } accId && !await _db.Accounts.AnyAsync(a => a.Id == accId && a.UserId == Uid))
-            return BadRequest(new { error = "Счёт не найден" });
+        if (dto.AccountId is { } accId && accId != tx.AccountId
+            && !await _db.Accounts.AnyAsync(a => a.Id == accId && a.UserId == Uid && !a.IsArchived))
+            return BadRequest(new { error = "Счёт не найден или находится в архиве" });
         var oldAccountId = tx.AccountId;
         tx.CategoryId = cat.Id; tx.Type = dto.Type; tx.Amount = dto.Amount;
         tx.Date = dto.Date; tx.Comment = dto.Comment?.Trim() ?? ""; tx.AccountId = dto.AccountId;
+        tx.IsTransfer = dto.IsTransfer;
         await _db.SaveChangesAsync();
         await RecalcAccounts(oldAccountId, dto.AccountId);
         await _db.SaveChangesAsync();
-        return Ok(new { tx.Id, tx.CategoryId, tx.Type, tx.Amount, tx.Date, tx.Comment, tx.AccountId });
+        await _rules.EvaluateAllAsync(Uid);
+        return Ok(new { tx.Id, tx.CategoryId, tx.Type, tx.Amount, tx.Date, tx.Comment, tx.AccountId, tx.IsTransfer });
     }
 
     [HttpDelete("{id:int}")]
@@ -201,6 +221,7 @@ public class TransactionsController : ControllerBase
         await _db.SaveChangesAsync();
         await RecalcAccounts(accId);
         await _db.SaveChangesAsync();
+        await _rules.EvaluateAllAsync(Uid);
         return Ok();
     }
 }
