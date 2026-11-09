@@ -323,9 +323,8 @@ h1, h2, h3, h4, h5, h6, p, span, div, td, th, li, label, small, b, strong {
   flex: 1;
   overflow-y: auto;
   background: transparent;
-  padding: 28px 24px 40px;
-  display: flex;
-  justify-content: center;
+  padding: 28px 32px 40px;
+  display: block;
 }
 /* Переопределяем Bootstrap .container только внутри нашего приложения */
 .workarea > .container {
@@ -336,7 +335,10 @@ h1, h2, h3, h4, h5, h6, p, span, div, td, th, li, label, small, b, strong {
   margin: 0 auto !important;
   display: flex !important;
   flex-direction: column;
-  gap: 32px;
+  gap: 20px;
+}
+.workarea > .container > .card {
+  margin-bottom: 0;
 }
 
 /* ---------- Карточки ---------- */
