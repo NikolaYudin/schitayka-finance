@@ -4,35 +4,110 @@ import { api, Category, AccountInfo } from './api';
 import LoginPage from './LoginPage';
 import { Dashboard, Journal, QuickTxModal } from './components';
 import { GoalsPage } from './GoalsPage';
-import { AccountsPage } from './AccountsPage';
-import { FamilyCard } from './AccountsPage';
+import { AccountsPage, FamilyCard } from './AccountsPage';
+import { AccountRulesCard } from './AccountRulesCard';
 import { useTheme, type ThemeController, type ThemeMode } from './theme';
 import { ToastProvider } from './toasts';
-import { AccountRulesCard } from './AccountRulesCard';
 
 type Route = '' | 'journal' | 'accounts' | 'goals' | 'settings' | 'login';
+
 function useHashRoute(): [Route, (r: Route) => void] {
   const parse = (): Route => {
     const h = location.hash.replace(/^#\/?/, '').split('?')[0];
     return (h === 'journal' || h === 'accounts' || h === 'goals' || h === 'settings' || h === 'login') ? h : '';
   };
-  const [route, setRoute] = useState<Route>(parse);
+  const [route, setRouteState] = useState<Route>(parse);
   useEffect(() => {
-    const on = () => setRoute(parse());
+    const on = () => setRouteState(parse());
     window.addEventListener('hashchange', on);
     return () => window.removeEventListener('hashchange', on);
   }, []);
-  return [route, r => { location.hash = r ? `#/${r}` : '#/'; }];
+  const setRoute = (r: Route) => { location.hash = r ? `#/${r}` : '#/'; };
+  return [route, setRoute];
+}
+
+// ---------- Боковая панель навигации (Sidebar, 280px / 48px свёрнутая) ----------
+function Sidebar({ route, setRoute, collapsed, setCollapsed, theme }: {
+  route: Route; setRoute: (r: Route) => void;
+  collapsed: boolean; setCollapsed: (b: boolean) => void; theme: ThemeController;
+}) {
+  const items: { to: Route; label: string; icon: string }[] = [
+    { to: '', label: 'Обзор', icon: '📊' },
+    { to: 'accounts', label: 'Счета', icon: '💳' },
+    { to: 'journal', label: 'Журнал', icon: '🗂' },
+    { to: 'goals', label: 'Цели', icon: '🎯' },
+    { to: 'settings', label: 'Настройки', icon: '⚙️' },
+  ];
+
+  return (
+    <aside className={`sidebar ${collapsed ? 'collapsed' : ''}`}>
+      <div className="sidebar-brand">
+        <div className="brand-mark">СК</div>
+        {!collapsed && <span>СчитайКа</span>}
+      </div>
+      <nav className="sidebar-nav">
+        {items.map(i => (
+          <button
+            key={i.to}
+            type="button"
+            className={`nav-item ${route === i.to ? 'active' : ''}`}
+            onClick={() => { setRoute(i.to); if (collapsed) setCollapsed(false); }}
+          >
+            <span className="nav-icon">{i.icon}</span>
+            {!collapsed && i.label}
+          </button>
+        ))}
+      </nav>
+      <div className="sidebar-footer">
+        <button
+          type="button" className="btn icon"
+          title={theme.resolved === 'dark' ? 'Включить светлую тему' : 'Включить тёмную тему'}
+          onClick={theme.toggle} aria-label={theme.resolved === 'dark' ? 'Светлая тема' : 'Тёмная тема'}
+        >
+          {theme.resolved === 'dark' ? '☀️' : '🌙'}
+        </button>
+        <button
+          type="button" className="btn icon"
+          title={collapsed ? 'Развернуть навигацию' : 'Свернуть навигацию'}
+          onClick={() => setCollapsed(!collapsed)}
+          aria-label={collapsed ? 'Развернуть навигацию' : 'Свернуть навигацию'}
+        >
+          {collapsed ? '↗' : '↖'}
+        </button>
+      </div>
+    </aside>
+  );
+}
+
+// ---------- Верхняя панель (Title Bar, 40px) ----------
+function TopBar() {
+  return (
+    <header className="titlebar">
+      <div className="titlebar-left">
+        <div className="app-icon">СК</div>
+        <span>СчитайКа</span>
+      </div>
+      <div className="titlebar-search">
+        <input type="text" placeholder="Поиск операций, счетов, категорий" />
+      </div>
+      <div className="titlebar-right">
+        <button type="button" className="btn icon" title="Свернуть окно">➖</button>
+        <button type="button" className="btn icon" title="Развернуть окно">□</button>
+        <button type="button" className="btn icon danger" title="Закрыть окно" onClick={() => window.close?.()} aria-label="Закрыть">✕</button>
+      </div>
+    </header>
+  );
 }
 
 export default function App() {
   const auth = useAuth();
   const theme = useTheme();
-  const [route, go] = useHashRoute();
+  const [route, setRoute] = useHashRoute();
   const [showQuick, setShowQuick] = useState(false);
   const [cats, setCats] = useState<Category[]>([]);
   const [accounts, setAccounts] = useState<AccountInfo[]>([]);
-  const [tick, setTick] = useState(0); // перезагрузка дашборда после сохранения
+  const [tick, setTick] = useState(0);   // перезагрузка страниц после сохранения
+  const [collapsed, setCollapsed] = useState(false); // состояние сайдбара
 
   // Категории и счета для быстрой операции
   useEffect(() => {
@@ -42,65 +117,58 @@ export default function App() {
     }
   }, [auth.user, tick]);
 
-  // Навигация — только в эффекте, а не в теле рендера (иначе side effect при каждом рендере).
+  // Навигация — только в эффекте
   useEffect(() => {
     if (auth.loading) return;
     if (!auth.user) {
-      if (route !== 'login') go('login');
+      if (route !== 'login') setRoute('login');
     } else if (route === 'login') {
-      go('');
+      setRoute('');
     }
   }, [auth.loading, auth.user, route]);
 
-  if (auth.loading) return <div className="app"><div className="card muted">Проверка сессии…</div></div>;
+  if (auth.loading)
+    return <div className="app"><div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '100vh' }} className="card muted">Проверка сессии…</div></div>;
   if (!auth.user) return <LoginPage auth={auth} />;
 
   return (
     <ToastProvider>
-    <div className="app">
-      <header className="topbar">
-        <h1 className="logo">🧮 СчитайКа</h1>
-        <div className="topbar-actions">
-          <span className="muted">личный учёт финансов</span>
-          <button
-            type="button"
-            className="theme-toggle"
-            onClick={theme.toggle}
-            title={theme.resolved === 'dark' ? 'Включить светлую тему' : 'Включить тёмную тему'}
-            aria-label={theme.resolved === 'dark' ? 'Включить светлую тему' : 'Включить тёмную тему'}
-          >
-            {theme.resolved === 'dark' ? '☀️' : '🌙'}
-          </button>
+      <div className="app">
+        <Sidebar route={route} setRoute={setRoute} collapsed={collapsed} setCollapsed={setCollapsed} theme={theme} />
+        <div className="shell">
+          <TopBar />
+          <main className="workarea">
+            <div className="container">
+              {route === 'journal' ? <Journal key={tick} />
+                : route === 'accounts' ? <AccountsPage key={tick} onChanged={() => setTick(t => t + 1)} />
+                : route === 'goals' ? <GoalsPage key={tick} />
+                : route === 'settings' ? (
+                  <>
+                    <Settings auth={auth} categories={cats} theme={theme} onReload={() => setTick(t => t + 1)} />
+                    <AccountRulesCard />
+                  </>
+                )
+                : <Dashboard key={tick} />}
+            </div>
+          </main>
         </div>
-      </header>
 
-      {route === 'journal' ? <Journal key={tick} />
-        : route === 'accounts' ? <AccountsPage key={tick} onChanged={() => setTick(t => t + 1)} />
-        : route === 'goals' ? <GoalsPage key={tick} />
-        : route === 'settings' ? <Settings auth={auth} categories={cats} theme={theme} onReload={() => setTick(t => t + 1)} />
-        : <Dashboard key={tick} />}
-
-      {/* FAB доступна на основных экранах */}
-      {route !== 'settings' && (
-        <button className="fab" title="Добавить операцию" onClick={() => setShowQuick(true)}>＋</button>
-      )}
-      {showQuick && (
-        <QuickTxModal categories={cats} accounts={accounts}
-          onClose={() => setShowQuick(false)} onSaved={() => setTick(t => t + 1)} />
-      )}
-
-      <nav className="bottom-nav">
-        <a href="#/" className={route === '' ? 'active' : ''} onClick={() => go('')}>📊 Обзор</a>
-        <a href="#/accounts" className={route === 'accounts' ? 'active' : ''} onClick={() => go('accounts')}>💳 Счета</a>
-        <a href="#/journal" className={route === 'journal' ? 'active' : ''} onClick={() => go('journal')}>🗂 Журнал</a>
-        <a href="#/goals" className={route === 'goals' ? 'active' : ''} onClick={() => go('goals')}>🎯 Цели</a>
-        <a href="#/settings" className={route === 'settings' ? 'active' : ''} onClick={() => go('settings')}>⚙️ Настройки</a>
-      </nav>
+        {/* FAB доступна на основных экранах */}
+        {route !== 'settings' && (
+          <button className="fab" title="Добавить операцию" onClick={() => setShowQuick(true)}>＋</button>
+        )}
+        {showQuick && (
+          <QuickTxModal categories={cats} accounts={accounts}
+            onClose={() => setShowQuick(false)} onSaved={() => setTick(t => t + 1)} />
+        )}
       </div>
     </ToastProvider>
   );
 }
 
+// ============================================================================
+// Настройки (Settings) — единая страница профиля, категории, семья, тема, правила
+// ============================================================================
 function Settings({ auth, categories, theme, onReload }: {
   auth: ReturnType<typeof useAuth>; categories: Category[]; theme: ThemeController; onReload: () => void;
 }) {
@@ -120,7 +188,6 @@ function Settings({ auth, categories, theme, onReload }: {
       <AppearanceCard theme={theme} />
       <CategoriesCard categories={categories} onChanged={() => { onReload(); auth.refresh(); }} />
       <FamilyCard />
-      <AccountRulesCard />
     </>
   );
 }
