@@ -11,6 +11,7 @@ export default function LoginPage({ auth }: { auth: ReturnType<typeof useAuth> }
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [inviteCode, setInviteCode] = useState('');
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
 
@@ -19,7 +20,7 @@ export default function LoginPage({ auth }: { auth: ReturnType<typeof useAuth> }
     setError(''); setBusy(true);
     try {
       if (mode === 'login') await auth.login(email, password);
-      else await auth.register(name, email, password);
+      else await auth.register(name, email, password, inviteCode);
       location.hash = '#/';
     } catch (err: any) {
       setError(err.message || 'Ошибка');
@@ -49,6 +50,12 @@ export default function LoginPage({ auth }: { auth: ReturnType<typeof useAuth> }
           <label>Пароль
             <input type="password" value={password} onChange={e => setPassword(e.target.value)} minLength={6} required />
           </label>
+          {mode === 'register' && (
+            <label>Код семьи (необязательно)
+              <input value={inviteCode} onChange={e => setInviteCode(e.target.value.toUpperCase())}
+                placeholder="напр. FAM2026" maxLength={12} />
+            </label>
+          )}
           {error && <div className="alert">{error}</div>}
           <button className="btn primary block" disabled={busy}>
             {busy ? '…' : mode === 'login' ? 'Войти' : 'Создать аккаунт'}

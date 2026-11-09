@@ -196,6 +196,7 @@ function Settings({ auth, categories, theme, onReload }: {
 }) {
   return (
     <>
+<<<<<<< HEAD
       <div className="card">
         <h3>Аккаунт</h3>
         <table>
@@ -211,11 +212,17 @@ function Settings({ auth, categories, theme, onReload }: {
       </div>
       <AppearanceCard theme={theme} />
       <CategoriesCard categories={categories} onChanged={() => { onReload(); auth.refresh(); }} />
+=======
+      {/* Порядок разделов настроек: 1) Профиль, 2) Семья, 3) Категории */}
+      <ProfileCard auth={auth} />
+>>>>>>> bf4507991471ab9d18e3eda494a9d6cab04eb3b0
       <FamilyCard />
+      <CategoriesCard categories={categories} onChanged={() => { onReload(); auth.refresh(); }} />
     </>
   );
 }
 
+<<<<<<< HEAD
 function AppearanceCard({ theme }: { theme: ThemeController }) {
   const options: { value: ThemeMode; icon: React.ReactNode; label: string }[] = [
     { value: 'light', icon: <NavIcon d="M12 3v2m0 14v2m9-9h-2M5 12H3m15.364-6.364l-1.414 1.414M7.05 16.95l-1.414 1.414M16.95 16.95l1.414 1.414M7.05 7.05L5.636 5.636M15 12a3 3 0 11-6 0 3 3 0 016 0z" />, label: 'Светлая' },
@@ -245,10 +252,18 @@ function AppearanceCard({ theme }: { theme: ThemeController }) {
 
 function StartingBalance({ auth }: { auth: ReturnType<typeof useAuth> }) {
   const [val, setVal] = useState(String(auth.user?.startingBalance ?? 0));
+=======
+// Профиль: имя, email, стартовый баланс, выход
+function ProfileCard({ auth }: { auth: ReturnType<typeof useAuth> }) {
+  const [name, setName] = useState(auth.user?.name ?? '');
+  const [bal, setBal] = useState(String(auth.user?.startingBalance ?? 0));
+>>>>>>> bf4507991471ab9d18e3eda494a9d6cab04eb3b0
   const [msg, setMsg] = useState('');
+  const [err, setErr] = useState('');
   const save = async (e: React.FormEvent) => {
-    e.preventDefault(); setMsg('');
+    e.preventDefault(); setMsg(''); setErr('');
     try {
+<<<<<<< HEAD
       await api.post('/api/budget/start-balance', { startingBalance: Number(val.replace(',', '.')) || 0 });
       setMsg('Сохранено'); auth.refresh();
     } catch (ex: any) { setMsg(ex.message); }
@@ -261,6 +276,31 @@ function StartingBalance({ auth }: { auth: ReturnType<typeof useAuth> }) {
       {msg && <div className="muted" style={{ marginBottom: 8 }}>{msg}</div>}
       <button className="btn primary small" type="submit">Сохранить</button>
     </form>
+=======
+      await api.post('/api/family/profile', { name: name.trim(), startingBalance: Number(bal.replace(',', '.')) || 0 });
+      setMsg('Сохранено ✓'); auth.refresh();
+    } catch (ex: any) { setErr(ex.message); }
+  };
+  return (
+    <div className="card">
+      <h3>👤 Профиль</h3>
+      <form onSubmit={save}>
+        <div className="form-row">
+          <label>Имя<input value={name} onChange={e => setName(e.target.value)} required placeholder="Как вас зовут?" /></label>
+          <label>Стартовый баланс на счетах, ₽
+            <input inputMode="decimal" value={bal} onChange={e => setBal(e.target.value)} placeholder="0" />
+          </label>
+        </div>
+        <div className="muted" style={{ margin: '4px 0' }}>Email: {auth.user?.email}</div>
+        {err && <div className="alert">{err}</div>}
+        {msg && <div className="muted">{msg}</div>}
+        <div className="form-row" style={{ gap: 8 }}>
+          <button className="btn primary small">Сохранить профиль</button>
+          <button type="button" className="btn danger-ghost small" onClick={auth.logout}>Выйти</button>
+        </div>
+      </form>
+    </div>
+>>>>>>> bf4507991471ab9d18e3eda494a9d6cab04eb3b0
   );
 }
 

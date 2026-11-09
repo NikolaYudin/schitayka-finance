@@ -1,22 +1,37 @@
 import { useEffect, useState } from 'react';
+<<<<<<< HEAD
 import { AccountInfo, AccountType, FamilyMember, api, fmt, AccountRule, AccountAlert, ReserveLoan } from './api';
+=======
+import { AccountInfo, AccountType, FamilyMember, api, fmt } from './api';
+import { AccountForm } from './components';
+>>>>>>> bf4507991471ab9d18e3eda494a9d6cab04eb3b0
 
 const TYPE_LABEL: Record<AccountType, string> = { 0: 'Дебетовая карта', 1: 'Кредитная карта', 2: 'Наличные', 3: 'Вклад', 4: 'Прочее' };
 
-// ---- Страница «Счета»: карточки счетов + форма добавления/редактирования ----
+// ---- Страница «Счета»: прямоугольные карточки в сетку 3 колонки + форма добавления/редактирования ----
 export function AccountsPage({ onChanged }: { onChanged?: () => void }) {
   const [list, setList] = useState<AccountInfo[] | null>(null);
   const [err, setErr] = useState('');
   const [editing, setEditing] = useState<AccountInfo | null>(null); // null = нет формы, объект (id 0) = новая
   const [showArchived, setShowArchived] = useState(false);
+<<<<<<< HEAD
   const [rules, setRules] = useState<AccountRule[]>([]);
   const [alerts, setAlerts] = useState<AccountAlert[]>([]);
   const [loans, setLoans] = useState<ReserveLoan[]>([]);
+=======
+  // Режим «вся семья»: показываем и управляем счетами всех участников семьи
+  const [familyMode, setFamilyMode] = useState(true);
+  const [inFamily, setInFamily] = useState(false);
+>>>>>>> bf4507991471ab9d18e3eda494a9d6cab04eb3b0
 
   const load = () => {
-    api.get<AccountInfo[]>(`/api/accounts?includeArchived=${showArchived}`)
+    api.get<{ familyCode: string | null; members: FamilyMember[] }>('/api/family/members')
+      .then(r => setInFamily(!!r.familyCode && r.members.length > 1))
+      .catch(() => {});
+    api.get<AccountInfo[]>(`/api/accounts?includeArchived=${showArchived}&family=${familyMode}`)
       .then(setList).catch(e => setErr(e.message));
   };
+<<<<<<< HEAD
   const loadRules = () => {
     api.get<AccountRule[]>('/api/account-rules').then(setRules).catch(() => {});
   };
@@ -27,6 +42,9 @@ export function AccountsPage({ onChanged }: { onChanged?: () => void }) {
     api.get<ReserveLoan[]>('/api/reserve-loans?activeOnly=true').then(setLoans).catch(() => {});
   };
   useEffect(() => { load(); loadRules(); loadAlerts(); loadLoans(); }, [showArchived]);
+=======
+  useEffect(load, [showArchived, familyMode]);
+>>>>>>> bf4507991471ab9d18e3eda494a9d6cab04eb3b0
 
   const afterChange = () => { load(); onChanged?.(); };
 
@@ -59,10 +77,15 @@ export function AccountsPage({ onChanged }: { onChanged?: () => void }) {
     } catch (e: any) { alert(e.message); }
   };
 
-  const total = (list ?? []).filter(a => !a.isArchived && a.type !== 1)
-    .reduce((s, a) => s + a.balance, 0);
-  const debt = (list ?? []).filter(a => !a.isArchived && a.type === 1)
-    .reduce((s, a) => s + a.balance, 0);
+  const visible = (list ?? []).filter(a => !a.isArchived);
+  const total = visible.filter(a => a.type !== 1).reduce((s, a) => s + a.balance, 0);
+  const debt = visible.filter(a => a.type === 1).reduce((s, a) => s + a.balance, 0);
+  const showOwnerBadge = familyMode && inFamily && visible.some(a => (a.ownerName ?? '') !== (visible[0]?.ownerName ?? ''));
+
+  const newAccount = () => setEditing({
+    id: 0, name: '', type: 0 as AccountType, typeName: 'Дебетовая карта', balance: 0, startingBalance: 0,
+    creditLimit: 0, cashbackRate: 0, cashbackAccrued: 0, color: '#2b6cb0', isArchived: false, available: 0, creditUsagePct: null,
+  });
 
   const minRulesFor = (a: AccountInfo) => rules.filter(r => r.kind === 1 && r.isEnabled && r.accountId === a.id);
   const reserveRulesFor = (a: AccountInfo) => rules.filter(r => r.kind === 2 && r.isEnabled && (r.accountId === a.id || r.accountId === null));
@@ -90,15 +113,26 @@ export function AccountsPage({ onChanged }: { onChanged?: () => void }) {
 
   return (
     <div className="card">
+<<<<<<< HEAD
       <h3>Счета</h3>
+=======
+      <h3>💳 Счета{familyMode && inFamily ? ' · вся семья' : ''}</h3>
+>>>>>>> bf4507991471ab9d18e3eda494a9d6cab04eb3b0
       {err && <div className="alert">{err}</div>}
       {!list ? <div className="muted">Загрузка…</div> : (
         <>
           <div className="metric-box" style={{ marginBottom: 10 }}>
-            <div className="metric pos"><span>{fmt(total)}</span><small>на счетах</small></div>
+            <div className="metric pos"><span>{fmt(total)}</span><small>на счетах{familyMode && inFamily ? ' семьи' : ''}</small></div>
             <div className={`metric ${debt > 0 ? 'neg' : ''}`}><span>{fmt(debt)}</span><small>долг по кредиткам</small></div>
           </div>
+          {inFamily && (
+            <label className="muted" style={{ display: 'flex', gap: 6, alignItems: 'center', marginBottom: 8 }}>
+              <input type="checkbox" checked={familyMode} onChange={e => setFamilyMode(e.target.checked)} />
+              управлять счетами всей семьи
+            </label>
+          )}
           {list.length === 0 && <div className="muted">Счетов пока нет — добавьте первый.</div>}
+<<<<<<< HEAD
           <div className="accounts-grid">
             {list.map(a => (
             <div className="account-card" key={a.id} style={{ borderLeftColor: a.color }}>
@@ -162,6 +196,42 @@ export function AccountsPage({ onChanged }: { onChanged?: () => void }) {
               </div>
             </div>
           ))}
+=======
+          <div className="account-grid">
+            {list.map(a => (
+              <div className="account-card" key={a.id} style={{ borderLeftColor: a.color }}>
+                <div className="account-head">
+                  <b>{TYPE_EMOJI[a.type]} {a.name}</b>
+                  <span className="muted">{a.typeName}{a.isArchived ? ' · архив' : ''}</span>
+                </div>
+                {showOwnerBadge && <span className="badge">{a.ownerName || 'участник'}</span>}
+                <div className="account-balance">{fmt(a.balance)}</div>
+                {a.type === 1 && a.creditLimit > 0 && (
+                  <div className="limit-row">
+                    <div className="limit-head">
+                      <span className="muted">Лимит {fmt(a.creditLimit)} · доступно {fmt(a.available)}</span>
+                      <span className="muted">{a.creditUsagePct}%</span>
+                    </div>
+                    <div className="progress">
+                      <div className={a.creditUsagePct! > 80 ? 'over' : ''} style={{ width: `${Math.min(100, a.creditUsagePct ?? 0)}%` }} />
+                    </div>
+                  </div>
+                )}
+                {a.type === 0 && a.cashbackRate > 0 && (
+                  <div className="muted" style={{ marginTop: 2 }}>кэшбэк {a.cashbackRate}% · начислено {fmt(a.cashbackAccrued)}</div>
+                )}
+                <div className="account-actions">
+                  <button className="btn small" title="Редактировать" onClick={() => setEditing({ ...a })}>✏️</button>
+                  {a.type !== 1 && a.cashbackRate >= 0 && (
+                    <button className="btn small" title="Зачислить кэшбэк" onClick={() => adjust(a, 'cashback')}>🎁</button>
+                  )}
+                  <button className="btn small" title="Корректировать баланс" onClick={() => adjust(a, 'adjust')}>±</button>
+                  <button className="btn small" title={a.isArchived ? 'Вернуть из архива' : 'В архив'} onClick={() => archive(a)}>🗄</button>
+                  <button className="btn danger-ghost small" onClick={() => del(a)}>✕</button>
+                </div>
+              </div>
+            ))}
+>>>>>>> bf4507991471ab9d18e3eda494a9d6cab04eb3b0
           </div>
           <label className="muted" style={{ display: 'flex', gap: 6, alignItems: 'center', marginTop: 8 }}>
             <input type="checkbox" checked={showArchived} onChange={e => setShowArchived(e.target.checked)} />
@@ -169,10 +239,7 @@ export function AccountsPage({ onChanged }: { onChanged?: () => void }) {
           </label>
         </>
       )}
-      <button className="btn primary block" onClick={() => setEditing({
-        id: 0, name: '', type: 0 as AccountType, typeName: 'Дебетовая карта', balance: 0, startingBalance: 0,
-        creditLimit: 0, cashbackRate: 0, cashbackAccrued: 0, color: '#2b6cb0', isArchived: false, available: 0, creditUsagePct: null,
-      })}>+ Добавить счёт</button>
+      <button className="btn primary block" onClick={newAccount}>+ Добавить счёт</button>
 
       {editing && (
         <AccountForm account={editing} onClose={() => setEditing(null)} onSaved={() => { setEditing(null); afterChange(); }} />
@@ -181,6 +248,7 @@ export function AccountsPage({ onChanged }: { onChanged?: () => void }) {
   );
 }
 
+<<<<<<< HEAD
 function AccountForm({ account, onClose, onSaved }: {
   account: AccountInfo; onClose: () => void; onSaved: () => void;
 }) {
@@ -257,6 +325,8 @@ function AccountForm({ account, onClose, onSaved }: {
   );
 }
 
+=======
+>>>>>>> bf4507991471ab9d18e3eda494a9d6cab04eb3b0
 // ---- Семья: приглашения и состав группы ----
 export function FamilyCard() {
   const [members, setMembers] = useState<FamilyMember[] | null>(null);
@@ -271,6 +341,10 @@ export function FamilyCard() {
     api.get<{ familyCode: string | null; members: FamilyMember[] }>('/api/family/members')
       .then(r => { setFamilyCode(r.familyCode); setMembers(r.members); })
       .catch(e => setErr(e.message));
+    // Показываем активный пригласительный код сразу при открытии карточки (если он уже создан)
+    api.get<{ code: string | null; expiresAt: string | null }>('/api/family/status')
+      .then(s => { if (s.code) { setInviteCode(s.code); setExpiresAt(s.expiresAt); } })
+      .catch(() => {});
   };
   useEffect(load, []);
 
@@ -299,6 +373,10 @@ export function FamilyCard() {
     if (inviteCode) navigator.clipboard?.writeText(inviteCode).then(() => setMsg('Код скопирован ✓')).catch(() => {});
   };
 
+  // Я создатель семьи — блок «вступить по коду» не показываем (создатель уже в своей семье)
+  const iAmOwner = !!members && members.some(m => m.isCreator);
+  const showJoinForm = !iAmOwner;
+
   return (
     <div className="card">
       <h3>👨‍👩‍👧 Семья</h3>
@@ -308,7 +386,12 @@ export function FamilyCard() {
           <table>
             <thead><tr><th>Участник</th><th>Email</th></tr></thead>
             <tbody>
-              {members.map(m => <tr key={m.id}><td><b>{m.name}</b></td><td className="muted">{m.email}</td></tr>)}
+              {members.map(m => (
+                <tr key={m.id}>
+                  <td><b>{m.name}</b>{m.isOwner && <span className="muted"> · создатель</span>}</td>
+                  <td className="muted">{m.email}</td>
+                </tr>
+              ))}
             </tbody>
           </table>
           <div className="muted" style={{ margin: '6px 0' }}>Код семьи: {familyCode}</div>
@@ -341,17 +424,21 @@ export function FamilyCard() {
               <button className="btn small" onClick={copy}>копировать</button>
             </div>
           )}
-          <form onSubmit={join} style={{ marginTop: 10 }}>
-            <div className="form-row">
-              <label>У меня есть код
-                <input value={joinCode} onChange={e => setJoinCode(e.target.value)} placeholder="напр. K7M2QX" maxLength={6}
-                  style={{ textTransform: 'uppercase' }} />
-              </label>
-              <button className="btn small" style={{ alignSelf: 'end' }}>Присоединиться</button>
-            </div>
-          </form>
         </>
       )}
+      {/* Модуль «вступить в семью по коду»: доступен всем, кто не является создателем семьи */}
+      {showJoinForm && (
+        <form onSubmit={join} style={{ marginTop: 10 }}>
+          <div className="form-row">
+            <label>У меня есть код
+              <input value={joinCode} onChange={e => setJoinCode(e.target.value)} placeholder="напр. K7M2QX" maxLength={6}
+                style={{ textTransform: 'uppercase' }} />
+            </label>
+            <button className="btn small" style={{ alignSelf: 'end' }}>Присоединиться</button>
+          </div>
+        </form>
+      )}
+      {iAmOwner && <div className="muted" style={{ marginTop: 8 }}>Вы создали эту семью — вступать по коду вам не нужно; приглашайте близких кнопкой выше.</div>}
       {msg && <div className="muted">{msg}</div>}
     </div>
   );

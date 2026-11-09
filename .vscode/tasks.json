@@ -1,0 +1,30 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "restore-backend",
+      "type": "shell",
+      "command": "dotnet",
+      "args": ["restore", "${workspaceFolder}/backend/SchitayKa.Api.csproj"],
+      "problemMatcher": []
+    },
+    {
+      "label": "build-backend",
+      "type": "shell",
+      "command": "dotnet",
+      "args": ["build", "${workspaceFolder}/backend/SchitayKa.Api.csproj", "-v", "q"],
+      "dependsOn": ["restore-backend"],
+      "group": { "kind": "build", "isDefault": true },
+      "problemMatcher": ["$msCompile"]
+    },
+    {
+      "label": "frontend-dev (vite :5173)",
+      "type": "shell",
+      "command": "npm",
+      "args": ["run", "dev"],
+      "options": { "cwd": "${workspaceFolder}/frontend" },
+      "isBackground": true,
+      "problemMatcher": []
+    }
+  ]
+}

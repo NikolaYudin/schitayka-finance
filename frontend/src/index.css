@@ -692,6 +692,7 @@ th { font-weight: 600; color: var(--wb-text-secondary); background: transparent;
   .metric-box { gap: 12px; }
 }
 
+<<<<<<< HEAD
 /* Полоса прокрутки */
 ::-webkit-scrollbar { width: 10px; height: 10px; }
 ::-webkit-scrollbar-track { background: transparent; }
@@ -731,3 +732,31 @@ th { font-weight: 600; color: var(--wb-text-secondary); background: transparent;
   background: linear-gradient(90deg, rgba(255,255,255,0.04) 25%, rgba(255,255,255,0.08) 50%, rgba(255,255,255,0.04) 75%);
 }
 @keyframes shimmer { 0% { background-position: 200% 0; } 100% { background-position: -200% 0; } }
+=======
+/* Карточки счетов: прямоугольные, сетка в 3 колонки */
+.account-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
+@media (max-width: 900px) { .account-grid { grid-template-columns: repeat(2, 1fr); } }
+@media (max-width: 600px) { .account-grid { grid-template-columns: 1fr; } }
+.account-card { border: 1px solid var(--border); border-left: 5px solid #2b6cb0; border-radius: 4px; padding: 10px 12px; background: #fbfdff; display: flex; flex-direction: column; min-height: 120px; }
+.account-head { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; }
+.account-balance { font-size: 1.3em; font-weight: 700; color: var(--primary); margin: 4px 0; }
+.account-actions { display: flex; gap: 6px; margin-top: auto; padding-top: 6px; }
+.btn.tiny { padding: 2px 8px; font-size: .8em; }
+.account-form { border-top: 1px dashed var(--border); margin-top: 12px; padding-top: 12px; }
+.account-form h4 { margin: 0 0 8px; color: var(--primary); }
+
+/* ---- Карточка «Счета семьи» на главной: колонка на пользователя ---- */
+.board-columns { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 10px; }
+.board-col { border: 1px solid var(--border); border-radius: 4px; padding: 8px 10px; background: #fbfdff; }
+.board-col-head { display: flex; align-items: center; gap: 6px; margin-bottom: 2px; }
+.board-col-total { font-size: 1.15em; font-weight: 700; margin-bottom: 6px; }
+.board-col-total.pos { color: #2f855a; }
+.board-col-total.neg { color: #c53030; }
+.board-acc { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 4px; align-items: baseline;
+  border-left: 4px solid #2b6cb0; padding: 4px 8px; margin-bottom: 6px; background: #fff; border-radius: 4px; }
+.board-acc b.neg { color: #c53030; }
+.board-acc small { width: 100%; }
+.board-acc-actions { display: flex; gap: 4px; width: 100%; justify-content: flex-end; }
+.badge { padding: 2px 8px; border-radius: 999px; font-size: .75em; font-weight: 600; background: #edf2f7; color: #4a5568; }
+.muted.small { font-size: .85em; }
+>>>>>>> bf4507991471ab9d18e3eda494a9d6cab04eb3b0

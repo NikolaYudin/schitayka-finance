@@ -1,6 +1,161 @@
+<<<<<<< HEAD
 import { useEffect, useRef, useState } from 'react';
 import { Summary, Category, Tx, TxType, AccountInfo, api, fmt, MONTHS_RU, AccountAlert, ReserveInfo, ReserveLoan } from './api';
 import { useToast } from './toasts';
+=======
+import { useEffect, useState } from 'react';
+import { Summary, Category, Tx, TxType, AccountInfo, AccountType, FamilyBoard, api, fmt, MONTHS_RU } from './api';
+
+const ACC_EMOJI: Record<number, string> = { 0: '💳', 1: '🏦', 2: '💵', 3: '📈', 4: '🧾' };
+
+// ---- Форма счёта (используется на странице «Счета» и в карточке счетов на главной) ----
+export function AccountForm({ account, onClose, onSaved }: {
+  account: AccountInfo; onClose: () => void; onSaved: () => void;
+}) {
+  const isNew = account.id === 0;
+  const [name, setName] = useState(account.name);
+  const [type, setType] = useState<AccountType>(account.type);
+  const [balance, setBalance] = useState(String(account.startingBalance ?? account.balance ?? 0));
+  const [limit, setLimit] = useState(String(account.creditLimit || ''));
+  const [cashback, setCashback] = useState(account.cashbackRate ? String(account.cashbackRate) : '');
+  const [color, setColor] = useState(account.color || '#2b6cb0');
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState('');
+
+  const isCredit = type === 1;
+
+  const submit = async (e: React.FormEvent) => {
+    e.preventDefault(); setErr(''); setBusy(true);
+    const body = {
+      name, type,
+      balance: Number(balance.replace(',', '.')) || 0,
+      creditLimit: isCredit ? (Number(limit.replace(',', '.')) || 0) : 0,
+      cashbackRate: isCredit ? 0 : (Number(cashback.replace(',', '.')) || 0),
+      color,
+    };
+    try {
+      if (isNew) await api.post('/api/accounts', body);
+      else await api.put(`/api/accounts/${account.id}`, body);
+      onSaved();
+    } catch (ex: any) { setErr(ex.message); } finally { setBusy(false); }
+  };
+
+  return (
+    <form onSubmit={submit} className="account-form">
+      <h4>{isNew ? 'Новый счёт' : `Счёт «${account.name}»`}</h4>
+      <label>Название (любое)<br />
+        <input value={name} onChange={e => setName(e.target.value)} required placeholder="Напр.: Зарплатная, Халва, Наличные" />
+      </label>
+      <label>Тип
+        <select value={type} onChange={e => setType(Number(e.target.value) as AccountType)}>
+          <option value={0}>💳 Дебетовая карта</option>
+          <option value={1}>🏦 Кредитная карта</option>
+          <option value={2}>💵 Наличные</option>
+          <option value={3}>📈 Вклад / накопительный</option>
+          <option value={4}>🧾 Прочее</option>
+        </select>
+      </label>
+      <div className="form-row">
+        <label>{isCredit ? 'Текущий долг, ₽' : 'Баланс, ₽'}
+          <input inputMode="decimal" value={balance} onChange={e => setBalance(e.target.value)} required placeholder="0" />
+        </label>
+        {isCredit && (
+          <label>Кредитный лимит, ₽
+            <input inputMode="decimal" value={limit} onChange={e => setLimit(e.target.value)} placeholder="100000" />
+          </label>
+        )}
+        {!isCredit && (
+          <label>Кэшбэк, %
+            <input inputMode="decimal" value={cashback} onChange={e => setCashback(e.target.value)} placeholder="5" />
+          </label>
+        )}
+        <label>Цвет<input type="color" value={color} onChange={e => setColor(e.target.value)} style={{ height: 40, padding: 2 }} /></label>
+      </div>
+      <div className="muted">
+        {isCredit
+          ? 'По кредитной карте баланс = сумма долга; считается доступный лимит и % использования.'
+          : cashback ? 'Кэшбэк начисляется на расходы с этого счёта автоматически.' : 'Для наличных кэшбэк не нужен.'}
+      </div>
+      {err && <div className="alert">{err}</div>}
+      <div className="form-row" style={{ gap: 8 }}>
+        <button className="btn primary" disabled={busy}>{busy ? '…' : (isNew ? 'Создать счёт' : 'Сохранить')}</button>
+        <button type="button" className="btn" onClick={onClose}>Отмена</button>
+      </div>
+    </form>
+  );
+}
+
+// ---- Карточка на главной: колонка на пользователя семьи, внутри — счета с балансами.
+// Счета прямоугольные; управление доступно для всех счетов семьи (редактирование, корректировка баланса, удаление).
+function AccountsBoardCard() {
+  const [board, setBoard] = useState<FamilyBoard | null>(null);
+  const [editing, setEditing] = useState<AccountInfo | null>(null);
+  const load = () => {
+    api.get<FamilyBoard>('/api/family/family-board').then(setBoard).catch(() => setBoard({ familyCode: null, columns: [] }));
+  };
+  useEffect(load, []);
+  if (!board) return <div className="card muted">Загрузка счетов…</div>;
+  const cols = board.columns;
+  const commonTotal = cols.reduce((s, c) => s + c.totalBalance, 0);
+
+  const del = async (a: AccountInfo) => {
+    if (!confirm(`Удалить счёт «${a.name}»? Операции останутся в журнале без счёта.`)) return;
+    try { await api.del(`/api/accounts/${a.id}`); load(); } catch (e: any) { alert(e.message); }
+  };
+  const adjust = async (a: AccountInfo) => {
+    const raw = prompt(`Корректировка баланса «${a.name}» (можно со знаком −), ₽`, '-5000');
+    if (raw === null) return;
+    const amount = Number(raw.replace(',', '.')) || 0;
+    if (amount === 0) { alert('Укажите сумму'); return; }
+    try { await api.post(`/api/accounts/${a.id}/adjust`, { delta: amount }); load(); } catch (e: any) { alert(e.message); }
+  };
+
+  return (
+    <div className="card">
+      <h3>💳 Счета{board.familyCode ? ' семьи' : ''}{board.familyCode && <span className="muted"> · код {board.familyCode}</span>}</h3>
+      {cols.length === 0 || cols.every(c => c.accounts.length === 0)
+        ? <div className="muted">Счетов пока нет — добавьте их на странице «Счета».</div> : (
+        <>
+          <div className="board-columns">
+            {cols.map(c => (
+              <div className="board-col" key={c.userId}>
+                <div className="board-col-head">
+                  <b>{c.name}{c.isMe ? ' (вы)' : ''}</b>
+                  {c.isOwner && <span className="badge">создатель</span>}
+                </div>
+                <div className={`board-col-total ${c.totalBalance >= 0 ? 'pos' : 'neg'}`}>{fmt(c.totalBalance)}</div>
+                {c.accounts.length === 0
+                  ? <div className="muted small">нет счетов</div>
+                  : c.accounts.map(a => (
+                    <div className="board-acc" key={a.id} style={{ borderLeftColor: a.color }}>
+                      <span>{ACC_EMOJI[a.type]} {a.name}</span>
+                      <b className={a.type === 1 ? 'neg' : ''}>{fmt(a.balance)}</b>
+                      {a.type === 0 && a.cashbackRate > 0 && <small className="muted">кэшбэк {a.cashbackRate}%</small>}
+                      {a.type === 1 && a.creditLimit > 0 && <small className="muted">лимит {fmt(a.creditLimit)} · доступно {fmt(a.available)}</small>}
+                      <div className="board-acc-actions">
+                        <button className="btn tiny" title="Редактировать" onClick={() => setEditing({ ...a })}>✏️</button>
+                        <button className="btn tiny" title="Пополнить / списать" onClick={() => adjust(a)}>±</button>
+                        <button className="btn tiny danger-ghost" title="Удалить" onClick={() => del(a)}>✕</button>
+                      </div>
+                    </div>
+                  ))}
+              </div>
+            ))}
+          </div>
+          {cols.length > 1 && (
+            <div className={`metric ${commonTotal >= 0 ? 'pos' : 'neg'}`} style={{ marginTop: 8 }}>
+              <span>{fmt(commonTotal)}</span><small>вместе по семье</small>
+            </div>
+          )}
+        </>
+      )}
+      {editing && (
+        <AccountForm account={editing} onClose={() => setEditing(null)} onSaved={() => { setEditing(null); load(); }} />
+      )}
+    </div>
+  );
+}
+>>>>>>> bf4507991471ab9d18e3eda494a9d6cab04eb3b0
 
 // ---- Дашборд: обзор бюджета + анализ + рекомендации ----
 export function Dashboard() {
@@ -45,6 +200,7 @@ export function Dashboard() {
 
   return (
     <>
+      <AccountsBoardCard />
       <div className="metric-box">
         <div className="metric"><span>{fmt(sum.monthIncome)}</span><small>Доход за месяц</small></div>
         <div className="metric"><span>{fmt(sum.monthExpense)}</span><small>Расход за месяц</small></div>

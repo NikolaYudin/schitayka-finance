@@ -20,6 +20,7 @@ public class AccountsController : ControllerBase
     public record AccountDto(string Name, AccountType Type, decimal Balance,
                              decimal? CreditLimit, decimal? CashbackRate, string? Color, bool? Archived = null);
 
+<<<<<<< HEAD
     // Полный пересчёт остатков всех счетов (старт + операции + кэшбэк).
     // Архивные счета тоже пересчитываем — иначе при возврате из архива
     // баланс оказался бы устаревшим; в итоги и выбор они при этом не попадают.
@@ -27,11 +28,39 @@ public class AccountsController : ControllerBase
     {
         var ids = await _db.Accounts.Where(a => a.UserId == uid)
             .Select(a => (int?)a.Id).ToListAsync();
+=======
+    // --- Управление всеми счетами семьи ---
+    // Id пользователей, чьими счетами может управлять текущий пользователь:
+    // он сам + все участники его семьи (пусто, если семьи нет).
+    private async Task<List<int>> ManageableUserIds()
+    {
+        var me = await _db.Users.FindAsync(Uid);
+        if (me is null) return [];
+        if (string.IsNullOrEmpty(me.FamilyCode)) return [Uid];
+        return await _db.Users.Where(u => u.FamilyCode == me.FamilyCode)
+            .Select(u => u.Id).ToListAsync();
+    }
+
+    // Счёт доступен, если он принадлежит пользователю из семьи (или самому мне)
+    private async Task<bool> CanManage(int accountId)
+    {
+        var ids = await ManageableUserIds();
+        return await _db.Accounts.AnyAsync(a => a.Id == accountId && ids.Contains(a.UserId));
+    }
+
+    // Полный пересчёт остатков всех активных счетов (старт + операции + кэшбэк)
+    private async Task RecalcAllAccounts(int uid) => await RecalcAccountsOf(_db, _db.Accounts.Where(a => a.UserId == uid && !a.IsArchived));
+
+    // Пересчёт для набора счетов (используется и для семейной карточки на главной)
+    public static async Task RecalcAccountsOf(AppDbContext db, IQueryable<Account> accountsQ)
+    {
+        var ids = await accountsQ.Select(a => (int?)a.Id).ToListAsync();
+>>>>>>> bf4507991471ab9d18e3eda494a9d6cab04eb3b0
         foreach (var id in ids)
         {
-            var acc = await _db.Accounts.FirstOrDefaultAsync(a => a.Id == id!.Value && a.UserId == uid);
+            var acc = await db.Accounts.FirstOrDefaultAsync(a => a.Id == id!.Value);
             if (acc is null) continue;
-            var signed = await _db.Transactions.Where(t => t.AccountId == id)
+            var signed = await db.Transactions.Where(t => t.AccountId == id)
                 .Select(t => new { t.Type, t.Amount }).ToListAsync();
             var net = signed.Sum(t => t.Type == TxType.Income ? t.Amount : -t.Amount);
             if (acc.Type == AccountType.CreditCard)
@@ -48,46 +77,79 @@ public class AccountsController : ControllerBase
                 acc.CashbackAccrued = cashback;
             }
         }
-        await _db.SaveChangesAsync();
+        await db.SaveChangesAsync();
     }
 
-    private static object Project(Account a) => new
+    // Статическая проекция для FamilyBoard (без владельца — колонка уже привязана к пользователю)
+    internal static object Project(Account a) => new
     {
         a.Id, a.Name, a.Type, typeName = AccountTypeNames.Ru(a.Type),
         a.Balance, a.StartingBalance, a.CreditLimit, a.CashbackRate, a.CashbackAccrued, a.Color, a.IsArchived,
-        // полезная информация для карточки счёта
+        ownerId = a.UserId,
         available = a.Type == AccountType.CreditCard && a.CreditLimit > 0
             ? Math.Max(0, a.CreditLimit - a.Balance) : (a.Type == AccountType.CreditCard ? 0 : a.Balance),
         creditUsagePct = a.Type == AccountType.CreditCard && a.CreditLimit > 0
             ? Math.Round(a.Balance / a.CreditLimit * 100, 1) : (decimal?)null,
     };
 
+    private async Task<object> ProjectWithOwner(Account a)
+    {
+        var owner = await _db.Users.Where(u => u.Id == a.UserId)
+            .Select(u => new { u.Id, u.Name }).FirstOrDefaultAsync();
+        return new
+        {
+            a.Id, a.Name, a.Type, typeName = AccountTypeNames.Ru(a.Type),
+            a.Balance, a.StartingBalance, a.CreditLimit, a.CashbackRate, a.CashbackAccrued, a.Color, a.IsArchived,
+            ownerId = a.UserId, ownerName = owner?.Name ?? "",
+            // полезная информация для карточки счёта
+            available = a.Type == AccountType.CreditCard && a.CreditLimit > 0
+                ? Math.Max(0, a.CreditLimit - a.Balance) : (a.Type == AccountType.CreditCard ? 0 : a.Balance),
+            creditUsagePct = a.Type == AccountType.CreditCard && a.CreditLimit > 0
+                ? Math.Round(a.Balance / a.CreditLimit * 100, 1) : (decimal?)null,
+        };
+    }
+
     [HttpGet]
-    public async Task<IActionResult> List([FromQuery] bool includeArchived = false)
+    public async Task<IActionResult> List([FromQuery] bool includeArchived = false, [FromQuery] bool family = false)
     {
         if (Uid < 0) return Unauthorized(new { error = "Требуется вход" });
+<<<<<<< HEAD
         await RecalcAllAccounts(Uid); // остатки всегда актуальны относительно операций
         await _rules.EvaluateAllAsync(Uid);
         var q = _db.Accounts.Where(a => a.UserId == Uid);
+=======
+        var ids = family ? await ManageableUserIds() : new List<int> { Uid };
+        foreach (var uid in ids) await RecalcAllAccounts(uid); // остатки всегда актуальны относительно операций
+        var q = _db.Accounts.Where(a => ids.Contains(a.UserId));
+>>>>>>> bf4507991471ab9d18e3eda494a9d6cab04eb3b0
         if (!includeArchived) q = q.Where(a => !a.IsArchived);
-        var list = await q.OrderBy(a => a.Type).ThenBy(a => a.Name).ToListAsync();
-        return Ok(list.Select(Project));
+        var list = await q.OrderBy(a => a.UserId).ThenBy(a => a.Type).ThenBy(a => a.Name).ToListAsync();
+        var result = new List<object>();
+        foreach (var a in list) result.Add(await ProjectWithOwner(a));
+        return Ok(result);
     }
 
     [HttpPost]
-    public async Task<IActionResult> Create(AccountDto dto)
+    public async Task<IActionResult> Create(AccountDto dto, [FromQuery] int? forUserId = null)
     {
         if (Uid < 0) return Unauthorized(new { error = "Требуется вход" });
         if (string.IsNullOrWhiteSpace(dto.Name)) return BadRequest(new { error = "Название счёта обязательно" });
         if (dto.Balance < 0 && dto.Type != AccountType.CreditCard)
             return BadRequest(new { error = "Баланс не может быть отрицательным (для кредитной карты укажите сумму долга)" });
+        var targetUid = Uid;
+        if (forUserId is int fuid && fuid != Uid)
+        {
+            var ids = await ManageableUserIds();
+            if (!ids.Contains(fuid)) return Forbid();
+            targetUid = fuid;
+        }
         var name = dto.Name.Trim();
-        if (await _db.Accounts.AnyAsync(a => a.UserId == Uid && a.Name == name))
+        if (await _db.Accounts.AnyAsync(a => a.UserId == targetUid && a.Name == name))
             return BadRequest(new { error = "Счёт с таким именем уже есть" });
 
         var acc = new Account
         {
-            UserId = Uid,
+            UserId = targetUid,
             Name = name,
             Type = dto.Type,
             StartingBalance = Math.Abs(dto.Balance), // для кредитки — стартовый долг
@@ -98,20 +160,26 @@ public class AccountsController : ControllerBase
         };
         _db.Accounts.Add(acc);
         await _db.SaveChangesAsync();
+<<<<<<< HEAD
         await RecalcAllAccounts(Uid);
         await _rules.EvaluateAllAsync(Uid);
         return Ok(Project(acc));
+=======
+        await RecalcAllAccounts(targetUid);
+        return Ok(await ProjectWithOwner(acc));
+>>>>>>> bf4507991471ab9d18e3eda494a9d6cab04eb3b0
     }
 
     [HttpPut("{id:int}")]
     public async Task<IActionResult> Update(int id, AccountDto dto)
     {
         if (Uid < 0) return Unauthorized(new { error = "Требуется вход" });
-        var acc = await _db.Accounts.FirstOrDefaultAsync(a => a.Id == id && a.UserId == Uid);
+        if (!await CanManage(id)) return NotFound();
+        var acc = await _db.Accounts.FirstOrDefaultAsync(a => a.Id == id);
         if (acc is null) return NotFound();
         if (string.IsNullOrWhiteSpace(dto.Name)) return BadRequest(new { error = "Название счёта обязательно" });
         var name = dto.Name.Trim();
-        if (await _db.Accounts.AnyAsync(a => a.UserId == Uid && a.Name == name && a.Id != id))
+        if (await _db.Accounts.AnyAsync(a => a.UserId == acc.UserId && a.Name == name && a.Id != id))
             return BadRequest(new { error = "Счёт с таким именем уже есть" });
 
         acc.Name = name;
@@ -122,9 +190,14 @@ public class AccountsController : ControllerBase
         if (!string.IsNullOrWhiteSpace(dto.Color)) acc.Color = dto.Color;
         if (dto.Archived is { } archived) acc.IsArchived = archived;
         await _db.SaveChangesAsync();
+<<<<<<< HEAD
         await RecalcAllAccounts(Uid);
         await _rules.EvaluateAllAsync(Uid);
         return Ok(Project(acc));
+=======
+        await RecalcAllAccounts(acc.UserId);
+        return Ok(await ProjectWithOwner(acc));
+>>>>>>> bf4507991471ab9d18e3eda494a9d6cab04eb3b0
     }
 
     // Пополнение / списание вручную: сдвиг стартового остатка (например, зачислили кэшбэк на счёт)
@@ -133,14 +206,20 @@ public class AccountsController : ControllerBase
     public async Task<IActionResult> Adjust(int id, AdjustDto dto)
     {
         if (Uid < 0) return Unauthorized(new { error = "Требуется вход" });
-        var acc = await _db.Accounts.FirstOrDefaultAsync(a => a.Id == id && a.UserId == Uid);
+        if (!await CanManage(id)) return NotFound();
+        var acc = await _db.Accounts.FirstOrDefaultAsync(a => a.Id == id);
         if (acc is null) return NotFound();
         acc.StartingBalance += dto.Delta;
         if (acc.StartingBalance < 0) acc.StartingBalance = 0;
         await _db.SaveChangesAsync();
+<<<<<<< HEAD
         await RecalcAllAccounts(Uid);
         await _rules.EvaluateAllAsync(Uid);
         return Ok(Project(acc));
+=======
+        await RecalcAllAccounts(acc.UserId);
+        return Ok(await ProjectWithOwner(acc));
+>>>>>>> bf4507991471ab9d18e3eda494a9d6cab04eb3b0
     }
 
     // Начисленный банком кэшбэк (разовое пополнение баланса)
@@ -149,21 +228,28 @@ public class AccountsController : ControllerBase
     public async Task<IActionResult> Cashback(int id, CashbackDto dto)
     {
         if (Uid < 0) return Unauthorized(new { error = "Требуется вход" });
-        var acc = await _db.Accounts.FirstOrDefaultAsync(a => a.Id == id && a.UserId == Uid);
+        if (!await CanManage(id)) return NotFound();
+        var acc = await _db.Accounts.FirstOrDefaultAsync(a => a.Id == id);
         if (acc is null) return NotFound();
         if (dto.Amount <= 0) return BadRequest(new { error = "Укажите сумму кэшбэка" });
         acc.StartingBalance += dto.Amount;
         await _db.SaveChangesAsync();
+<<<<<<< HEAD
         await RecalcAllAccounts(Uid);
         await _rules.EvaluateAllAsync(Uid);
         return Ok(Project(acc));
+=======
+        await RecalcAllAccounts(acc.UserId);
+        return Ok(await ProjectWithOwner(acc));
+>>>>>>> bf4507991471ab9d18e3eda494a9d6cab04eb3b0
     }
 
     [HttpDelete("{id:int}")]
     public async Task<IActionResult> Delete(int id)
     {
         if (Uid < 0) return Unauthorized(new { error = "Требуется вход" });
-        var acc = await _db.Accounts.FirstOrDefaultAsync(a => a.Id == id && a.UserId == Uid);
+        if (!await CanManage(id)) return NotFound();
+        var acc = await _db.Accounts.FirstOrDefaultAsync(a => a.Id == id);
         if (acc is null) return NotFound();
         _db.Accounts.Remove(acc); // операции останутся, AccountId станет NULL (SetNull)
         await _db.SaveChangesAsync();
@@ -192,6 +278,21 @@ public class FamilyController : ControllerBase
     private int Uid => UserAccess.UidOf(User);
 
     public record JoinDto(string Code);
+    public record ProfileDto(string Name, decimal StartingBalance);
+
+    // Профиль: сменить имя и стартовый баланс
+    [HttpPost("profile")]
+    public async Task<IActionResult> UpdateProfile(ProfileDto dto)
+    {
+        if (Uid < 0) return Unauthorized(new { error = "Требуется вход" });
+        if (string.IsNullOrWhiteSpace(dto.Name)) return BadRequest(new { error = "Имя не может быть пустым" });
+        var me = await _db.Users.FindAsync(Uid);
+        if (me is null) return Unauthorized();
+        me.Name = dto.Name.Trim();
+        me.StartingBalance = dto.StartingBalance;
+        await _db.SaveChangesAsync();
+        return Ok(new { me.Id, me.Email, me.Name, me.StartingBalance });
+    }
 
     private static string MakeCode()
     {
@@ -210,8 +311,14 @@ public class FamilyController : ControllerBase
         if (string.IsNullOrEmpty(me.FamilyCode)) return Ok(new { familyCode = (string?)null, members = Array.Empty<object>() });
 
         var members = await _db.Users.Where(u => u.FamilyCode == me.FamilyCode)
+            .OrderBy(u => u.CreatedAt).ThenBy(u => u.Id)
             .Select(u => new { u.Id, u.Name, u.Email }).ToListAsync();
-        return Ok(new { familyCode = me.FamilyCode, members });
+        // Создатель семьи: участник с самым ранним CreatedAt (при равных датах — меньший Id).
+        var ownerId = members.Count > 0 ? members[0].Id : Uid;
+        // isCreator — «я создатель этой семьи»: используется фронтендом, чтобы скрыть
+        // форму «вступить по коду» для создателя (он уже в своей семье).
+        var withOwner = members.Select(m => new { m.Id, m.Name, m.Email, isOwner = m.Id == ownerId, isCreator = m.Id == ownerId && m.Id == Uid }).ToList();
+        return Ok(new { familyCode = me.FamilyCode, members = withOwner });
     }
 
     // Созвать семью: создаёт группу (если её нет) и выдаёт активный пригласительный код
@@ -254,6 +361,23 @@ public class FamilyController : ControllerBase
         return Ok(list);
     }
 
+    // Статус семьи для карточки «Семья»: есть ли активный пригласительный код у текущего пользователя
+    [HttpGet("status")]
+    public async Task<IActionResult> Status()
+    {
+        if (Uid < 0) return Unauthorized(new { error = "Требуется вход" });
+        var me = await _db.Users.FindAsync(Uid);
+        if (me is null) return Unauthorized();
+        var active = await _db.FamilyInvitations.FirstOrDefaultAsync(i =>
+            i.OwnerUserId == Uid && i.AcceptedAt == null && i.ExpiresAt > DateTime.UtcNow);
+        return Ok(new
+        {
+            familyCode = me.FamilyCode,
+            code = active?.Code,
+            expiresAt = active?.ExpiresAt,
+        });
+    }
+
     // Присоединиться к семье по коду приглашения
     [HttpPost("join")]
     public async Task<IActionResult> Join(JoinDto dto)
@@ -263,28 +387,87 @@ public class FamilyController : ControllerBase
         if (code.Length == 0) return BadRequest(new { error = "Введите пригласительный код" });
         var me = await _db.Users.FindAsync(Uid);
         if (me is null) return Unauthorized();
-        if (!string.IsNullOrEmpty(me.FamilyCode))
-            return BadRequest(new { error = "Вы уже в семье. Сначала выйдите из текущей группы." });
 
-        var invite = await _db.FamilyInvitations.FirstOrDefaultAsync(i => i.Code == code && i.AcceptedAt == null);
-        if (invite is null) return BadRequest(new { error = "Код не найден или уже использован" });
+        var invite = await _db.FamilyInvitations.FirstOrDefaultAsync(i => i.Code == code);
+        if (invite is null) return BadRequest(new { error = "Код не найден" });
+        if (invite.OwnerUserId == Uid) return BadRequest(new { error = "Вы создали эту семью — присоединяться к себе не нужно" });
+        // Пригласительный код многократный: его могут использовать несколько человек (как ссылка-приглашение).
+        // Поле AcceptedAt фиксирует первое принятие (для отображения статуса), но не блокирует дальнейшие вступления.
         if (invite.ExpiresAt <= DateTime.UtcNow) return BadRequest(new { error = "Срок действия кода истёк" });
-        if (invite.OwnerUserId == Uid) return BadRequest(new { error = "Нельзя присоединиться к собственной семье" });
 
         var owner = await _db.Users.FindAsync(invite.OwnerUserId);
         if (owner?.FamilyCode is null) return BadRequest(new { error = "Семья недоступна" });
 
+        // Если пользователь уже в семье: разрешаем только «повторное» вступление в ту же семью,
+        // иначе — просим сначала выйти. Создатель своей семьи отсекается проверкой OwnerUserId выше.
+        if (!string.IsNullOrEmpty(me.FamilyCode))
+        {
+            if (owner.FamilyCode == me.FamilyCode)
+                return Ok(new { familyCode = me.FamilyCode, alreadyMember = true, members = await MembersOf(me.FamilyCode) });
+            return BadRequest(new { error = "Вы уже в семье. Сначала выйдите из текущей группы." });
+        }
+
         me.FamilyCode = owner.FamilyCode;
-        invite.AcceptedAt = DateTime.UtcNow;
-        invite.AcceptedByUserId = Uid;
+        if (invite.AcceptedAt is null)
+        {
+            invite.AcceptedAt = DateTime.UtcNow;
+            invite.AcceptedByUserId = Uid;
+        }
         await _db.SaveChangesAsync();
 
-        var members = await _db.Users.Where(u => u.FamilyCode == me.FamilyCode)
-            .Select(u => new { u.Id, u.Name, u.Email }).ToListAsync();
-        return Ok(new { familyCode = me.FamilyCode, members });
+        return Ok(new { familyCode = me.FamilyCode, members = await MembersOf(me.FamilyCode) });
     }
 
-    // Выйти из семьи (если в группе больше одного человека — код семьи остаётся у остальных)
+    private async Task<List<object>> MembersOf(string familyCode) =>
+        (await _db.Users.Where(u => u.FamilyCode == familyCode)
+            .Select(u => new { u.Id, u.Name, u.Email }).ToListAsync())
+            .Select(u => (object)new { u.Id, u.Name, u.Email }).ToList();
+
+    // Карточка на главной: по колонке на пользователя семьи, в каждой — счета с балансами.
+    [HttpGet("family-board")]
+    public async Task<IActionResult> FamilyBoard()
+    {
+        if (Uid < 0) return Unauthorized(new { error = "Требуется вход" });
+        var me = await _db.Users.FindAsync(Uid);
+        if (me is null) return Unauthorized();
+        var memberIds = string.IsNullOrEmpty(me.FamilyCode)
+            ? new List<int> { Uid }
+            : await _db.Users.Where(u => u.FamilyCode == me.FamilyCode).Select(u => u.Id).ToListAsync();
+
+        var accounts = await _db.Accounts
+            .Where(a => memberIds.Contains(a.UserId) && !a.IsArchived)
+            .OrderBy(a => a.UserId).ThenBy(a => a.Type).ThenBy(a => a.Name)
+            .ToListAsync();
+        await AccountsController.RecalcAccountsOf(_db, _db.Accounts.Where(a => memberIds.Contains(a.UserId) && !a.IsArchived));
+        accounts = await _db.Accounts.AsNoTracking()
+            .Where(a => memberIds.Contains(a.UserId) && !a.IsArchived)
+            .OrderBy(a => a.UserId).ThenBy(a => a.Type).ThenBy(a => a.Name)
+            .ToListAsync(); // перечитать уже пересчитанные остатки
+
+        var users = await _db.Users.Where(u => memberIds.Contains(u.Id))
+            .OrderBy(u => u.Id).Select(u => new { u.Id, u.Name, u.Email, u.CreatedAt }).ToListAsync();
+        // Создатель семьи — участник с самым ранним CreatedAt (при равных датах — меньший Id)
+        var ownerId = users.Count > 0
+            ? users.OrderBy(u => u.CreatedAt).ThenBy(u => u.Id).First().Id
+            : Uid;
+
+        var columns = users.Select(u =>
+        {
+            var ua = accounts.Where(a => a.UserId == u.Id).ToList();
+            decimal assets = ua.Where(a => a.Type != AccountType.CreditCard).Sum(a => a.Balance);
+            decimal debt = ua.Where(a => a.Type == AccountType.CreditCard).Sum(a => a.Balance);
+            return (object)new
+            {
+                userId = u.Id, name = u.Name, email = u.Email, isOwner = u.Id == ownerId, isMe = u.Id == Uid,
+                totalBalance = assets - debt,
+                accounts = ua.Select(a => AccountsController.Project(a)).ToList(),
+            };
+        }).ToList();
+
+        return Ok(new { familyCode = me.FamilyCode, columns });
+    }
+
+    // Выйти из семьи
     [HttpPost("leave")]
     public async Task<IActionResult> Leave()
     {
