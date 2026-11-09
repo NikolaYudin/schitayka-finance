@@ -24,6 +24,7 @@
 
   --wb-success: #107c10;
   --wb-success-subtle: rgba(16, 124, 16, 0.10);
+  --wb-success-legacy: #38a169;
   --wb-danger: #d13434;
   --wb-danger-subtle: rgba(209, 52, 52, 0.10);
   --wb-warn: #ff8c00;
@@ -67,6 +68,11 @@
   /* Шрифт */
   --wb-font: 'Segoe UI Variable', 'Segoe UI', 'Inter', 'SF Pro Text', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
 
+  /* Обратная совместимость со старыми именами переменных в компонентах */
+  --success: var(--wb-success-legacy);
+  --accent: var(--wb-accent);
+  --danger: var(--wb-danger);
+
   /* Анимации */
   --wb-duration: 220ms;
   --wb-easing: cubic-bezier(0.16, 1, 0.3, 1);
@@ -97,6 +103,11 @@
   --wb-danger-subtle: rgba(248, 113, 113, 0.12);
   --wb-warn: #fbbf24;
   --wb-warn-subtle: rgba(251, 191, 36, 0.12);
+
+  /* Обратная совместимость со старыми именами переменных в компонентах */
+  --success: var(--wb-success);
+  --accent: var(--wb-accent);
+  --danger: var(--wb-danger);
 
   --wb-border: rgba(255, 255, 255, 0.08);
   --wb-border-hover: rgba(255, 255, 255, 0.14);
