@@ -23,6 +23,7 @@ export function resolveTheme(mode: ThemeMode): ResolvedTheme {
 export function applyTheme(mode: ThemeMode): ResolvedTheme {
   const resolved = resolveTheme(mode);
   document.documentElement.dataset.theme = resolved;
+  document.documentElement.dataset.bsTheme = resolved;
   document.documentElement.style.colorScheme = resolved;
   const meta = document.querySelector('meta[name="theme-color"]');
   if (meta) meta.setAttribute('content', THEME_COLORS[resolved]);

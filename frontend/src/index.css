@@ -92,9 +92,9 @@
   --wb-accent-subtle: rgba(96, 205, 255, 0.12);
   --wb-accent-text: #000000;
 
-  --wb-text-primary: #fafafa;
-  --wb-text-secondary: #b0b0b0;
-  --wb-text-muted: #78787c;
+  --wb-text-primary: #f5f5f7;
+  --wb-text-secondary: #c8c8ce;
+  --wb-text-muted: #9898a0;
   --wb-text-inverse: #ffffff;
 
   --wb-success: #34d399;
@@ -502,17 +502,18 @@ th { font-weight: 600; color: var(--wb-text-secondary); background: transparent;
   margin-bottom: -1px;
 }
 
-/* ---------- Модальные окна ---------- */
-.modal-back {
+/* ---------- Модальные окна (префикс sk-, чтобы не конфликтовать с Bootstrap .modal) ---------- */
+.sk-modal-back {
   position: fixed; inset: 0; z-index: 200;
   display: flex; align-items: center; justify-content: center;
   padding: 24px; background: var(--wb-overlay);
   backdrop-filter: blur(6px);
   -webkit-backdrop-filter: blur(6px);
 }
-.modal-back.hidden { display: none !important; }
-.modal {
-  position: relative; width: 100%; max-width: 520px;
+.sk-modal-back.hidden { display: none !important; }
+.sk-modal {
+  position: relative !important; display: block !important;
+  width: 100%; max-width: 520px;
   max-height: 88vh; overflow: auto;
   border-radius: var(--wb-radius-xl);
   border: 1px solid var(--wb-border);
@@ -521,8 +522,9 @@ th { font-weight: 600; color: var(--wb-text-secondary); background: transparent;
   padding: 28px;
   animation: modalShow var(--wb-duration) var(--wb-easing-out) both;
   color: var(--wb-text-primary);
+  z-index: auto;
 }
-.modal h3 { margin: 0 0 20px; font-size: 1.35rem; font-weight: 700; letter-spacing: -0.5px; }
+.sk-modal h3 { margin: 0 0 20px; font-size: 1.35rem; font-weight: 700; letter-spacing: -0.5px; color: var(--wb-text-primary); }
 @keyframes modalShow {
   from { opacity: 0; transform: scale(0.96) translateY(12px); }
   to   { opacity: 1; transform: scale(1) translateY(0); }

@@ -18,15 +18,17 @@
           var saved = localStorage.getItem('sk_theme');
           var dark = saved === 'dark' || (saved !== 'light' &&
             window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches);
-          document.documentElement.dataset.theme = dark ? 'dark' : 'light';
-          document.documentElement.style.colorScheme = dark ? 'dark' : 'light';
+          var resolved = dark ? 'dark' : 'light';
+          document.documentElement.dataset.theme = resolved;
+          document.documentElement.dataset.bsTheme = resolved;
+          document.documentElement.style.colorScheme = resolved;
           var meta = document.querySelector('meta[name="theme-color"]');
           if (meta) meta.setAttribute('content', dark ? '#0f172a' : '#1a365d');
         } catch (e) { /* приватный режим и т.п. */ }
       })();
     </script>
-    <script type="module" crossorigin src="/assets/index-CmRtxuf8.js"></script>
-    <link rel="stylesheet" crossorigin href="/assets/index-1zLePLfm.css">
+    <script type="module" crossorigin src="/assets/index-CPm-L5Ye.js"></script>
+    <link rel="stylesheet" crossorigin href="/assets/index-BeGN2eQt.css">
   </head>
   <body>
     <div id="root"></div>

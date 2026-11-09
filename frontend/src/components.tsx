@@ -287,8 +287,8 @@ export function QuickTxModal({ categories, accounts = [], onClose, onSaved }: {
   };
 
   return (
-    <div className="modal-back" onClick={onClose}>
-      <form className="modal" onClick={e => e.stopPropagation()} onSubmit={submit}>
+    <div className="sk-modal-back" onClick={onClose}>
+      <form className="sk-modal" onClick={e => e.stopPropagation()} onSubmit={submit}>
         <h3>Новая операция</h3>
         <div className="tabs">
           <button type="button" className={`tab ${type === 0 ? 'active' : ''}`} onClick={() => setType(0)}>Доход</button>
