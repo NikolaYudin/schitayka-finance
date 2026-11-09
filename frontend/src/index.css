@@ -65,8 +65,8 @@
   --wb-sidebar-collapsed: 60px;
   --wb-topbar-height: 48px;
 
-  /* Шрифт */
-  --wb-font: 'Segoe UI Variable', 'Segoe UI', 'Inter', 'SF Pro Text', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  /* Шрифт — надёжный стек с поддержкой кириллицы */
+  --wb-font: 'Segoe UI', 'Segoe UI Variable', 'Inter', 'SF Pro Text', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Arial', sans-serif;
 
   /* Обратная совместимость со старыми именами переменных в компонентах */
   --success: var(--wb-success-legacy);
@@ -445,7 +445,7 @@ input:focus, select:focus, textarea:focus {
 .alert-warn { border-color: rgba(255,140,0,0.18); background: var(--wb-warn-subtle); color: #d97706; }
 .alert-info { border-color: rgba(0,120,212,0.18); background: var(--wb-accent-subtle); color: var(--wb-accent); }
 
-.muted { color: var(--wb-text-muted); font-size: 0.86em; }
+.muted { color: var(--wb-text-secondary); font-size: 0.86em; }
 
 /* ---------- Таблицы ---------- */
 table { width: 100%; border-collapse: collapse; font-size: 0.92rem; }
@@ -528,6 +528,17 @@ th { font-weight: 600; color: var(--wb-text-secondary); background: transparent;
   from { opacity: 0; transform: translateX(28px); }
   to   { opacity: 1; transform: translateX(0); }
 }
+
+/* ---------- Дашборд: график динамики ---------- */
+.chart {
+  display: flex; align-items: flex-end; gap: 8px; height: 110px; padding-top: 8px;
+}
+.chart .col { flex: 1; display: flex; flex-direction: column; justify-content: flex-end; align-items: center; gap: 4px; height: 100%; }
+.chart .bars { display: flex; gap: 4px; align-items: flex-end; height: 85px; width: 100%; justify-content: center; }
+.chart .bar { width: 14px; border-radius: 3px 3px 0 0; min-height: 2px; }
+.chart .bar.income { background: var(--success); }
+.chart .bar.expense { background: var(--accent); }
+.chart .lbl { font-size: 0.72rem; color: var(--wb-text-muted); white-space: nowrap; }
 
 /* ---------- Список операций ---------- */
 .tx-item {
@@ -629,16 +640,17 @@ th { font-weight: 600; color: var(--wb-text-secondary); background: transparent;
 
 /* ---------- FAB ---------- */
 .fab {
-  position: fixed; right: 24px; bottom: 96px; width: 54px; height: 54px; border-radius: 50%;
-  background: var(--wb-accent); color: #fff; font-size: 26px; border: none; cursor: pointer;
-  box-shadow: 0 4px 14px rgba(0,120,212,0.35);
+  position: fixed; right: 24px; bottom: 96px; width: 56px; height: 56px; border-radius: 50%;
+  background: var(--wb-accent); color: #fff; font-size: 28px; border: none; cursor: pointer;
+  box-shadow: 0 4px 14px rgba(0,120,212,0.4);
   z-index: 120;
   transition: transform 150ms var(--wb-easing-out), background 150ms var(--wb-easing-out), box-shadow 150ms var(--wb-easing-out);
+  display: flex; align-items: center; justify-content: center; line-height: 1;
 }
-.fab:hover { transform: scale(1.05); box-shadow: 0 6px 20px rgba(0,120,212,0.45); }
-.fab:active { transform: scale(0.96); }
-[data-theme="dark"] .fab { background: var(--wb-accent); box-shadow: 0 4px 14px rgba(96,205,255,0.35); }
-[data-theme="dark"] .fab:hover { box-shadow: 0 6px 20px rgba(96,205,255,0.45); }
+.fab:hover { transform: scale(1.08); box-shadow: 0 6px 20px rgba(0,120,212,0.5); }
+.fab:active { transform: scale(0.94); }
+[data-theme="dark"] .fab { background: var(--wb-accent); box-shadow: 0 4px 14px rgba(96,205,255,0.4); }
+[data-theme="dark"] .fab:hover { box-shadow: 0 6px 20px rgba(96,205,255,0.5); }
 
 /* ---------- Утилиты ---------- */
 .fade-in { animation: fadeIn 350ms var(--wb-easing-out) both; }
