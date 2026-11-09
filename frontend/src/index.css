@@ -327,22 +327,14 @@ h1, h2, h3, h4, h5, h6, p, span, div, td, th, li, label, small, b, strong {
   display: flex;
   justify-content: center;
 }
-/* Переопределяем Bootstrap .container */
-.app .container, .shell .container, .workarea .container {
+/* Переопределяем Bootstrap .container только внутри нашего приложения */
+.workarea > .container {
   max-width: 1160px !important;
   width: 100% !important;
   padding-left: 0 !important;
   padding-right: 0 !important;
-  margin-left: auto !important;
-  margin-right: auto !important;
-  display: flex;
-  flex-direction: column;
-  gap: 32px;
-}
-.container {
-  max-width: 1160px;
-  width: 100%;
-  display: flex;
+  margin: 0 auto !important;
+  display: flex !important;
   flex-direction: column;
   gap: 32px;
 }
