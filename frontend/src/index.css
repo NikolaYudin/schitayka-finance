@@ -65,8 +65,8 @@
   --wb-sidebar-collapsed: 60px;
   --wb-topbar-height: 48px;
 
-  /* Шрифт — надёжный стек с поддержкой кириллицы */
-  --wb-font: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Helvetica Neue', Arial, sans-serif;
+  /* Шрифт — Inter (кириллица) + системные fallback */
+  --wb-font: 'Inter', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
 
   /* Обратная совместимость со старыми именами переменных в компонентах */
   --success: var(--wb-success-legacy);
@@ -142,17 +142,49 @@ html {
 body {
   margin: 0;
   padding: 0;
-  font-family: var(--wb-font);
+  font-family: var(--wb-font) !important;
   font-size: 14px;
   font-weight: 400;
   line-height: 1.5;
-  color: var(--wb-text-primary);
-  background: transparent;
+  color: var(--wb-text-primary) !important;
+  background: transparent !important;
   -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
   transition: background-color 300ms ease, color 300ms ease;
 }
 a { color: var(--wb-accent); text-decoration: none; }
 button, input, select, textarea { font: inherit; color: inherit; }
+/* Bootstrap overrides — наша тема главнее */
+h1, h2, h3, h4, h5, h6, p, span, div, td, th, li, label, small, b, strong {
+  color: inherit;
+}
+[data-theme="dark"] .table,
+[data-theme="dark"] .table > :not(caption) > * > * {
+  color: var(--wb-text-primary);
+  background-color: transparent;
+  border-bottom-color: var(--wb-divider);
+}
+[data-theme="dark"] .form-control,
+[data-theme="dark"] .form-select {
+  background-color: var(--wb-surface-solid);
+  border-color: var(--wb-border);
+  color: var(--wb-text-primary);
+}
+[data-theme="dark"] .modal-content {
+  background-color: var(--wb-surface-solid);
+  color: var(--wb-text-primary);
+}
+[data-theme="dark"] input,
+[data-theme="dark"] select,
+[data-theme="dark"] textarea {
+  background-color: var(--wb-surface-elevated) !important;
+  color: var(--wb-text-primary) !important;
+  border-color: var(--wb-border) !important;
+}
+[data-theme="dark"] option {
+  background-color: var(--wb-surface-solid);
+  color: var(--wb-text-primary);
+}
 
 /* ---------- App-оболочка ---------- */
 .app {
@@ -217,7 +249,7 @@ button, input, select, textarea { font: inherit; color: inherit; }
   margin-left: -2px;
   padding-left: 16px;
 }
-.nav-item svg { width: 20px; height: 20px; flex-shrink: 0; fill: currentColor; }
+.nav-item svg { width: 20px; height: 20px; flex-shrink: 0; }
 
 .sidebar-footer {
   padding: 14px 18px;

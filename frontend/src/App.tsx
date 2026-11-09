@@ -26,11 +26,11 @@ function useHashRoute(): [Route, (r: Route) => void] {
   return [route, setRoute];
 }
 
-// ---------- Р‘РѕРєРѕРІР°СЏ РїР°РЅРµР»СЊ РЅР°РІРёРіР°С†РёРё (Sidebar, 280px / 48px СЃРІС‘СЂРЅСѓС‚Р°СЏ) ----------
-function NavIcon({ path }: { path: string }) {
+// ---------- Боковая панель навигации ----------
+function NavIcon({ d }: { d: string }) {
   return (
-    <svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor" aria-hidden="true">
-      <path d={path} fill="currentColor" />
+    <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d={d} />
     </svg>
   );
 }
@@ -40,18 +40,18 @@ function Sidebar({ route, setRoute, collapsed, setCollapsed, theme }: {
   collapsed: boolean; setCollapsed: (b: boolean) => void; theme: ThemeController;
 }) {
   const items: { to: Route; label: string; icon: React.ReactNode }[] = [
-    { to: '', label: 'РћР±Р·РѕСЂ', icon: <NavIcon path="M3 3v18h18V3H3zm16 16H5V5h14z" /> },
-    { to: 'accounts', label: 'РЎС‡РµС‚Р°', icon: <NavIcon path="M1 11h5V5H1zm0 6h5v-5H1zm11 0h5v-5h-5zm-6 0h5v-5H6z" /> },
-    { to: 'journal', label: 'Р–СѓСЂРЅР°Р»', icon: <NavIcon path="M14 2H6c-1.1 0-1.99.9-1.99 2L4 16c0 1.1.89 2 1.99 2H18c1.1 0 2-.9 2-2V8c0-1.1-.9-2-2-2h-8l-2-2zm-2 10l-2.5-5-2.5 5H6v-4h4zm2-11L11 3l-2.5 5-2.5-5H2l4 8 4-8z" /> },
-    { to: 'goals', label: 'Р¦РµР»Рё', icon: <NavIcon path="M12 2L3 7v13c0 1.88 1.34 3.45 3 3.81V17h6v-2.19c1.66-.36 3-1.93 3-3.81V7zm-1 9L5.5 5 11 11l5.5-9z" /> },
-    { to: 'settings', label: 'РќР°СЃС‚СЂРѕР№РєРё', icon: <NavIcon path="M19.43 12.98c.04-.32.07-.64.07-.98s-.03-.66-.07-.98l2.11-1.65c.19-.15.24-.41.14-.65l-1.04-3.57c-.16-.55-.73-.89-1.28-.73l-2.31.48c-.47-.34-1.03-.51-1.59-.46l-2.17-1.7c-.35-.27-.82-.25-1.15.07l-1.47 1.44c-.38.37-.54.95-.38 1.46l.64 2.27c-.81.14-1.58.02-2.24-.34l-2.51 1.2c-.39.19-.57.62-.46 1.05l.36 1.4c-.75.27-1.43.46-2.12.44v1.82c0 .68-.28 1.32-.75 1.75l2.15 2.15c.45.42 1.05.69 1.69.69s1.24-.27 1.69-.69l2.15-2.15c.47-.43.75-1.07.75-1.75h-1.82c.69.06 1.34-.19 1.76-.63l1.4-1.4c.36-.36.83-.36 1.19 0l1.09 1.09c.49-.58.77-1.3.74-2.06l1.64-1.58c.31-.36.37-.91.18-1.37z" /> },
+    { to: '', label: 'Обзор', icon: <NavIcon d="M3 12l9-9 9 9M5 10v10a1 1 0 001 1h3m10-11v10a1 1 0 01-1 1h-3m-4 0h4" /> },
+    { to: 'accounts', label: 'Счета', icon: <NavIcon d="M3 7h18M3 12h18M3 17h18M7 3v18" /> },
+    { to: 'journal', label: 'Журнал', icon: <NavIcon d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9h6m-6 4h6" /> },
+    { to: 'goals', label: 'Цели', icon: <NavIcon d="M12 2v4m0 12v4M4.93 4.93l2.83 2.83m8.48 8.48l2.83 2.83M2 12h4m12 0h4M4.93 19.07l2.83-2.83m8.48-8.48l2.83-2.83M15 12a3 3 0 11-6 0 3 3 0 016 0z" /> },
+    { to: 'settings', label: 'Настройки', icon: <NavIcon d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065zM15 12a3 3 0 11-6 0 3 3 0 016 0z" /> },
   ];
 
   return (
     <aside className={`sidebar ${collapsed ? 'collapsed' : ''}`}>
       <div className="sidebar-brand">
-        <div className="brand-mark">РЎРљ</div>
-        {!collapsed && <span>РЎС‡РёС‚Р°Р№РљР°</span>}
+        <div className="brand-mark">СК</div>
+        {!collapsed && <span>СчитайКа</span>}
       </div>
       <nav className="sidebar-nav">
         {items.map(i => (
@@ -62,43 +62,55 @@ function Sidebar({ route, setRoute, collapsed, setCollapsed, theme }: {
             onClick={() => { setRoute(i.to); if (collapsed) setCollapsed(false); }}
           >
             {i.icon}
-            {!collapsed && i.label}
+            {!collapsed && <span>{i.label}</span>}
           </button>
         ))}
       </nav>
       <div className="sidebar-footer">
         <button
           type="button" className="btn icon"
-          title={theme.resolved === 'dark' ? 'Р’РєР»СЋС‡РёС‚СЊ СЃРІРµС‚Р»СѓСЋ С‚РµРјСѓ' : 'Р’РєР»СЋС‡РёС‚СЊ С‚С‘РјРЅСѓСЋ С‚РµРјСѓ'}
-          onClick={theme.toggle} aria-label={theme.resolved === 'dark' ? 'РЎРІРµС‚Р»Р°СЏ С‚РµРјР°' : 'РўС‘РјРЅР°СЏ С‚РµРјР°'}
+          title={theme.resolved === 'dark' ? 'Включить светлую тему' : 'Включить тёмную тему'}
+          onClick={theme.toggle} aria-label={theme.resolved === 'dark' ? 'Светлая тема' : 'Тёмная тема'}
         >
-          {theme.resolved === 'dark' ? 'вЂ' : 'вѕ'}
+          <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="1.8">
+            {theme.resolved === 'dark'
+              ? <path d="M12 3v2m0 14v2m9-9h-2M5 12H3m15.364-6.364l-1.414 1.414M7.05 16.95l-1.414 1.414M16.95 16.95l1.414 1.414M7.05 7.05L5.636 5.636M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+              : <path d="M21 12.79A9 9 0 1111.21 3a7 7 0 009.79 9.79z" />}
+          </svg>
         </button>
         <button
           type="button" className="btn icon"
-          title={collapsed ? 'Р Р°Р·РІРµСЂРЅСѓС‚СЊ РЅР°РІРёРіР°С†РёСЋ' : 'РЎРІРµСЂРЅСѓС‚СЊ РЅР°РІРёРіР°С†РёСЋ'}
+          title={collapsed ? 'Развернуть навигацию' : 'Свернуть навигацию'}
           onClick={() => setCollapsed(!collapsed)}
-          aria-label={collapsed ? 'Р Р°Р·РІРµСЂРЅСѓС‚СЊ РЅР°РІРёРіР°С†РёСЋ' : 'РЎРІРµСЂРЅСѓС‚СЊ РЅР°РІРёРіР°С†РёСЋ'}
+          aria-label={collapsed ? 'Развернуть навигацию' : 'Свернуть навигацию'}
         >
-          {collapsed ? 'вЂє' : 'вЂ№'}
+          <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="1.8">
+            {collapsed ? <path d="M9 18l6-6-6-6" /> : <path d="M15 18l-6-6 6-6" />}
+          </svg>
         </button>
       </div>
     </aside>
   );
 }
 
-// ---------- Р’РµСЂС…РЅСЏСЏ РїР°РЅРµР»СЊ (Title Bar, 40px) ----------
+// ---------- Верхняя панель ----------
 function TopBar() {
   return (
     <header className="titlebar">
       <div className="titlebar-left">
-        <div className="app-icon">РЎРљ</div>
-        <span>РЎС‡РёС‚Р°Р№РљР°</span>
+        <div className="app-icon">СК</div>
+        <span>СчитайКа</span>
       </div>
       <div className="titlebar-right">
-        <button type="button" className="btn icon" title="РЎРІРµСЂРЅСѓС‚СЊ РѕРєРЅРѕ">вЂ”</button>
-        <button type="button" className="btn icon" title="Р Р°Р·РІРµСЂРЅСѓС‚СЊ РѕРєРЅРѕ">в–Ў</button>
-        <button type="button" className="btn icon danger" title="Р—Р°РєСЂС‹С‚СЊ РѕРєРЅРѕ" onClick={() => window.close?.()} aria-label="Р—Р°РєСЂС‹С‚СЊ">вњ•</button>
+        <button type="button" className="btn icon" title="Свернуть окно" aria-label="Свернуть">
+          <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2"><path d="M5 12h14" /></svg>
+        </button>
+        <button type="button" className="btn icon" title="Развернуть окно" aria-label="Развернуть">
+          <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2"><rect x="4" y="4" width="16" height="16" rx="1" /></svg>
+        </button>
+        <button type="button" className="btn icon danger" title="Закрыть окно" onClick={() => window.close?.()} aria-label="Закрыть">
+          <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2"><path d="M6 6l12 12M18 6L6 18" /></svg>
+        </button>
       </div>
     </header>
   );
@@ -111,10 +123,9 @@ export default function App() {
   const [showQuick, setShowQuick] = useState(false);
   const [cats, setCats] = useState<Category[]>([]);
   const [accounts, setAccounts] = useState<AccountInfo[]>([]);
-  const [tick, setTick] = useState(0);   // РїРµСЂРµР·Р°РіСЂСѓР·РєР° СЃС‚СЂР°РЅРёС† РїРѕСЃР»Рµ СЃРѕС…СЂР°РЅРµРЅРёСЏ
-  const [collapsed, setCollapsed] = useState(false); // СЃРѕСЃС‚РѕСЏРЅРёРµ СЃР°Р№РґР±Р°СЂР°
+  const [tick, setTick] = useState(0);
+  const [collapsed, setCollapsed] = useState(false);
 
-  // РљР°С‚РµРіРѕСЂРёРё Рё СЃС‡РµС‚Р° РґР»СЏ Р±С‹СЃС‚СЂРѕР№ РѕРїРµСЂР°С†РёРё
   useEffect(() => {
     if (auth.user) {
       api.get<Category[]>('/api/categories').then(setCats).catch(() => {});
@@ -122,7 +133,6 @@ export default function App() {
     }
   }, [auth.user, tick]);
 
-  // РќР°РІРёРіР°С†РёСЏ вЂ” С‚РѕР»СЊРєРѕ РІ СЌС„С„РµРєС‚Рµ
   useEffect(() => {
     if (auth.loading) return;
     if (!auth.user) {
@@ -133,7 +143,7 @@ export default function App() {
   }, [auth.loading, auth.user, route]);
 
   if (auth.loading)
-    return <div className="app"><div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '100vh' }} className="card muted">РџСЂРѕРІРµСЂРєР° СЃРµСЃСЃРёРёвЂ¦</div></div>;
+    return <div className="app"><div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '100vh', width: '100%' }} className="card muted">Проверка сессии…</div></div>;
   if (!auth.user) return <LoginPage auth={auth} />;
 
   return (
@@ -162,9 +172,12 @@ export default function App() {
           </main>
         </div>
 
-        {/* FAB РґРѕСЃС‚СѓРїРЅР° РЅР° РѕСЃРЅРѕРІРЅС‹С… СЌРєСЂР°РЅР°С… */}
         {route !== 'settings' && (
-          <button className="fab" title="Р”РѕР±Р°РІРёС‚СЊ РѕРїРµСЂР°С†РёСЋ" onClick={() => setShowQuick(true)}>+</button>
+          <button className="fab" type="button" title="Добавить операцию" aria-label="Добавить операцию" onClick={() => setShowQuick(true)}>
+            <svg viewBox="0 0 24 24" width="28" height="28" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" aria-hidden="true">
+              <path d="M12 5v14M5 12h14" />
+            </svg>
+          </button>
         )}
         {showQuick && (
           <QuickTxModal categories={cats} accounts={accounts}
@@ -176,7 +189,7 @@ export default function App() {
 }
 
 // ============================================================================
-// РќР°СЃС‚СЂРѕР№РєРё (Settings) вЂ” РµРґРёРЅР°СЏ СЃС‚СЂР°РЅРёС†Р° РїСЂРѕС„РёР»СЏ, РєР°С‚РµРіРѕСЂРёРё, СЃРµРјСЊСЏ, С‚РµРјР°, РїСЂР°РІРёР»Р°
+// Настройки
 // ============================================================================
 function Settings({ auth, categories, theme, onReload }: {
   auth: ReturnType<typeof useAuth>; categories: Category[]; theme: ThemeController; onReload: () => void;
@@ -184,16 +197,16 @@ function Settings({ auth, categories, theme, onReload }: {
   return (
     <>
       <div className="card">
-        <h3>РђРєРєР°СѓРЅС‚</h3>
+        <h3>Аккаунт</h3>
         <table>
           <tbody>
-            <tr><td><b>РРјСЏ</b></td><td>{auth.user?.name}</td></tr>
+            <tr><td><b>Имя</b></td><td>{auth.user?.name}</td></tr>
             <tr><td><b>Email</b></td><td>{auth.user?.email}</td></tr>
           </tbody>
         </table>
         <StartingBalance auth={auth} />
         <div className="action-row">
-          <button className="btn danger-ghost" onClick={auth.logout}>Р’С‹Р№С‚Рё</button>
+          <button className="btn secondary" onClick={auth.logout}>Выйти</button>
         </div>
       </div>
       <AppearanceCard theme={theme} />
@@ -203,24 +216,24 @@ function Settings({ auth, categories, theme, onReload }: {
   );
 }
 
-// РћС„РѕСЂРјР»РµРЅРёРµ: СЃРІРµС‚Р»Р°СЏ / С‚С‘РјРЅР°СЏ / СЃРёСЃС‚РµРјРЅР°СЏ С‚РµРјР°
 function AppearanceCard({ theme }: { theme: ThemeController }) {
-  const options: { value: ThemeMode; icon: string; label: string }[] = [
-    { value: 'light', icon: 'вЂ', label: 'РЎРІРµС‚Р»Р°СЏ' },
-    { value: 'dark', icon: 'вѕ', label: 'РўС‘РјРЅР°СЏ' },
-    { value: 'system', icon: 'вЊ‚', label: 'РЎРёСЃС‚РµРјРЅР°СЏ' },
+  const options: { value: ThemeMode; icon: React.ReactNode; label: string }[] = [
+    { value: 'light', icon: <NavIcon d="M12 3v2m0 14v2m9-9h-2M5 12H3m15.364-6.364l-1.414 1.414M7.05 16.95l-1.414 1.414M16.95 16.95l1.414 1.414M7.05 7.05L5.636 5.636M15 12a3 3 0 11-6 0 3 3 0 016 0z" />, label: 'Светлая' },
+    { value: 'dark', icon: <NavIcon d="M21 12.79A9 9 0 1111.21 3a7 7 0 009.79 9.79z" />, label: 'Тёмная' },
+    { value: 'system', icon: <NavIcon d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />, label: 'Системная' },
   ];
   return (
     <div className="card">
-      <h3>РћС„РѕСЂРјР»РµРЅРёРµ</h3>
-      <div className="muted">РўРµРјР° РїСЂРёРјРµРЅСЏРµС‚СЃСЏ СЃСЂР°Р·Сѓ Рё Р·Р°РїРѕРјРёРЅР°РµС‚СЃСЏ РЅР° СЌС‚РѕРј СѓСЃС‚СЂРѕР№СЃС‚РІРµ.</div>
-      <div className="segmented">
+      <h3>Оформление</h3>
+      <div className="muted">Тема применяется сразу и запоминается на этом устройстве.</div>
+      <div className="segmented" style={{ display: 'flex', gap: 8, marginTop: 12, flexWrap: 'wrap' }}>
         {options.map(o => (
           <button
             key={o.value}
             type="button"
-            className={`btn ${theme.mode === o.value ? 'active' : ''}`}
+            className={`btn ${theme.mode === o.value ? 'primary' : 'secondary'}`}
             onClick={() => theme.setMode(o.value)}
+            style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}
           >
             {o.icon} {o.label}
           </button>
@@ -230,7 +243,6 @@ function AppearanceCard({ theme }: { theme: ThemeController }) {
   );
 }
 
-// РЎС‚Р°СЂС‚РѕРІС‹Р№ Р±Р°Р»Р°РЅСЃ вЂ” В«СЃРєРѕР»СЊРєРѕ РґРµРЅРµРі РЅР° СЃС‡РµС‚Р°С… СЃРµР№С‡Р°СЃВ», РІР»РёСЏРµС‚ РЅР° РёС‚РѕРіРѕРІС‹Р№ Р±Р°Р»Р°РЅСЃ РІ РћР±Р·РѕСЂРµ
 function StartingBalance({ auth }: { auth: ReturnType<typeof useAuth> }) {
   const [val, setVal] = useState(String(auth.user?.startingBalance ?? 0));
   const [msg, setMsg] = useState('');
@@ -238,21 +250,20 @@ function StartingBalance({ auth }: { auth: ReturnType<typeof useAuth> }) {
     e.preventDefault(); setMsg('');
     try {
       await api.post('/api/budget/start-balance', { startingBalance: Number(val.replace(',', '.')) || 0 });
-      setMsg('РЎРѕС…СЂР°РЅРµРЅРѕ вњ“'); auth.refresh();
+      setMsg('Сохранено'); auth.refresh();
     } catch (ex: any) { setMsg(ex.message); }
   };
   return (
-    <form onSubmit={save} style={{ marginTop: 10 }}>
-      <label>РЎС‚Р°СЂС‚РѕРІС‹Р№ Р±Р°Р»Р°РЅСЃ РЅР° СЃС‡РµС‚Р°С…, в‚Ѕ
+    <form onSubmit={save} style={{ marginTop: 14 }}>
+      <label>Стартовый баланс на счетах, ₽
         <input inputMode="decimal" value={val} onChange={e => setVal(e.target.value)} placeholder="0" />
       </label>
-      {msg && <div className="muted">{msg}</div>}
-      <button className="btn primary small">РЎРѕС…СЂР°РЅРёС‚СЊ</button>
+      {msg && <div className="muted" style={{ marginBottom: 8 }}>{msg}</div>}
+      <button className="btn primary small" type="submit">Сохранить</button>
     </form>
   );
 }
 
-// РЈРїСЂР°РІР»РµРЅРёРµ РєР°С‚РµРіРѕСЂРёСЏРјРё (Р»РёС‡РЅС‹Рµ СЃРїСЂР°РІРѕС‡РЅРёРєРё)
 function CategoriesCard({ categories, onChanged }: { categories: Category[]; onChanged: () => void }) {
   const [name, setName] = useState('');
   const [type, setType] = useState<0 | 1>(1);
@@ -267,40 +278,39 @@ function CategoriesCard({ categories, onChanged }: { categories: Category[]; onC
     } catch (ex: any) { setErr(ex.message); }
   };
   const del = async (id: number) => {
-    if (!confirm('РЈРґР°Р»РёС‚СЊ РєР°С‚РµРіРѕСЂРёСЋ?')) return;
+    if (!confirm('Удалить категорию?')) return;
     try { await api.del(`/api/categories/${id}`); onChanged(); }
     catch (ex: any) { alert(ex.message); }
   };
 
   return (
     <div className="card">
-      <h3>РљР°С‚РµРіРѕСЂРёРё</h3>
+      <h3>Категории</h3>
       <table>
-        <thead><tr><th>РљР°С‚РµРіРѕСЂРёСЏ</th><th>РўРёРї</th><th></th></tr></thead>
+        <thead><tr><th>Категория</th><th>Тип</th><th></th></tr></thead>
         <tbody>
           {categories.map(c => (
             <tr key={c.id}>
-              <td><b style={{ color: c.color }}>в—Џ</b> {c.name}</td>
-              <td>{c.type === 0 ? 'РґРѕС…РѕРґ' : 'СЂР°СЃС…РѕРґ'}</td>
-              <td><button className="btn danger-ghost small" onClick={() => del(c.id)}>вњ•</button></td>
+              <td><span style={{ color: c.color, fontWeight: 700, marginRight: 6 }}>●</span>{c.name}</td>
+              <td>{c.type === 0 ? 'доход' : 'расход'}</td>
+              <td><button type="button" className="btn icon danger small" onClick={() => del(c.id)} title="Удалить">✕</button></td>
             </tr>
           ))}
         </tbody>
       </table>
-      <form onSubmit={add} style={{ marginTop: 12 }}>
+      <form onSubmit={add} style={{ marginTop: 16 }}>
         <div className="form-row">
-          <label>РќР°Р·РІР°РЅРёРµ<input value={name} onChange={e => setName(e.target.value)} required placeholder="РќР°РїСЂ.: Р‘РµРЅР·РёРЅ" /></label>
-          <label>РўРёРї
+          <label>Название<input value={name} onChange={e => setName(e.target.value)} required placeholder="Напр.: Бензин" /></label>
+          <label>Тип
             <select value={type} onChange={e => setType(Number(e.target.value) as 0 | 1)}>
-              <option value={1}>Р Р°СЃС…РѕРґ</option><option value={0}>Р”РѕС…РѕРґ</option>
+              <option value={1}>Расход</option><option value={0}>Доход</option>
             </select>
           </label>
-          <label>Р¦РІРµС‚<input type="color" value={color} onChange={e => setColor(e.target.value)} style={{ height: 40, padding: 2 }} /></label>
+          <label>Цвет<input type="color" value={color} onChange={e => setColor(e.target.value)} style={{ height: 40, padding: 2 }} /></label>
         </div>
-        {err && <div className="alert">{err}</div>}
-        <button className="btn primary">+ Р”РѕР±Р°РІРёС‚СЊ РєР°С‚РµРіРѕСЂРёСЋ</button>
+        {err && <div className="alert alert-danger">{err}</div>}
+        <button className="btn primary" type="submit">+ Добавить категорию</button>
       </form>
     </div>
   );
 }
-
