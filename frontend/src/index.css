@@ -201,24 +201,23 @@ button, input, select, textarea { font: inherit; color: inherit; }
 .sidebar-nav { flex: 1; padding: 16px 0; overflow-y: auto; }
 .nav-item {
   display: flex; align-items: center; gap: 12px;
-  width: 100%; padding: 10px 18px;
+  width: 100%; padding: 11px 18px;
   font-size: 14px; font-weight: 500;
   color: var(--wb-text-secondary);
   border: none; background: transparent;
   text-align: left; cursor: pointer;
   border-radius: var(--wb-radius);
-  transition: background 150ms var(--wb-easing-out), color 150ms var(--wb-easing-out), transform 100ms ease;
+  transition: background 150ms var(--wb-easing-out), color 150ms var(--wb-easing-out);
 }
-.nav-item:hover { background: var(--wb-hover-bg); color: var(--wb-text-primary); transform: translateX(2px); }
+.nav-item:hover { background: var(--wb-hover-bg); color: var(--wb-text-primary); }
 .nav-item.active {
   background: var(--wb-selected-bg);
   color: var(--wb-accent);
-  border-left: 3px solid var(--wb-accent);
-  margin-left: -3px;
-  padding-left: 15px;
-  box-shadow: inset 0 0 0 1px var(--wb-accent-subtle);
+  border-left: 2px solid var(--wb-accent);
+  margin-left: -2px;
+  padding-left: 16px;
 }
-.nav-item .nav-icon { font-size: 17px; width: 22px; text-align: center; }
+.nav-item svg { width: 20px; height: 20px; flex-shrink: 0; fill: currentColor; }
 
 .sidebar-footer {
   padding: 14px 18px;
@@ -589,9 +588,17 @@ th { font-weight: 600; color: var(--wb-text-secondary); background: transparent;
 }
 .account-head { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; margin-bottom: 10px; }
 .account-head b { color: var(--wb-text-primary); font-size: 1.05rem; }
-.account-head .muted { color: var(--wb-text-muted); font-size: 0.84rem; }
+.account-head .muted { color: var(--wb-text-secondary); font-size: 0.84rem; }
 .account-balance { font-size: 1.7rem; font-weight: 700; color: var(--wb-text-primary); margin: 6px 0 14px; letter-spacing: -0.5px; }
-.account-actions { display: flex; gap: 6px; margin-top: auto; padding-top: 10px; flex-wrap: wrap; }
+.account-actions { display: flex; gap: 8px; margin-top: auto; padding-top: 10px; flex-wrap: wrap; }
+.account-card .account-actions .btn.small {
+  background: var(--wb-surface-elevated);
+  border: 1px solid var(--wb-border);
+  color: var(--wb-text-primary);
+}
+.account-card .account-actions .btn.small:hover { background: var(--wb-hover-bg); border-color: var(--wb-border-hover); }
+.account-card .account-actions .btn.danger-ghost.small { background: transparent; border: none; color: var(--wb-text-muted); }
+.account-card .account-actions .btn.danger-ghost.small:hover { background: var(--wb-danger-subtle); color: var(--wb-danger); }
 
 /* ---------- Сетка целей ---------- */
 .goals-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 16px; }
