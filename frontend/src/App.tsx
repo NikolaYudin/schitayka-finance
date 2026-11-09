@@ -138,14 +138,18 @@ export default function App() {
         <div className="shell">
           <TopBar />
           <main className="workarea">
-            <div className="container">
+            <div className="container fade-in">
               {route === 'journal' ? <Journal key={tick} />
                 : route === 'accounts' ? <AccountsPage key={tick} onChanged={() => setTick(t => t + 1)} />
                 : route === 'goals' ? <GoalsPage key={tick} />
                 : route === 'settings' ? (
                   <>
-                    <Settings auth={auth} categories={cats} theme={theme} onReload={() => setTick(t => t + 1)} />
-                    <AccountRulesCard />
+                    <div style={{ maxWidth: 740 }}>
+                      <Settings auth={auth} categories={cats} theme={theme} onReload={() => setTick(t => t + 1)} />
+                    </div>
+                    <div style={{ maxWidth: 740, marginTop: 16 }}>
+                      <AccountRulesCard />
+                    </div>
                   </>
                 )
                 : <Dashboard key={tick} />}
