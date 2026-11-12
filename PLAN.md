@@ -415,7 +415,8 @@ Task ReturnReserveLoanAsync(int userId, int loanId);
 
 ## Задача 4. Дистрибутив для Container Manager (zip-архив)
 
-> **Статус:** ✅ каркас реализован — шаблоны compose, скрипты, README, упаковщик (`build-release.ps1` / `.sh`), архив собирается и проверяется. ⬜ осталось: прогон на реальном NAS и публикация готового образа (B8).
+> **Статус:** ✅ каркас реализован — шаблоны compose, скрипты, README, упаковщик (`build-release.ps1` / `.sh`), архив собирается и проверяется. ✅ **Релиз 0.1.0 опубликован**: https://github.com/NikolaYudin/schitayka-finance/releases/tag/v0.1.0 (вложение `schitayka-0.1.0-docker.zip`, SHA256 `9D1CA4B…F628E28`).
+> ⬜ осталось: прогон на реальном NAS и публикация готового образа (B8).
 > **Версия:** 1.2.0.
 
 ### Сценарий пользователя
