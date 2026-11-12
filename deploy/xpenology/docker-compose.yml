@@ -1,0 +1,78 @@
+# СчитайКа — проект для Synology DSM / Xpenology → Container Manager.
+#
+# Файл рассчитан на запуск из этой папки:
+#   deploy/xpenology/docker-compose.yml
+# Контекст сборки — корень репозитория (../..), поэтому на NAS должен лежать
+# весь проект, а не только эта папка.
+#
+# Перед первым запуском:
+#   cp .env.example .env
+#   заполнить JWT_KEY (>= 32 символов)
+#
+# Запуск:
+#   docker compose up -d --build
+#
+# Интерфейс: http://<IP-НАС>:5023
+
+version: "3.8"
+
+services:
+  schitayka:
+    build:
+      context: ../..
+      dockerfile: deploy/xpenology/Dockerfile
+      args:
+        # Полный SHA подставляют update-скрипты; при сборке из UI будет unknown.
+        GIT_COMMIT: ${GIT_COMMIT:-unknown}
+    image: schitayka:latest
+    container_name: schitayka
+    restart: unless-stopped
+
+    ports:
+      - "${APP_PORT:-5023}:8080"
+
+    environment:
+      ASPNETCORE_ENVIRONMENT: Production
+      ASPNETCORE_URLS: http://+:8080
+      # Если приложение стоит за Synology Reverse Proxy — корректные scheme/host.
+      ASPNETCORE_FORWARDEDHEADERS_ENABLED: "true"
+      # Обязательный ключ подписи JWT. Задаётся в .env, не в этом файле.
+      Jwt__Key: "${JWT_KEY:?JWT_KEY is not set. Copy .env.example to .env and set a long random key}"
+      TZ: ${TZ:-Europe/Moscow}
+      # В образе нет исходников фронтенда — автосборка при старте не нужна.
+      SCHITAYKA_AUTOBUILD_FRONTEND: "false"
+      # false = не создавать demo@schitayka.ru/demo123 на production.
+      SCHITAYKA_SEED_DEMO: ${SEED_DEMO:-false}
+      DOTNET_EnableDiagnostics: "0"
+      # Репозиторий, по которому проверяются обновления (можно указать форк).
+      Update__RepoUrl: "${UPDATE_REPO_URL:-https://github.com/NikolaYudin/schitayka-finance}"
+      # Необязательный токен GitHub повышает лимит API (60 запросов/час без него).
+      GITHUB_TOKEN: ${GITHUB_TOKEN:-}
+
+    volumes:
+      # SQLite-база и WAL-файлы. Именованный том переживает пересборку контейнера.
+      - schitayka-data:/app/data
+
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+
+    stop_grace_period: 30s
+
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8080/api/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+volumes:
+  schitayka-data:
+    name: schitayka-data

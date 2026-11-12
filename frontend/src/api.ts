@@ -38,6 +38,64 @@ export const api = {
   post: <T>(p: string, body?: unknown) => request<T>(p, { method: 'POST', body: JSON.stringify(body ?? {}) }),
   put: <T>(p: string, body: unknown) => request<T>(p, { method: 'PUT', body: JSON.stringify(body) }),
   del: <T>(p: string) => request<T>(p, { method: 'DELETE' }),
+
+  /** multipart/form-data: Content-Type выставляет браузер (boundary). */
+  upload: async <T>(p: string, form: FormData): Promise<T> => {
+    const headers: Record<string, string> = {};
+    const token = getToken();
+    if (token) headers['Authorization'] = `Bearer ${token}`;
+
+    const res = await fetch(p, { method: 'POST', headers, body: form });
+    if (res.status === 401) {
+      clearToken();
+      location.hash = '#/login';
+    }
+    if (!res.ok) {
+      let msg = `Ошибка ${res.status}`;
+      try {
+        const j = await res.json();
+        msg = j.error || j.title || msg;
+      } catch { /* ignore */ }
+      throw new ApiError(res.status, msg);
+    }
+    const text = await res.text();
+    return (text ? JSON.parse(text) : undefined) as T;
+  },
+
+  /** Скачивание файла с JWT и корректным именем из Content-Disposition. */
+  download: async (p: string, fallbackName: string): Promise<void> => {
+    const headers: Record<string, string> = {};
+    const token = getToken();
+    if (token) headers['Authorization'] = `Bearer ${token}`;
+
+    const res = await fetch(p, { headers });
+    if (res.status === 401) {
+      clearToken();
+      location.hash = '#/login';
+    }
+    if (!res.ok) {
+      let msg = `Ошибка ${res.status}`;
+      try {
+        const j = await res.json();
+        msg = j.error || j.title || msg;
+      } catch { /* ignore */ }
+      throw new ApiError(res.status, msg);
+    }
+
+    const blob = await res.blob();
+    const disposition = res.headers.get('Content-Disposition') || '';
+    const match = /filename\*?=(?:UTF-8'')?"?([^";]+)"?/i.exec(disposition);
+    const name = match ? decodeURIComponent(match[1]) : fallbackName;
+
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = name;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    window.setTimeout(() => URL.revokeObjectURL(url), 1500);
+  },
 };
 
 // ---- Типы ----
@@ -96,6 +154,48 @@ export interface ReserveLoan {
 export interface ReserveInfo {
   ruleId: number; ruleName: string; accountId: number | null; accountName: string | null;
   threshold: number; balance: number; taken: number; free: number;
+}
+
+// ---- Версия и обновления ----
+export interface CurrentVersion {
+  version: string;
+  commit: string;
+  shortCommit: string;
+  buildDate: string | null;
+}
+export interface LatestCommit {
+  sha: string;
+  shortSha: string;
+  message: string;
+  url: string;
+  date: string | null;
+  version: string | null;
+}
+export interface UpdateCheck {
+  ok: boolean;
+  error: string | null;
+  current: CurrentVersion;
+  latest: LatestCommit | null;
+  updateAvailable: boolean;
+  repoUrl: string;
+  compareUrl: string | null;
+  checkedAt: string;
+}
+
+// ---- Импорт чека/скриншота ----
+export interface ReceiptParseResult {
+  amount: number | null;
+  date: string;
+  type: TxType;
+  typeName: string;
+  categoryId: number | null;
+  categoryName: string | null;
+  merchant: string | null;
+  comment: string;
+  confidence: number;
+  warnings: string[];
+  lines: string[];
+  rawText: string;
 }
 export interface Summary {
   year: number;

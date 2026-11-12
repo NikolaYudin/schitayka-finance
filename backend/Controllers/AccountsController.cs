@@ -20,23 +20,14 @@ public class AccountsController : ControllerBase
     public record AccountDto(string Name, AccountType Type, decimal Balance,
                              decimal? CreditLimit, decimal? CashbackRate, string? Color, bool? Archived = null);
 
-<<<<<<< HEAD
-    // Полный пересчёт остатков всех счетов (старт + операции + кэшбэк).
-    // Архивные счета тоже пересчитываем — иначе при возврате из архива
-    // баланс оказался бы устаревшим; в итоги и выбор они при этом не попадают.
-    private async Task RecalcAllAccounts(int uid)
-    {
-        var ids = await _db.Accounts.Where(a => a.UserId == uid)
-            .Select(a => (int?)a.Id).ToListAsync();
-=======
-    // --- Управление всеми счетами семьи ---
+    // --- Управление счетами: своими и семейными ---
     // Id пользователей, чьими счетами может управлять текущий пользователь:
     // он сам + все участники его семьи (пусто, если семьи нет).
     private async Task<List<int>> ManageableUserIds()
     {
         var me = await _db.Users.FindAsync(Uid);
-        if (me is null) return [];
-        if (string.IsNullOrEmpty(me.FamilyCode)) return [Uid];
+        if (me is null) return new List<int>();
+        if (string.IsNullOrEmpty(me.FamilyCode)) return new List<int> { Uid };
         return await _db.Users.Where(u => u.FamilyCode == me.FamilyCode)
             .Select(u => u.Id).ToListAsync();
     }
@@ -48,14 +39,16 @@ public class AccountsController : ControllerBase
         return await _db.Accounts.AnyAsync(a => a.Id == accountId && ids.Contains(a.UserId));
     }
 
-    // Полный пересчёт остатков всех активных счетов (старт + операции + кэшбэк)
-    private async Task RecalcAllAccounts(int uid) => await RecalcAccountsOf(_db, _db.Accounts.Where(a => a.UserId == uid && !a.IsArchived));
+    // Полный пересчёт остатков всех счетов (старт + операции + кэшбэк).
+    // Архивные счета тоже пересчитываем — иначе при возврате из архива
+    // баланс оказался бы устаревшим; в итоги и выбор они при этом не попадают.
+    private async Task RecalcAllAccounts(int uid) =>
+        await RecalcAccountsOf(_db, _db.Accounts.Where(a => a.UserId == uid));
 
     // Пересчёт для набора счетов (используется и для семейной карточки на главной)
     public static async Task RecalcAccountsOf(AppDbContext db, IQueryable<Account> accountsQ)
     {
         var ids = await accountsQ.Select(a => (int?)a.Id).ToListAsync();
->>>>>>> bf4507991471ab9d18e3eda494a9d6cab04eb3b0
         foreach (var id in ids)
         {
             var acc = await db.Accounts.FirstOrDefaultAsync(a => a.Id == id!.Value);
@@ -113,15 +106,13 @@ public class AccountsController : ControllerBase
     public async Task<IActionResult> List([FromQuery] bool includeArchived = false, [FromQuery] bool family = false)
     {
         if (Uid < 0) return Unauthorized(new { error = "Требуется вход" });
-<<<<<<< HEAD
-        await RecalcAllAccounts(Uid); // остатки всегда актуальны относительно операций
-        await _rules.EvaluateAllAsync(Uid);
-        var q = _db.Accounts.Where(a => a.UserId == Uid);
-=======
         var ids = family ? await ManageableUserIds() : new List<int> { Uid };
-        foreach (var uid in ids) await RecalcAllAccounts(uid); // остатки всегда актуальны относительно операций
+        foreach (var uid in ids)
+        {
+            await RecalcAllAccounts(uid); // остатки всегда актуальны относительно операций
+            await _rules.EvaluateAllAsync(uid);
+        }
         var q = _db.Accounts.Where(a => ids.Contains(a.UserId));
->>>>>>> bf4507991471ab9d18e3eda494a9d6cab04eb3b0
         if (!includeArchived) q = q.Where(a => !a.IsArchived);
         var list = await q.OrderBy(a => a.UserId).ThenBy(a => a.Type).ThenBy(a => a.Name).ToListAsync();
         var result = new List<object>();
@@ -160,14 +151,9 @@ public class AccountsController : ControllerBase
         };
         _db.Accounts.Add(acc);
         await _db.SaveChangesAsync();
-<<<<<<< HEAD
-        await RecalcAllAccounts(Uid);
-        await _rules.EvaluateAllAsync(Uid);
-        return Ok(Project(acc));
-=======
         await RecalcAllAccounts(targetUid);
+        await _rules.EvaluateAllAsync(targetUid);
         return Ok(await ProjectWithOwner(acc));
->>>>>>> bf4507991471ab9d18e3eda494a9d6cab04eb3b0
     }
 
     [HttpPut("{id:int}")]
@@ -190,14 +176,9 @@ public class AccountsController : ControllerBase
         if (!string.IsNullOrWhiteSpace(dto.Color)) acc.Color = dto.Color;
         if (dto.Archived is { } archived) acc.IsArchived = archived;
         await _db.SaveChangesAsync();
-<<<<<<< HEAD
-        await RecalcAllAccounts(Uid);
-        await _rules.EvaluateAllAsync(Uid);
-        return Ok(Project(acc));
-=======
         await RecalcAllAccounts(acc.UserId);
+        await _rules.EvaluateAllAsync(acc.UserId);
         return Ok(await ProjectWithOwner(acc));
->>>>>>> bf4507991471ab9d18e3eda494a9d6cab04eb3b0
     }
 
     // Пополнение / списание вручную: сдвиг стартового остатка (например, зачислили кэшбэк на счёт)
@@ -212,14 +193,9 @@ public class AccountsController : ControllerBase
         acc.StartingBalance += dto.Delta;
         if (acc.StartingBalance < 0) acc.StartingBalance = 0;
         await _db.SaveChangesAsync();
-<<<<<<< HEAD
-        await RecalcAllAccounts(Uid);
-        await _rules.EvaluateAllAsync(Uid);
-        return Ok(Project(acc));
-=======
         await RecalcAllAccounts(acc.UserId);
+        await _rules.EvaluateAllAsync(acc.UserId);
         return Ok(await ProjectWithOwner(acc));
->>>>>>> bf4507991471ab9d18e3eda494a9d6cab04eb3b0
     }
 
     // Начисленный банком кэшбэк (разовое пополнение баланса)
@@ -234,14 +210,9 @@ public class AccountsController : ControllerBase
         if (dto.Amount <= 0) return BadRequest(new { error = "Укажите сумму кэшбэка" });
         acc.StartingBalance += dto.Amount;
         await _db.SaveChangesAsync();
-<<<<<<< HEAD
-        await RecalcAllAccounts(Uid);
-        await _rules.EvaluateAllAsync(Uid);
-        return Ok(Project(acc));
-=======
         await RecalcAllAccounts(acc.UserId);
+        await _rules.EvaluateAllAsync(acc.UserId);
         return Ok(await ProjectWithOwner(acc));
->>>>>>> bf4507991471ab9d18e3eda494a9d6cab04eb3b0
     }
 
     [HttpDelete("{id:int}")]
@@ -253,7 +224,7 @@ public class AccountsController : ControllerBase
         if (acc is null) return NotFound();
         _db.Accounts.Remove(acc); // операции останутся, AccountId станет NULL (SetNull)
         await _db.SaveChangesAsync();
-        await _rules.EvaluateAllAsync(Uid);
+        await _rules.EvaluateAllAsync(acc.UserId);
         return Ok();
     }
 

@@ -1,0 +1,43 @@
+# Контекст Docker-сборки — корень репозитория.
+# Исключаем всё, что не нужно образу и сильно увеличивает контекст.
+
+# Git / IDE / CI
+.git
+.gitignore
+.github
+.vs
+.vscode
+*.suo
+*.user
+
+# Артефакты сборки
+**/bin
+**/obj
+**/node_modules
+**/dist
+**/tsconfig.tsbuildinfo
+backend/wwwroot
+backend/bin
+backend/obj
+
+# Локальные БД и секреты
+data
+backend/data
+deploy/xpenology/data
+.env
+**/.env
+**/*.log
+
+# Тесты, документация и превью
+backend.Tests
+design-preview
+schitayka-design-prompt.md
+README.md
+LICENSE
+PLAN.md
+
+# Служебные файлы репозитория
+SchitayKa.sln
+setup.cmd
+build-frontend.cmd
+dotnet-tools.json

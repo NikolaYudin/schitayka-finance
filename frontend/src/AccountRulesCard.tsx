@@ -1,7 +1,14 @@
 import { useEffect, useState, type FormEvent } from 'react';
 import { api, AccountInfo, AccountRule, AccountRuleKind, Category, TxType } from './api';
+import { Icon } from './icons';
+import { plural } from './plural';
 
 const KIND_NAME: Record<number, string> = { 0: 'Автоподстановка', 1: 'Неснижаемый остаток', 2: 'Резерв' };
+const KIND_HINT: Record<number, string> = {
+  0: 'Автоматически выбирает счёт и категорию для похожих операций',
+  1: 'Следит, чтобы на счёте всегда оставалась минимальная сумма',
+  2: 'Резервирует часть баланса и напоминает о возврате займа',
+};
 const KIND_TABS: number[] = [0, 1, 2];
 
 export function AccountRulesCard() {
@@ -10,6 +17,7 @@ export function AccountRulesCard() {
   const [accounts, setAccounts] = useState<AccountInfo[]>([]);
   const [cats, setCats] = useState<Category[]>([]);
   const [err, setErr] = useState('');
+  const [msg, setMsg] = useState('');
 
   const reload = async () => {
     const [r, c, a] = await Promise.all([
@@ -51,60 +59,94 @@ export function AccountRulesCard() {
     await api.put(`/api/account-rules/${r.id}`, body);
     reload();
   };
-  const del = async (r: AccountRule) => { await api.del(`/api/account-rules/${r.id}`); reload(); };
-  const applyToOld = async () => {
-    const res = await api.post<{ matched: number; dryRun: boolean; samples?: unknown[] }>(
-      '/api/account-rules/apply?dryRun=true', {});
-    return res;
+  const del = async (r: AccountRule) => {
+    if (!confirm(`Удалить правило «${r.name}»?`)) return;
+    await api.del(`/api/account-rules/${r.id}`);
+    reload();
   };
-
-  const createNew = () => {
-    setKind(kind);
-    // сбрасываем форму через ключ: RuleForm использует key={kind} у себя
+  const applyToOld = async () => {
+    setErr(''); setMsg('');
+    try {
+      const res = await api.post<{ matched: number; dryRun: boolean }>('/api/account-rules/apply?dryRun=true', {});
+      setMsg(`Проверка завершена: правило подошло бы к ${res.matched} операциям.`);
+    } catch (e: any) { setErr(e.message); }
   };
 
   return (
     <div className="card">
-      <h3>Правила счетов</h3>
+      <div className="card-head">
+        <div>
+          <h3>Правила счетов</h3>
+          <p className="card-sub">{KIND_HINT[kind]}</p>
+        </div>
+        <span className="badge badge-muted">{rules.length} {plural(rules.length, 'правило', 'правила', 'правил')}</span>
+      </div>
+
       <div className="tabs">
         {KIND_TABS.map(k => (
-          <button key={k} type="button" className={`tab ${kind === k ? 'active' : ''}`} onClick={() => setKind(k)}>
+          <button key={k} type="button" className={`tab ${kind === k ? 'active' : ''}`} onClick={() => { setKind(k); setMsg(''); setErr(''); }}>
             {KIND_NAME[k]}
           </button>
         ))}
       </div>
-      {err && <div className="alert">{err}</div>}
-      {rules.length === 0 && <div className="muted">Правил этого типа пока нет.</div>}
-      {rules.length > 0 && (
-        <table>
-          <thead><tr><th>Правило</th><th>Условие / действие</th><th>Статус</th><th></th></tr></thead>
-          <tbody>
-            {rules.map(r => (
-              <tr key={r.id}>
-                <td><b>{r.name}</b></td>
-                <td>{describeRule(r)}</td>
-                <td>{r.isEnabled ? '✅ включено' : '⛔ выключено'}</td>
-                <td style={{ whiteSpace: 'nowrap' }}>
-                  <button className="btn small" onClick={() => toggle(r)}>{r.isEnabled ? '⏸' : '▶'}</button>{' '}
-                  <button className="btn danger-ghost small" onClick={() => del(r)}>✕</button>
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
+
+      {err && <div className="alert alert-danger">{err}</div>}
+      {msg && <div className="alert alert-info">{msg}</div>}
+
+      {rules.length === 0 ? (
+        <div className="empty" style={{ padding: '18px 16px 22px' }}>
+          <span className="empty-ico"><Icon name="shield" size={22} /></span>
+          <div className="empty-title">Правил этого типа пока нет</div>
+          <div className="empty-text">Создайте первое правило в форме ниже.</div>
+        </div>
+      ) : (
+        <div style={{ overflowX: 'auto' }}>
+          <table>
+            <thead>
+              <tr><th>Правило</th><th>Условие / действие</th><th>Статус</th><th></th></tr>
+            </thead>
+            <tbody>
+              {rules.map(r => (
+                <tr key={r.id}>
+                  <td><b>{r.name}</b></td>
+                  <td className="muted" style={{ maxWidth: 360 }}>{describeRule(r)}</td>
+                  <td>
+                    <button
+                      type="button"
+                      className={`switch ${r.isEnabled ? 'on' : ''}`}
+                      onClick={() => toggle(r)}
+                      title={r.isEnabled ? 'Выключить правило' : 'Включить правило'}
+                      aria-label={r.isEnabled ? 'Выключить правило' : 'Включить правило'}
+                    />
+                  </td>
+                  <td style={{ whiteSpace: 'nowrap', textAlign: 'right' }}>
+                    <button
+                      type="button"
+                      className="btn icon danger"
+                      style={{ width: 30, height: 30 }}
+                      onClick={() => del(r)}
+                      title="Удалить правило"
+                      aria-label={`Удалить правило ${r.name}`}
+                    >
+                      <Icon name="trash" size={14} />
+                    </button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
       )}
-      {kind === 0 && (
-        <button className="btn small" style={{ marginTop: 8 }} onClick={async () => {
-          try { const res = await applyToOld(); alert(`Dry-run: затронуто операций ${res.matched}`); }
-          catch (e: any) { alert(e.message); }
-        }}>Применить к старым операциям (dry-run)</button>
+
+      {kind === 0 && rules.length > 0 && (
+        <div style={{ marginTop: 12 }}>
+          <button className="btn small" type="button" onClick={applyToOld}>
+            <Icon name="refresh" size={14} /> Проверить на старых операциях
+          </button>
+        </div>
       )}
-      <div style={{ marginTop: 12 }}>
-        <RuleForm key={kind} kind={kind} accounts={accounts} cats={cats} onSave={save} onSaved={reload} />
-      </div>
-      <button className="btn primary" onClick={() => { /* форма всегда в режиме «новое правило» */ }}>
-        Новое правило
-      </button>
+
+      <RuleForm key={kind} kind={kind} accounts={accounts} cats={cats} onSave={save} onSaved={reload} />
     </div>
   );
 }
@@ -149,7 +191,7 @@ function RuleForm({ kind, accounts, cats, onSave, onSaved }: {
     const rule: AccountRule = {
       ...form,
       name: form.name.trim(),
-      accountId: (isAuto || isMin) ? (form.accountId ?? null) : (isRes ? (form.accountId ?? null) : null),
+      accountId: form.accountId ?? null,
       threshold: (isMin || isRes) ? (Number(String(form.threshold ?? '')) || 0) : null,
       defaultReturnDays: isRes ? (Number(String(form.defaultReturnDays ?? '')) || 30) : null,
       amountMin: isAuto ? (Number(String(form.amountMin ?? '')) || null) : null,
@@ -169,19 +211,20 @@ function RuleForm({ kind, accounts, cats, onSave, onSaved }: {
           comment: form.commentContains ?? '', categoryId: form.matchCategoryId ?? null,
         });
       setTestRes(res.matched
-        ? `✅ Совпало: правило #${res.ruleId} → счёт #${res.accountId}, категория #${res.categoryId ?? '—'}`
-        : '❌ Совпадений не найдено');
+        ? `Совпало: правило #${res.ruleId} → счёт #${res.accountId}, категория #${res.categoryId ?? '—'}`
+        : 'Совпадений не найдено');
     } catch (ex: any) { setTestRes(`Ошибка: ${ex.message}`); }
     finally { setTesting(false); }
   };
 
-  const acctValue = kind === 2 ? (form.accountId ?? null) : (form.accountId ?? null);
+  const acctValue = form.accountId ?? null;
   const acctOptions: { value: number | null; label: string }[] = [{ value: null, label: 'Общий резерв (все счета)' }];
   for (const a of accounts.filter(a => !a.isArchived)) acctOptions.push({ value: a.id, label: a.name });
 
   return (
     <form onSubmit={submit} className="account-form">
-      <h4>Новое правило: {KIND_NAME[kind]}</h4>
+      <h4>Новое правило · {KIND_NAME[kind]}</h4>
+
       <label>Название
         <input value={form.name} onChange={e => set('name', e.target.value)} required placeholder="Напр.: Пятёрочка в основную" />
       </label>
@@ -209,13 +252,13 @@ function RuleForm({ kind, accounts, cats, onSave, onSaved }: {
             <label>Приоритет
               <input inputMode="numeric" value={String(form.priority)} onChange={e => set('priority', Number(e.target.value) || 0)} />
             </label>
+            <label>Категория для сопоставления
+              <select value={form.matchCategoryId ?? 0} onChange={e => set('matchCategoryId', Number(e.target.value) || null)}>
+                <option value={0}>Любая</option>
+                {cats.filter(c => c.type === form.txType).map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+              </select>
+            </label>
           </div>
-          <label>Категория для сопоставления (необязательно)
-            <select value={form.matchCategoryId ?? 0} onChange={e => set('matchCategoryId', Number(e.target.value) || null)}>
-              <option value={0}>Любая</option>
-              {cats.filter(c => c.type === form.txType).map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
-            </select>
-          </label>
           <label>Комментарий содержит
             <input value={form.commentContains ?? ''} onChange={e => set('commentContains', e.target.value || null)} placeholder="Напр.: Пятёрочка" />
           </label>
@@ -226,13 +269,13 @@ function RuleForm({ kind, accounts, cats, onSave, onSaved }: {
             <label>Сумма до, ₽
               <input inputMode="decimal" value={form.amountMax === null ? '' : String(form.amountMax)} onChange={e => set('amountMax', Number(e.target.value.replace(',', '.')) || null)} />
             </label>
+            <label>Автокатегория
+              <select value={form.setCategoryId ?? 0} onChange={e => set('setCategoryId', Number(e.target.value) || null)}>
+                <option value={0}>Без автокатегории</option>
+                {cats.filter(c => c.type === form.txType).map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+              </select>
+            </label>
           </div>
-          <label>Автокатегория (необязательно)
-            <select value={form.setCategoryId ?? 0} onChange={e => set('setCategoryId', Number(e.target.value) || null)}>
-              <option value={0}>Без автокатегории</option>
-              {cats.filter(c => c.type === form.txType).map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
-            </select>
-          </label>
         </>
       )}
 
@@ -249,15 +292,22 @@ function RuleForm({ kind, accounts, cats, onSave, onSaved }: {
         </div>
       )}
 
-      <label className="muted" style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
-        <input type="checkbox" checked={form.isEnabled} onChange={e => set('isEnabled', e.target.checked)} /> включить правило
+      <label style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 4 }}>
+        <input type="checkbox" checked={form.isEnabled} onChange={e => set('isEnabled', e.target.checked)} />
+        включить правило сразу
       </label>
-      {err && <div className="alert">{err}</div>}
-      <div className="form-row" style={{ gap: 8 }}>
-        <button className="btn primary" type="submit">Сохранить правило</button>
-        <button className="btn" type="button" onClick={runTest} disabled={testing}>Проверить</button>
+
+      {err && <div className="alert alert-danger">{err}</div>}
+      {testRes && <div className="alert alert-info">{testRes}</div>}
+
+      <div className="action-row" style={{ marginTop: 8 }}>
+        <button className="btn primary" type="submit">
+          <Icon name="check" size={16} /> Сохранить правило
+        </button>
+        <button className="btn secondary" type="button" onClick={runTest} disabled={testing}>
+          <Icon name="search" size={15} /> {testing ? 'Проверяем…' : 'Проверить'}
+        </button>
       </div>
-      {testRes && <div className="muted" style={{ marginTop: 6 }}>{testRes}</div>}
     </form>
   );
 }

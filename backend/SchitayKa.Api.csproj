@@ -5,27 +5,33 @@
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <RootNamespace>SchitayKa.Api</RootNamespace>
+    <!-- Версия берётся из VERSION в корне репозитория: правится в одном месте. -->
+    <VersionFile>$(MSBuildProjectDirectory)/../VERSION</VersionFile>
+    <Version Condition="Exists('$(VersionFile)')">$([System.IO.File]::ReadAllText('$(VersionFile)').Trim())</Version>
+    <Version Condition="!Exists('$(VersionFile)')">1.0.0</Version>
     <!-- Копировать собранный фронтенд (backend/wwwroot) в выходную папку bin/... -->
     <CopyLocalLockFileAssemblies>true</CopyLocalLockFileAssemblies>
   </PropertyGroup>
   <PropertyGroup>
-    <FrontendDir>$([System.IO.Path]::GetFullPath('$(MSBuildProjectDirectory)\..\frontend'))</FrontendDir>
+    <FrontendDir>$([System.IO.Path]::GetFullPath('$(MSBuildProjectDirectory)/../frontend'))</FrontendDir>
   </PropertyGroup>
 
   <ItemGroup Condition="!Exists('$(FrontendDir)')">
-    <!-- Режим публикации без исходников фронтенда (сервер): берём готовый wwwroot как есть -->
-    <Content Include="wwwroot\**" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" LinkBase="wwwroot\" />
+    <!-- Режим публикации без исходников фронтенда (сервер/контейнер): готовый wwwroot
+         уже включён Web SDK как Content, поэтому только обновляем метаданные копирования.
+         Include здесь давал бы дубли Content и ошибку NETSDK1022. -->
+    <Content Update="wwwroot/**" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
   </ItemGroup>
 
   <ItemGroup Condition="Exists('$(FrontendDir)')">
     <!-- Режим разработки: wwwroot — выход сборки vite, исключаем его из implicit Content,
          копируем в bin после сборки через _CopyWebRootAfterBuild -->
-    <Content Remove="wwwroot\**" />
+    <Content Remove="wwwroot/**" />
   </ItemGroup>
 
   <Target Name="_CopyWebRootAfterBuild" AfterTargets="Build">
     <ItemGroup>
-      <_WpSrc Include="$(MSBuildProjectDirectory)\wwwroot\**" />
+      <_WpSrc Include="$(MSBuildProjectDirectory)/wwwroot/**" />
     </ItemGroup>
     <!-- SkipUnchangedFiles="false": vite при пересборке может выдать то же имя файла (index-<hash>.js)
          с новым содержимым и тем же mtime — MSBuild со "true" пропускал такое копирование,
@@ -38,7 +44,7 @@
   <Target Name="_CleanStaleWebRootAssets" BeforeTargets="_CopyWebRootAfterBuild">
     <ItemGroup>
       <_WpStale Include="$([System.IO.Path]::Combine($(OutDir), 'wwwroot', 'assets', '*.js'));$([System.IO.Path]::Combine($(OutDir), 'wwwroot', 'assets', '*.css'))"
-                Exclude="$(MSBuildProjectDirectory)\wwwroot\assets\*" />
+                Exclude="$(MSBuildProjectDirectory)/wwwroot/assets/*" />
     </ItemGroup>
     <Delete Files="@(_WpStale)" Condition="'@(_WpStale)'!=''" />
     <Message Importance="high" Text="[SchitayKa] Удалены устаревшие бандлы в $(OutDir)wwwroot/assets: @(_WpStale->'%(Filename)%(Extension)', ', ')" Condition="'@(_WpStale)'!=''" />
@@ -47,9 +53,9 @@
   <!-- При публикации (dotnet publish / VS "Опубликовать") копируем собранный бандл напрямую в PublishDir -->
   <Target Name="_CopyWebRootToPublish" AfterTargets="Publish">
     <ItemGroup>
-      <_PubWpSrc Include="$(MSBuildProjectDirectory)\wwwroot\**" />
+      <_PubWpSrc Include="$(MSBuildProjectDirectory)/wwwroot/**" />
     </ItemGroup>
-    <Copy SourceFiles="@(_PubWpSrc)" DestinationFolder="$([System.IO.Path]::GetFullPath('$(PublishDir)wwwroot\%(RecursiveDir)'))" SkipUnchangedFiles="false" Condition="'@(_PubWpSrc)'!='' And '$(PublishDir)'!=''" />
+    <Copy SourceFiles="@(_PubWpSrc)" DestinationFolder="$([System.IO.Path]::Combine($(PublishDir), 'wwwroot', '%(RecursiveDir)'))" SkipUnchangedFiles="false" Condition="'@(_PubWpSrc)'!='' And '$(PublishDir)'!=''" />
     <Message Importance="high" Text="[SchitayKa] wwwroot скопирован в публикацию: $(PublishDir)wwwroot" Condition="'@(_PubWpSrc)'!=''" />
   </Target>
 
@@ -57,7 +63,7 @@
        Если npm отсутствует — предупреждение, но сборка .NET продолжается. -->
 
   <Target Name="BuildFrontend" BeforeTargets="BeforeBuild"
-          Condition="Exists('$(FrontendDir)\package.json') And Exists('$(FrontendDir)\node_modules')">
+          Condition="Exists('$(FrontendDir)/package.json') And Exists('$(FrontendDir)/node_modules')">
     <Message Importance="high" Text="Building frontend (npm run build)..." />
     <Exec Command="npm run build" WorkingDirectory="$(FrontendDir)" IgnoreExitCode="true" ContinueOnError="WarnAndContinue">
       <Output TaskParameter="ExitCode" PropertyName="NpmExitCode" />

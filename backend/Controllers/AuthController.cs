@@ -15,7 +15,6 @@ public record LoginDto(string Email, string Password);
 
 [ApiController]
 [Route("api/auth")]
-[EnableRateLimiting("auth")]
 public class AuthController : ControllerBase
 {
     private readonly AppDbContext _db;
@@ -57,6 +56,7 @@ public class AuthController : ControllerBase
     }
 
     [HttpPost("register")]
+    [EnableRateLimiting("auth")]
     public async Task<IActionResult> Register(RegisterDto dto)
     {
         var email = dto.Email.Trim().ToLowerInvariant();
@@ -98,6 +98,7 @@ public class AuthController : ControllerBase
     }
 
     [HttpPost("login")]
+    [EnableRateLimiting("auth")]
     public async Task<IActionResult> Login(LoginDto dto)
     {
         var email = dto.Email.Trim().ToLowerInvariant();
@@ -106,6 +107,12 @@ public class AuthController : ControllerBase
             return Unauthorized(new { error = "Неверный email или пароль" });
         return Ok(new { token = BuildJwt(user), user = new { user.Id, user.Email, user.Name } });
     }
+
+    // Доступен ли демо-аккаунт (для подсказки на экране входа).
+    // В production демо-сид отключён, поэтому UI не должен показывать нерабочие учётные данные.
+    [HttpGet("demo-status")]
+    public async Task<IActionResult> DemoStatus()
+        => Ok(new { enabled = await _db.Users.AnyAsync(u => u.Email == "demo@schitayka.ru") });
 
     [HttpGet("me")]
     [Microsoft.AspNetCore.Authorization.Authorize]

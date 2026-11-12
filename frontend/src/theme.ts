@@ -5,7 +5,7 @@ export type ResolvedTheme = 'light' | 'dark';
 
 const STORAGE_KEY = 'sk_theme';
 const DARK_QUERY = '(prefers-color-scheme: dark)';
-const THEME_COLORS: Record<ResolvedTheme, string> = { light: '#1a365d', dark: '#0f172a' };
+const THEME_COLORS: Record<ResolvedTheme, string> = { light: '#f1f2f7', dark: '#09090b' };
 
 export function getStoredTheme(): ThemeMode {
   try {

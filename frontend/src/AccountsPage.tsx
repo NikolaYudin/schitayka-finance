@@ -1,28 +1,36 @@
-import { useEffect, useState } from 'react';
-<<<<<<< HEAD
-import { AccountInfo, AccountType, FamilyMember, api, fmt, AccountRule, AccountAlert, ReserveLoan } from './api';
-=======
-import { AccountInfo, AccountType, FamilyMember, api, fmt } from './api';
-import { AccountForm } from './components';
->>>>>>> bf4507991471ab9d18e3eda494a9d6cab04eb3b0
+import { useEffect, useState, type CSSProperties } from 'react';
+import {
+  AccountInfo, AccountType, FamilyMember, AccountRule, AccountAlert, ReserveLoan,
+  api, fmt,
+} from './api';
+import { Icon } from './icons';
 
-const TYPE_LABEL: Record<AccountType, string> = { 0: 'Дебетовая карта', 1: 'Кредитная карта', 2: 'Наличные', 3: 'Вклад', 4: 'Прочее' };
+const TYPE_HINT: Record<AccountType, string> = {
+  0: 'Дебетовая карта',
+  1: 'Кредитная карта',
+  2: 'Наличные',
+  3: 'Вклад / накопительный',
+  4: 'Прочее',
+};
 
-// ---- Страница «Счета»: прямоугольные карточки в сетку 3 колонки + форма добавления/редактирования ----
+/** Мягкий оттенок цвета счёта для декоративных элементов. */
+const tint = (color: string) => (/^#[0-9a-f]{6}$/i.test(color) ? `${color}1f` : 'var(--accent-soft)');
+
+function accountInitial(name: string): string {
+  return name.trim().charAt(0).toUpperCase() || 'С';
+}
+
+// ---- Страница «Счета»: карточки в сетке + форма добавления/редактирования ----
 export function AccountsPage({ onChanged }: { onChanged?: () => void }) {
   const [list, setList] = useState<AccountInfo[] | null>(null);
   const [err, setErr] = useState('');
   const [editing, setEditing] = useState<AccountInfo | null>(null); // null = нет формы, объект (id 0) = новая
   const [showArchived, setShowArchived] = useState(false);
-<<<<<<< HEAD
+  const [familyMode, setFamilyMode] = useState(true);
+  const [inFamily, setInFamily] = useState(false);
   const [rules, setRules] = useState<AccountRule[]>([]);
   const [alerts, setAlerts] = useState<AccountAlert[]>([]);
   const [loans, setLoans] = useState<ReserveLoan[]>([]);
-=======
-  // Режим «вся семья»: показываем и управляем счетами всех участников семьи
-  const [familyMode, setFamilyMode] = useState(true);
-  const [inFamily, setInFamily] = useState(false);
->>>>>>> bf4507991471ab9d18e3eda494a9d6cab04eb3b0
 
   const load = () => {
     api.get<{ familyCode: string | null; members: FamilyMember[] }>('/api/family/members')
@@ -31,7 +39,6 @@ export function AccountsPage({ onChanged }: { onChanged?: () => void }) {
     api.get<AccountInfo[]>(`/api/accounts?includeArchived=${showArchived}&family=${familyMode}`)
       .then(setList).catch(e => setErr(e.message));
   };
-<<<<<<< HEAD
   const loadRules = () => {
     api.get<AccountRule[]>('/api/account-rules').then(setRules).catch(() => {});
   };
@@ -41,10 +48,7 @@ export function AccountsPage({ onChanged }: { onChanged?: () => void }) {
   const loadLoans = () => {
     api.get<ReserveLoan[]>('/api/reserve-loans?activeOnly=true').then(setLoans).catch(() => {});
   };
-  useEffect(() => { load(); loadRules(); loadAlerts(); loadLoans(); }, [showArchived]);
-=======
-  useEffect(load, [showArchived, familyMode]);
->>>>>>> bf4507991471ab9d18e3eda494a9d6cab04eb3b0
+  useEffect(() => { load(); loadRules(); loadAlerts(); loadLoans(); }, [showArchived, familyMode]);
 
   const afterChange = () => { load(); onChanged?.(); };
 
@@ -80,11 +84,12 @@ export function AccountsPage({ onChanged }: { onChanged?: () => void }) {
   const visible = (list ?? []).filter(a => !a.isArchived);
   const total = visible.filter(a => a.type !== 1).reduce((s, a) => s + a.balance, 0);
   const debt = visible.filter(a => a.type === 1).reduce((s, a) => s + a.balance, 0);
+  const cashback = visible.reduce((s, a) => s + (a.cashbackAccrued || 0), 0);
   const showOwnerBadge = familyMode && inFamily && visible.some(a => (a.ownerName ?? '') !== (visible[0]?.ownerName ?? ''));
 
   const newAccount = () => setEditing({
     id: 0, name: '', type: 0 as AccountType, typeName: 'Дебетовая карта', balance: 0, startingBalance: 0,
-    creditLimit: 0, cashbackRate: 0, cashbackAccrued: 0, color: '#2b6cb0', isArchived: false, available: 0, creditUsagePct: null,
+    creditLimit: 0, cashbackRate: 0, cashbackAccrued: 0, color: '#007aff', isArchived: false, available: 0, creditUsagePct: null,
   });
 
   const minRulesFor = (a: AccountInfo) => rules.filter(r => r.kind === 1 && r.isEnabled && r.accountId === a.id);
@@ -112,73 +117,128 @@ export function AccountsPage({ onChanged }: { onChanged?: () => void }) {
   };
 
   return (
-    <div className="card">
-<<<<<<< HEAD
-      <h3>Счета</h3>
-=======
-      <h3>💳 Счета{familyMode && inFamily ? ' · вся семья' : ''}</h3>
->>>>>>> bf4507991471ab9d18e3eda494a9d6cab04eb3b0
-      {err && <div className="alert">{err}</div>}
-      {!list ? <div className="muted">Загрузка…</div> : (
-        <>
-          <div className="metric-box" style={{ marginBottom: 10 }}>
-            <div className="metric pos"><span>{fmt(total)}</span><small>на счетах{familyMode && inFamily ? ' семьи' : ''}</small></div>
-            <div className={`metric ${debt > 0 ? 'neg' : ''}`}><span>{fmt(debt)}</span><small>долг по кредиткам</small></div>
+    <>
+      <div className="card">
+        <div className="card-head" style={{ flexWrap: 'wrap' }}>
+          <div>
+            <h3>Мои счета</h3>
+            <p className="card-sub">
+              {familyMode && inFamily ? 'Все счета семьи в одном месте' : 'Карты, наличные и накопительные счета'}
+            </p>
           </div>
-          {inFamily && (
-            <label className="muted" style={{ display: 'flex', gap: 6, alignItems: 'center', marginBottom: 8 }}>
+          <button className="btn primary" type="button" onClick={newAccount}>
+            <Icon name="plus" size={17} strokeWidth={2.3} /> Добавить счёт
+          </button>
+        </div>
+
+        <div className="metric-box">
+          <div className="metric pos"><span>{fmt(total)}</span><small>на счетах</small></div>
+          <div className={`metric ${debt > 0 ? 'neg' : ''}`}><span>{fmt(debt)}</span><small>долг по кредиткам</small></div>
+          <div className="metric"><span>{fmt(cashback)}</span><small>кэшбэк начислен</small></div>
+        </div>
+
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap', marginTop: 16 }}>
+          {inFamily ? (
+            <label style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 0, fontWeight: 500, color: 'var(--muted)' }}>
               <input type="checkbox" checked={familyMode} onChange={e => setFamilyMode(e.target.checked)} />
-              управлять счетами всей семьи
+              показывать счета всей семьи
             </label>
-          )}
-          {list.length === 0 && <div className="muted">Счетов пока нет — добавьте первый.</div>}
-<<<<<<< HEAD
-          <div className="accounts-grid">
-            {list.map(a => (
-            <div className="account-card" key={a.id} style={{ borderLeftColor: a.color }}>
+          ) : <span />}
+          <label style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 0, fontWeight: 500, color: 'var(--muted)' }}>
+            <input type="checkbox" checked={showArchived} onChange={e => setShowArchived(e.target.checked)} />
+            показывать архивные
+          </label>
+        </div>
+      </div>
+
+      {err && <div className="card"><div className="alert alert-danger">{err}</div></div>}
+
+      {!list ? (
+        <div className="card"><div className="empty"><div className="empty-text">Загрузка счетов…</div></div></div>
+      ) : list.length === 0 ? (
+        <div className="card">
+          <div className="empty">
+            <span className="empty-ico"><Icon name="wallet" size={22} /></span>
+            <div className="empty-title">Счетов пока нет</div>
+            <div className="empty-text">Добавьте карту, наличные или вклад — и приложение посчитает общий баланс.</div>
+            <button className="btn primary" type="button" style={{ marginTop: 10 }} onClick={newAccount}>
+              <Icon name="plus" size={16} /> Добавить первый счёт
+            </button>
+          </div>
+        </div>
+      ) : (
+        <div className="accounts-grid">
+          {list.map(a => (
+            <div className={`account-card ${a.isArchived ? 'is-archived' : ''}`} key={a.id} style={{ '--acc': a.color } as CSSProperties}>
               <div className="account-head">
-                <b>{a.name}</b>
-                <span className="muted">{a.typeName}{a.isArchived ? ' · архив' : ''}</span>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 10, minWidth: 0 }}>
+                  <span
+                    className="member-avatar"
+                    style={{ background: tint(a.color), color: a.color, borderRadius: 13, width: 38, height: 38, flex: '0 0 38px' }}
+                  >
+                    {accountInitial(a.name)}
+                  </span>
+                  <div style={{ minWidth: 0 }}>
+                    <div className="account-name">{a.name}</div>
+                    <div className="account-type">{a.typeName || TYPE_HINT[a.type]}{a.isArchived ? ' · архив' : ''}</div>
+                  </div>
+                </div>
+                {showOwnerBadge && <span className="badge badge-muted">{a.ownerName || 'участник'}</span>}
               </div>
+
               <div className="account-balance">{fmt(a.balance)}</div>
+
               {a.type === 1 && a.creditLimit > 0 && (
-                <div className="limit-row">
+                <div className="limit-row" style={{ marginTop: 4 }}>
                   <div className="limit-head">
-                    <span className="muted">Лимит {fmt(a.creditLimit)} · доступно {fmt(a.available)}</span>
-                    <span className="muted">{a.creditUsagePct}%</span>
+                    <span className="limit-vals">Лимит {fmt(a.creditLimit)} · доступно {fmt(a.available)}</span>
+                    <span className="limit-vals">{a.creditUsagePct}%</span>
                   </div>
                   <div className="progress">
-                    <div className={a.creditUsagePct! > 80 ? 'over' : ''} style={{ width: `${Math.min(100, a.creditUsagePct ?? 0)}%` }} />
+                    <div
+                      className={a.creditUsagePct! > 80 ? 'over' : ''}
+                      style={{ width: `${Math.min(100, a.creditUsagePct ?? 0)}%`, background: a.creditUsagePct! > 80 ? undefined : 'var(--orange)' }}
+                    />
                   </div>
                 </div>
               )}
+
               {a.type === 0 && a.cashbackRate > 0 && (
-                <div className="muted" style={{ marginTop: 2 }}>кэшбэк {a.cashbackRate}% · начислено {fmt(a.cashbackAccrued)}</div>
+                <div className="account-meta">
+                  <Icon name="gift" size={12} /> кэшбэк {a.cashbackRate}% · начислено {fmt(a.cashbackAccrued)}
+                </div>
               )}
 
               {minRulesFor(a).map(r => (
                 <div key={r.id} className={`badge-row ${minBreached(a, r) ? 'badge-danger' : ''}`}>
+                  <Icon name="shield" size={13} />
                   Неснижаемый остаток: {fmt(r.threshold ?? 0)}
                   {minBreached(a, r) && <span className="badge badge-danger">нарушен</span>}
                 </div>
               ))}
+
               {reserveRulesFor(a).map(r => (
-                <div className="limit-row" key={r.id}>
+                <div className="limit-row" key={r.id} style={{ marginTop: 4 }}>
                   <div className="limit-head">
-                    <span>Резерв: {fmt(r.threshold ?? 0)} · свободно {fmt(freeOf(r, a))}</span>
-                    <button className="btn small" onClick={() => takeLoan(a, r)}>Взять из резерва</button>
+                    <span className="limit-vals">Резерв {fmt(r.threshold ?? 0)} · свободно {fmt(freeOf(r, a))}</span>
+                    <button className="btn small" onClick={() => takeLoan(a, r)}>Взять</button>
                   </div>
                 </div>
               ))}
+
               {loansFor(a).map(l => (
-                <div className="tx-item" key={l.id}>
+                <div className="tx-item" key={l.id} style={{ padding: '7px 0' }}>
+                  <span className="tx-ico" style={{ width: 30, height: 30, flex: '0 0 30px', color: 'var(--orange)', background: 'var(--orange-soft)' }}>
+                    <Icon name="refresh" size={14} />
+                  </span>
                   <div className="tx-main">
-                    <div className="t">Заём из резерва: {fmt(l.amount)}</div>
-                    <div className="s">срок возврата {new Date(l.dueDate).toLocaleDateString('ru-RU')}{l.isOverdue ? ' · просрочен' : ''}</div>
+                    <div className="tx-title" style={{ fontSize: 12.5 }}>Заём: {fmt(l.amount)}</div>
+                    <div className="tx-sub">до {new Date(l.dueDate).toLocaleDateString('ru-RU')}{l.isOverdue ? ' · просрочен' : ''}</div>
                   </div>
                   <button className="btn small" onClick={() => returnLoan(l.id)}>Вернул</button>
                 </div>
               ))}
+
               {alerts.filter(al => al.accountId === a.id).map(al => (
                 <div key={al.id} className={`alert-row ${al.level === 'danger' ? 'alert-danger' : 'alert-warn'}`}>
                   <div className="alert-msg">{al.message}</div>
@@ -186,69 +246,41 @@ export function AccountsPage({ onChanged }: { onChanged?: () => void }) {
               ))}
 
               <div className="account-actions">
-                <button className="btn small" onClick={() => setEditing({ ...a })}>Изменить</button>
-                {a.type !== 1 && a.cashbackRate >= 0 && (
-                  <button className="btn small" title="Зачислить кэшбэк" onClick={() => adjust(a, 'cashback')}>Кэшбэк</button>
+                <button className="btn" onClick={() => setEditing({ ...a })} title="Изменить счёт">
+                  <Icon name="pencil" size={14} /> Изменить
+                </button>
+                {a.type !== 1 && (
+                  <button className="btn" title="Зачислить кэшбэк" onClick={() => adjust(a, 'cashback')}>
+                    <Icon name="gift" size={14} /> Кэшбэк
+                  </button>
                 )}
-                <button className="btn small" title="Корректировать баланс" onClick={() => adjust(a, 'adjust')}>±</button>
-                <button className="btn small" title={a.isArchived ? 'Вернуть из архива' : 'В архив'} onClick={() => archive(a)}>Архив</button>
-                <button className="btn danger-ghost small" onClick={() => del(a)}>✕</button>
+                <button className="btn" title="Корректировать баланс" onClick={() => adjust(a, 'adjust')}>±</button>
+                <button className="btn" title={a.isArchived ? 'Вернуть из архива' : 'В архив'} onClick={() => archive(a)}>
+                  <Icon name="archive" size={14} />
+                </button>
+                <button className="btn danger-ghost" title="Удалить счёт" onClick={() => del(a)}>
+                  <Icon name="trash" size={14} />
+                </button>
               </div>
             </div>
           ))}
-=======
-          <div className="account-grid">
-            {list.map(a => (
-              <div className="account-card" key={a.id} style={{ borderLeftColor: a.color }}>
-                <div className="account-head">
-                  <b>{TYPE_EMOJI[a.type]} {a.name}</b>
-                  <span className="muted">{a.typeName}{a.isArchived ? ' · архив' : ''}</span>
-                </div>
-                {showOwnerBadge && <span className="badge">{a.ownerName || 'участник'}</span>}
-                <div className="account-balance">{fmt(a.balance)}</div>
-                {a.type === 1 && a.creditLimit > 0 && (
-                  <div className="limit-row">
-                    <div className="limit-head">
-                      <span className="muted">Лимит {fmt(a.creditLimit)} · доступно {fmt(a.available)}</span>
-                      <span className="muted">{a.creditUsagePct}%</span>
-                    </div>
-                    <div className="progress">
-                      <div className={a.creditUsagePct! > 80 ? 'over' : ''} style={{ width: `${Math.min(100, a.creditUsagePct ?? 0)}%` }} />
-                    </div>
-                  </div>
-                )}
-                {a.type === 0 && a.cashbackRate > 0 && (
-                  <div className="muted" style={{ marginTop: 2 }}>кэшбэк {a.cashbackRate}% · начислено {fmt(a.cashbackAccrued)}</div>
-                )}
-                <div className="account-actions">
-                  <button className="btn small" title="Редактировать" onClick={() => setEditing({ ...a })}>✏️</button>
-                  {a.type !== 1 && a.cashbackRate >= 0 && (
-                    <button className="btn small" title="Зачислить кэшбэк" onClick={() => adjust(a, 'cashback')}>🎁</button>
-                  )}
-                  <button className="btn small" title="Корректировать баланс" onClick={() => adjust(a, 'adjust')}>±</button>
-                  <button className="btn small" title={a.isArchived ? 'Вернуть из архива' : 'В архив'} onClick={() => archive(a)}>🗄</button>
-                  <button className="btn danger-ghost small" onClick={() => del(a)}>✕</button>
-                </div>
-              </div>
-            ))}
->>>>>>> bf4507991471ab9d18e3eda494a9d6cab04eb3b0
-          </div>
-          <label className="muted" style={{ display: 'flex', gap: 6, alignItems: 'center', marginTop: 8 }}>
-            <input type="checkbox" checked={showArchived} onChange={e => setShowArchived(e.target.checked)} />
-            показывать архивные
-          </label>
-        </>
+        </div>
       )}
-      <button className="btn primary block" onClick={newAccount}>+ Добавить счёт</button>
 
       {editing && (
-        <AccountForm account={editing} onClose={() => setEditing(null)} onSaved={() => { setEditing(null); afterChange(); }} />
+        <div className="card">
+          <AccountForm
+            account={editing}
+            onClose={() => setEditing(null)}
+            onSaved={() => { setEditing(null); afterChange(); }}
+          />
+        </div>
       )}
-    </div>
+    </>
   );
 }
 
-<<<<<<< HEAD
+// ---- Форма счёта ----
 function AccountForm({ account, onClose, onSaved }: {
   account: AccountInfo; onClose: () => void; onSaved: () => void;
 }) {
@@ -258,7 +290,7 @@ function AccountForm({ account, onClose, onSaved }: {
   const [balance, setBalance] = useState(String(account.startingBalance ?? account.balance ?? 0));
   const [limit, setLimit] = useState(String(account.creditLimit || ''));
   const [cashback, setCashback] = useState(account.cashbackRate ? String(account.cashbackRate) : '');
-  const [color, setColor] = useState(account.color || '#2b6cb0');
+  const [color, setColor] = useState(account.color || '#007aff');
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState('');
 
@@ -282,19 +314,31 @@ function AccountForm({ account, onClose, onSaved }: {
 
   return (
     <form onSubmit={submit} className="account-form">
-      <h4>{isNew ? 'Новый счёт' : `Счёт «${account.name}»`}</h4>
-      <label>Название (любое)<br />
-        <input value={name} onChange={e => setName(e.target.value)} required placeholder="Напр.: Зарплатная, Халва, Наличные" />
-      </label>
-      <label>Тип
-        <select value={type} onChange={e => setType(Number(e.target.value) as AccountType)}>
-          <option value={0}>Дебетовая карта</option>
-          <option value={1}>Кредитная карта</option>
-          <option value={2}>Наличные</option>
-          <option value={3}>Вклад / накопительный</option>
-          <option value={4}>Прочее</option>
-        </select>
-      </label>
+      <div className="card-head" style={{ marginBottom: 14 }}>
+        <div>
+          <h4 style={{ margin: 0 }}>{isNew ? 'Новый счёт' : `Счёт «${account.name}»`}</h4>
+          <p className="card-sub">Название, тип и текущий баланс</p>
+        </div>
+        <button type="button" className="btn icon" onClick={onClose} aria-label="Закрыть форму">
+          <Icon name="x" size={17} />
+        </button>
+      </div>
+
+      <div className="form-row">
+        <label style={{ flex: '2 1 240px' }}>Название
+          <input value={name} onChange={e => setName(e.target.value)} required placeholder="Напр.: Зарплатная, Халва, Наличные" />
+        </label>
+        <label>Тип
+          <select value={type} onChange={e => setType(Number(e.target.value) as AccountType)}>
+            <option value={0}>Дебетовая карта</option>
+            <option value={1}>Кредитная карта</option>
+            <option value={2}>Наличные</option>
+            <option value={3}>Вклад / накопительный</option>
+            <option value={4}>Прочее</option>
+          </select>
+        </label>
+      </div>
+
       <div className="form-row">
         <label>{isCredit ? 'Текущий долг, ₽' : 'Баланс, ₽'}
           <input inputMode="decimal" value={balance} onChange={e => setBalance(e.target.value)} required placeholder="0" />
@@ -309,24 +353,28 @@ function AccountForm({ account, onClose, onSaved }: {
             <input inputMode="decimal" value={cashback} onChange={e => setCashback(e.target.value)} placeholder="5" />
           </label>
         )}
-        <label>Цвет<input type="color" value={color} onChange={e => setColor(e.target.value)} style={{ height: 40, padding: 2 }} /></label>
+        <label style={{ flex: '0 0 90px' }}>Цвет
+          <input type="color" value={color} onChange={e => setColor(e.target.value)} />
+        </label>
       </div>
-      <div className="muted">
+
+      <div className="muted" style={{ marginBottom: 12 }}>
         {isCredit
-          ? 'По кредитной карте баланс = сумма долга; считается доступный лимит и % использования.'
+          ? 'По кредитной карте баланс = сумма долга; считается доступный лимит и процент использования.'
           : cashback ? 'Кэшбэк начисляется на расходы с этого счёта автоматически.' : 'Для наличных кэшбэк не нужен.'}
       </div>
-      {err && <div className="alert">{err}</div>}
-      <div className="form-row" style={{ gap: 8 }}>
-        <button className="btn primary" disabled={busy}>{busy ? '…' : (isNew ? 'Создать счёт' : 'Сохранить')}</button>
-        <button type="button" className="btn" onClick={onClose}>Отмена</button>
+
+      {err && <div className="alert alert-danger">{err}</div>}
+      <div className="action-row">
+        <button className="btn primary" type="submit" disabled={busy}>
+          <Icon name="check" size={16} /> {busy ? 'Сохраняем…' : (isNew ? 'Создать счёт' : 'Сохранить')}
+        </button>
+        <button type="button" className="btn secondary" onClick={onClose}>Отмена</button>
       </div>
     </form>
   );
 }
 
-=======
->>>>>>> bf4507991471ab9d18e3eda494a9d6cab04eb3b0
 // ---- Семья: приглашения и состав группы ----
 export function FamilyCard() {
   const [members, setMembers] = useState<FamilyMember[] | null>(null);
@@ -341,7 +389,6 @@ export function FamilyCard() {
     api.get<{ familyCode: string | null; members: FamilyMember[] }>('/api/family/members')
       .then(r => { setFamilyCode(r.familyCode); setMembers(r.members); })
       .catch(e => setErr(e.message));
-    // Показываем активный пригласительный код сразу при открытии карточки (если он уже создан)
     api.get<{ code: string | null; expiresAt: string | null }>('/api/family/status')
       .then(s => { if (s.code) { setInviteCode(s.code); setExpiresAt(s.expiresAt); } })
       .catch(() => {});
@@ -370,76 +417,111 @@ export function FamilyCard() {
     catch (ex: any) { setErr(ex.message); }
   };
   const copy = () => {
-    if (inviteCode) navigator.clipboard?.writeText(inviteCode).then(() => setMsg('Код скопирован ✓')).catch(() => {});
+    if (inviteCode) navigator.clipboard?.writeText(inviteCode).then(() => setMsg('Код скопирован')).catch(() => {});
   };
 
-  // Я создатель семьи — блок «вступить по коду» не показываем (создатель уже в своей семье)
   const iAmOwner = !!members && members.some(m => m.isCreator);
   const showJoinForm = !iAmOwner;
 
   return (
     <div className="card">
-      <h3>👨‍👩‍👧 Семья</h3>
-      {err && <div className="alert">{err}</div>}
-      {!members ? <div className="muted">Загрузка…</div> : members.length > 0 ? (
+      <div className="card-head">
+        <div>
+          <h3>Семья</h3>
+          <p className="card-sub">Общий доступ к счетам близких</p>
+        </div>
+        <span className="badge badge-muted"><Icon name="user" size={12} /> {members?.length ?? 0}</span>
+      </div>
+
+      {err && <div className="alert alert-danger">{err}</div>}
+
+      {!members ? (
+        <div className="muted">Загрузка…</div>
+      ) : members.length > 0 ? (
         <>
-          <table>
-            <thead><tr><th>Участник</th><th>Email</th></tr></thead>
-            <tbody>
-              {members.map(m => (
-                <tr key={m.id}>
-                  <td><b>{m.name}</b>{m.isOwner && <span className="muted"> · создатель</span>}</td>
-                  <td className="muted">{m.email}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-          <div className="muted" style={{ margin: '6px 0' }}>Код семьи: {familyCode}</div>
+          <div className="family-list">
+            {members.map(m => (
+              <div className="family-member" key={m.id}>
+                <span className="member-avatar">{accountInitial(m.name)}</span>
+                <div className="member-info">
+                  <b>{m.name}{m.isOwner ? ' · создатель' : ''}</b>
+                  <span>{m.email}</span>
+                </div>
+                {m.isOwner && <span className="badge badge-muted">owner</span>}
+              </div>
+            ))}
+          </div>
+
+          <div className="muted" style={{ marginBottom: 10 }}>
+            Код семьи: <b style={{ color: 'var(--text-2)' }}>{familyCode}</b>
+          </div>
+
           {inviteCode && (
-            <div className="rec rec-info">
-              <span className="rec-icon">🎟</span>
-              <span>Пригласительный код: <b style={{ letterSpacing: 2 }}>{inviteCode}</b>
-                {expiresAt && <span className="muted"> · до {new Date(expiresAt).toLocaleDateString('ru-RU')}</span>}
-              </span>
-              <button className="btn small" onClick={copy}>копировать</button>
+            <div className="invite-code">
+              <div>
+                <div className="muted" style={{ fontSize: 11 }}>Пригласительный код</div>
+                <b>{inviteCode}</b>
+              </div>
+              <button className="btn small" onClick={copy} type="button">
+                <Icon name="check" size={13} /> Копировать
+              </button>
             </div>
           )}
-          <div className="form-row" style={{ gap: 8, marginTop: 8 }}>
-            <button className="btn primary small" onClick={invite}>🎟 Созвать семью (новый код)</button>
-            <button className="btn danger-ghost small" onClick={leave}>Выйти из семьи</button>
+
+          <div className="action-row" style={{ marginTop: 8 }}>
+            <button className="btn primary small" onClick={invite} type="button">
+              <Icon name="sparkles" size={14} /> Создать код
+            </button>
+            <button className="btn danger-ghost small" onClick={leave} type="button">
+              <Icon name="logout" size={14} /> Выйти из семьи
+            </button>
           </div>
         </>
       ) : (
         <>
-          <div className="muted" style={{ marginBottom: 8 }}>
+          <div className="muted" style={{ marginBottom: 12 }}>
             Вы пока не в семье. Создайте семью и отправьте близким пригласительный код —
             либо введите код, который получили от них.
           </div>
-          <button className="btn primary" onClick={invite}>🎟 Создать семью и получить код</button>
+          <button className="btn primary" onClick={invite} type="button">
+            <Icon name="sparkles" size={16} /> Создать семью и получить код
+          </button>
           {inviteCode && (
-            <div className="rec rec-info" style={{ marginTop: 8 }}>
-              <span className="rec-icon">🎟</span>
-              <span>Передайте код: <b style={{ letterSpacing: 2 }}>{inviteCode}</b>
-                {expiresAt && <span className="muted"> · действует до {new Date(expiresAt).toLocaleDateString('ru-RU')}</span>}</span>
-              <button className="btn small" onClick={copy}>копировать</button>
+            <div className="invite-code" style={{ marginTop: 12, marginBottom: 0 }}>
+              <div>
+                <div className="muted" style={{ fontSize: 11 }}>Передайте близким</div>
+                <b>{inviteCode}</b>
+                {expiresAt && <div className="muted" style={{ fontSize: 11 }}>до {new Date(expiresAt).toLocaleDateString('ru-RU')}</div>}
+              </div>
+              <button className="btn small" onClick={copy} type="button">Копировать</button>
             </div>
           )}
         </>
       )}
-      {/* Модуль «вступить в семью по коду»: доступен всем, кто не является создателем семьи */}
+
       {showJoinForm && (
-        <form onSubmit={join} style={{ marginTop: 10 }}>
-          <div className="form-row">
-            <label>У меня есть код
-              <input value={joinCode} onChange={e => setJoinCode(e.target.value)} placeholder="напр. K7M2QX" maxLength={6}
-                style={{ textTransform: 'uppercase' }} />
-            </label>
-            <button className="btn small" style={{ alignSelf: 'end' }}>Присоединиться</button>
-          </div>
+        <form onSubmit={join} style={{ marginTop: 14 }}>
+          <label>У меня есть код
+            <input
+              value={joinCode}
+              onChange={e => setJoinCode(e.target.value)}
+              placeholder="напр. K7M2QX"
+              maxLength={6}
+              style={{ textTransform: 'uppercase', letterSpacing: 2 }}
+            />
+          </label>
+          <button className="btn secondary" type="submit" disabled={!joinCode.trim()}>
+            <Icon name="arrow-up-right" size={15} /> Присоединиться
+          </button>
         </form>
       )}
-      {iAmOwner && <div className="muted" style={{ marginTop: 8 }}>Вы создали эту семью — вступать по коду вам не нужно; приглашайте близких кнопкой выше.</div>}
-      {msg && <div className="muted">{msg}</div>}
+
+      {iAmOwner && (
+        <div className="muted" style={{ marginTop: 10 }}>
+          Вы создали эту семью — приглашайте близких кнопкой выше.
+        </div>
+      )}
+      {msg && <div className="alert alert-info" style={{ marginBottom: 0 }}>{msg}</div>}
     </div>
   );
 }

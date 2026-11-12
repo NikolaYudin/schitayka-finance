@@ -17,7 +17,17 @@ Thumbs.db
 # локальная база SQLite (демо-данные пересоздаются при запуске)
 backend/data/
 /data/
+deploy/xpenology/data/
 publish/
 
 # служебный хеш автосборки фронтенда
 backend/wwwroot/.frontend-hash
+
+# тестовые артефакты и секреты OCR
+ocr-token.txt
+ocr-response.json
+export-test.json
+test-receipt.png
+shot-*.png
+shot-out*.txt
+.chrome-shot/
