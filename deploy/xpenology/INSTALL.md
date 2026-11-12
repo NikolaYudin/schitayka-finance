@@ -38,6 +38,14 @@ sudo docker compose version    # в старых DSM: docker-compose --version
 
 ## 2. Скопировать проект на NAS
 
+> **Быстрый путь без копирования репозитория.** Соберите zip-дистрибутив на ПК:
+> `pwsh -File deploy/xpenology/release/build-release.ps1` → `dist/schitayka-<версия>-docker.zip`.
+> Распакуйте его в `/volume1/docker` (получится `/volume1/docker/schitayka`) — и сразу
+> создавайте проект в Container Manager. Контекст сборки `../..` больше не нужен,
+> `.env` с ключом уже внутри. Подробности — [`release/PACKAGING.md`](release/PACKAGING.md)
+> (сборка) и [`release/README.md`](release/README.md) (инструкция в архиве).
+> Шаги 2–3 ниже нужны только при развёртывании из git-клона.
+
 Нужен **весь репозиторий**, а не только папка `deploy/xpenology`.
 Целевой путь ниже — `/volume1/docker/schitayka` (можно другой, команды поправьте).
 

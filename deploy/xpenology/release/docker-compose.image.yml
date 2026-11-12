@@ -1,0 +1,62 @@
+# СчитайКа — вариант без сборки на NAS: готовый образ из GHCR.
+#
+# Нужен, когда NAS слабый (2 ГБ RAM, Celeron) и собирать .NET+Node на нём
+# долго или невозможно. Работает ПОСЛЕ того, как образ опубликован
+# (GitHub Actions → ghcr.io/nikolayudin/schitayka, см. PLAN.md, B8).
+#
+# Как включить:
+#   cp docker-compose.yml docker-compose.build.yml      # сохранить текущий
+#   cp docker-compose.image.yml docker-compose.yml
+#   sh scripts/update.sh --no-build
+#
+# Остальные настройки (.env, том schitayka-data) — те же.
+
+version: "3.8"
+
+services:
+  schitayka:
+    image: ${SCHITAYKA_IMAGE:-ghcr.io/nikolayudin/schitayka:latest}
+    container_name: schitayka
+    restart: unless-stopped
+
+    ports:
+      - "${APP_PORT:-5023}:8080"
+
+    environment:
+      ASPNETCORE_ENVIRONMENT: Production
+      ASPNETCORE_URLS: http://+:8080
+      ASPNETCORE_FORWARDEDHEADERS_ENABLED: "true"
+      Jwt__Key: "${JWT_KEY:?JWT_KEY is not set. Run: sh scripts/init-env.sh}"
+      TZ: ${TZ:-Europe/Moscow}
+      SCHITAYKA_AUTOBUILD_FRONTEND: "false"
+      SCHITAYKA_SEED_DEMO: ${SEED_DEMO:-false}
+      DOTNET_EnableDiagnostics: "0"
+      Update__RepoUrl: "${UPDATE_REPO_URL:-https://github.com/NikolaYudin/schitayka-finance}"
+      GITHUB_TOKEN: ${GITHUB_TOKEN:-}
+
+    volumes:
+      - schitayka-data:/app/data
+
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+
+    stop_grace_period: 30s
+
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8080/api/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+volumes:
+  schitayka-data:
+    name: schitayka-data

@@ -90,6 +90,23 @@ cd ../backend && dotnet run                    # http://localhost:5023
 а бэкенд в Development сам проксирует страницы на Vite, если wwwroot отсутствует).
 
 ## Запуск в Docker / Synology (Container Manager)
+
+### Вариант 1. Zip-дистрибутив (рекомендуется)
+
+```powershell
+pwsh -File deploy/xpenology/release/build-release.ps1
+# → dist/schitayka-1.1.0-docker.zip
+```
+
+Архив распаковывается в `/volume1/docker` (получится `/volume1/docker/schitayka`),
+и проект создаётся прямо в Container Manager — без git, SSH и правки путей.
+Внутри уже есть `.env` с ключом, `scripts/` для бэкапа/обновления и подробный `README.md`.
+Архитектура и инструкция: [`deploy/xpenology/release/PACKAGING.md`](deploy/xpenology/release/PACKAGING.md),
+инструкция внутри архива — [`deploy/xpenology/release/README.md`](deploy/xpenology/release/README.md),
+план — `PLAN.md`, Задача 4.
+
+### Вариант 2. Из git-клона
+
 Готовая папка для сборки: [`deploy/xpenology`](deploy/xpenology/README.md) — multi-stage `Dockerfile`,
 `docker-compose.yml`, `.env.example` и пошаговая инструкция для DSM 7.2 / Xpenology.
 **Полная инструкция с нуля:** [`deploy/xpenology/INSTALL.md`](deploy/xpenology/INSTALL.md).

@@ -1,0 +1,76 @@
+# СчитайКа — дистрибутив для Synology DSM / Xpenology → Container Manager.
+#
+# Этот файл лежит в КОРНЕ распакованного архива:
+#   /volume1/docker/schitayka/docker-compose.yml
+#
+# Контекст сборки — ./app (внутри архива), поэтому внешние пути не нужны:
+# проект Container Manager создаётся прямо на папке schitayka.
+#
+# Перед первым запуском: .env уже создан упаковщиком; если его нет —
+#   sh scripts/init-env.sh
+#
+# Быстрый старт — README.md рядом с этим файлом.
+
+version: "3.8"
+
+services:
+  schitayka:
+    build:
+      context: ./app
+      dockerfile: Dockerfile
+      args:
+        # Коммит подставляется упаковщиком в .env; при сборке из UI будет unknown.
+        GIT_COMMIT: ${GIT_COMMIT:-unknown}
+    image: schitayka:latest
+    container_name: schitayka
+    restart: unless-stopped
+
+    ports:
+      - "${APP_PORT:-5023}:8080"
+
+    environment:
+      ASPNETCORE_ENVIRONMENT: Production
+      ASPNETCORE_URLS: http://+:8080
+      # Если приложение стоит за Synology Reverse Proxy — корректные scheme/host.
+      ASPNETCORE_FORWARDEDHEADERS_ENABLED: "true"
+      # Обязательный ключ подписи JWT. Задаётся в .env, не в этом файле.
+      Jwt__Key: "${JWT_KEY:?JWT_KEY is not set. Run: sh scripts/init-env.sh}"
+      TZ: ${TZ:-Europe/Moscow}
+      # В образе нет исходников фронтенда — автосборка при старте не нужна.
+      SCHITAYKA_AUTOBUILD_FRONTEND: "false"
+      # false = не создавать demo@schitayka.ru/demo123 на production.
+      SCHITAYKA_SEED_DEMO: ${SEED_DEMO:-false}
+      DOTNET_EnableDiagnostics: "0"
+      # Репозиторий, по которому проверяются обновления (можно указать форк).
+      Update__RepoUrl: "${UPDATE_REPO_URL:-https://github.com/NikolaYudin/schitayka-finance}"
+      # Необязательный токен GitHub повышает лимит API (60 запросов/час без него).
+      GITHUB_TOKEN: ${GITHUB_TOKEN:-}
+
+    volumes:
+      # SQLite-база и WAL-файлы. Именованный том переживает пересборку контейнера
+      # и обновление из нового zip. Резервная копия — scripts/backup.sh.
+      - schitayka-data:/app/data
+
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+
+    stop_grace_period: 30s
+
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8080/api/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+volumes:
+  schitayka-data:
+    name: schitayka-data

@@ -2,4 +2,7 @@
 *.sh text eol=lf
 Dockerfile text eol=lf
 docker-compose.yml text eol=lf
+*.yml text eol=lf
 .dockerignore text eol=lf
+.env.example text eol=lf
+VERSION text eol=lf

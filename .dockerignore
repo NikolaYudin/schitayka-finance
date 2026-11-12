@@ -22,7 +22,9 @@ backend/obj
 
 # Локальные БД и секреты
 data
-backend/data
+backend/Data/app.db
+backend/Data/app.db-shm
+backend/Data/app.db-wal
 deploy/xpenology/data
 .env
 **/.env

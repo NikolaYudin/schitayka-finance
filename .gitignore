@@ -15,7 +15,12 @@ coverage/
 Thumbs.db
 
 # локальная база SQLite (демо-данные пересоздаются при запуске)
-backend/data/
+# ВАЖНО: именно файлы, а не папка backend/Data — иначе git (Windows,
+# регистронезависимый) игнорирует исходники AppDbContext.cs / AppDbContextFactory.cs.
+backend/Data/app.db
+backend/Data/app.db-shm
+backend/Data/app.db-wal
+backend/data/app.db
 /data/
 deploy/xpenology/data/
 publish/

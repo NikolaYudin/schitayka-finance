@@ -4,6 +4,7 @@
 Оценки — условные человеко-дни одного разработчика, без учёта ревью и тестирования на реальных данных.
 
 > **Итог:** все этапы плана (A, 0.1–0.3, 1, 2, 3) реализованы в сборке **1.1.0**; открытые пункты вынесены в бэклог ниже.
+> **Дальше:** Задача 4 — zip-дистрибутив для Container Manager (каркас готов, целевая версия 1.2.0).
 
 ## Принципы
 
@@ -412,6 +413,111 @@ Task ReturnReserveLoanAsync(int userId, int loanId);
 
 ---
 
+## Задача 4. Дистрибутив для Container Manager (zip-архив)
+
+> **Статус:** ✅ каркас реализован — шаблоны compose, скрипты, README, упаковщик (`build-release.ps1` / `.sh`), архив собирается и проверяется. ⬜ осталось: прогон на реальном NAS и публикация готового образа (B8).
+> **Версия:** 1.2.0.
+
+### Сценарий пользователя
+
+> «Скачал zip → распаковал в папку `docker` → Container Manager → Проект → Создать → путь `/docker/schitayka` → Готово».
+
+Без git, без SSH, без правки путей в compose. Это главный критерий: **три шага и ни одного ручного исправления файлов**.
+
+### Архитектура архива
+
+```
+schitayka-<версия>-docker.zip
+└── schitayka/                      ← корень = папка проекта Container Manager
+    ├── docker-compose.yml          ← context: ./app, внешние пути не нужны
+    ├── docker-compose.image.yml    ← вариант без сборки (готовый GHCR-образ)
+    ├── .env                        ← APP_PORT, JWT_KEY (сгенерирован), TZ, SEED_DEMO
+    ├── .env.example                ← шаблон, если .env потерян
+    ├── VERSION
+    ├── MANIFEST.txt                ← версия, коммит, дата, состав
+    ├── README.md                   ← инструкция: распаковка → .env → проект
+    ├── app/                        ← контекст сборки Docker
+    │   ├── Dockerfile
+    │   ├── .dockerignore
+    │   ├── VERSION
+    │   ├── backend/                ← без bin/obj/wwwroot/app.db
+    │   └── frontend/               ← без node_modules/dist
+    └── scripts/
+        ├── init-env.sh             ← создать .env + сгенерировать JWT_KEY
+        ├── update.sh               ← пересобрать и перезапустить
+        ├── backup.sh               ← копия тома schitayka-data
+        └── restore.sh              ← восстановление из копии
+```
+
+Данные **не в архиве**: SQLite живёт в именованном томе `schitayka-data`, поэтому обновление кода и распаковка нового zip не затрагивают базу.
+
+### Ключевые решения
+
+| Решение | Почему так |
+|---|---|
+| `docker-compose.yml` в корне, `build.context: ./app` | Container Manager не умеет контекст сборки вне папки проекта. Текущий `deploy/xpenology` использует `../..` — мастер UI его не принимает, нужен весь репозиторий |
+| Исходники в `app/`, Dockerfile без изменений | Dockerfile и так ждёт `backend/`, `frontend/`, `VERSION` в корне контекста — достаточно поменять контекст, а не Dockerfile |
+| Именованный том `schitayka-data` | Bind-mount `./data` на Synology часто даёт `permission denied` для пользователя контейнера (uid 1654) из-за ACL; том переживает пересборку и обновление |
+| Готовый `.env` с `JWT_KEY` в архиве | Убирает обязательный шаг «сгенерируй ключ на NAS». Публичные сборки — `-NoEnv`, ключ генерируется `scripts/init-env.sh` |
+| Скрипты с LF и запуском через `sh` | Zip на Windows теряет бит `+x`, а CRLF ломает shebang на DSM. Поэтому `sh scripts/update.sh`, а упаковщик принудительно ставит LF |
+| Архив без git | Обновление = замена папки `app/`; git на NAS не нужен |
+| Два compose-файла | `docker-compose.yml` — сборка на NAS (по умолчанию), `docker-compose.image.yml` — готовый образ для слабых/ARM-моделей |
+| `backend/wwwroot` не кладём в архив | SPA собирается внутри Dockerfile (Node-стадия); старые хешированные ассеты только раздувают контекст |
+| `app.db` не кладём в архив | Локальная демо-база разработчика не должна попадать на NAS |
+
+### Состав и ответственность
+
+| Файл | Ответственность |
+|---|---|
+| `release/docker-compose.yml` | Проект CM: порт, `.env`, том, healthcheck, лимиты логов |
+| `release/docker-compose.image.yml` | То же без `build`, `image: ghcr.io/...` |
+| `release/.env.example` | Шаблон переменных с комментариями |
+| `release/scripts/init-env.sh` | `.env` из шаблона + `openssl rand -base64 48` |
+| `release/scripts/update.sh` | `compose up -d --build` (или `--no-build`) |
+| `release/scripts/backup.sh` | Стоп → `docker cp` тома → `tar.gz` → старт (целостная копия SQLite/WAL) |
+| `release/scripts/restore.sh` | Стоп → очистка тома → распаковка → `chown app:app` → старт |
+| `release/README.md` | Инструкция внутри архива: 3 шага, бэкап, обновление, HTTPS, диагностика |
+| `release/build-release.ps1` | Упаковщик для Windows: staging → LF → `.env` → MANIFEST → zip → проверка обязательных файлов |
+| `release/build-release.sh` | То же для Linux/CI (`rsync`/`cp`, `zip` или python-фолбэк) |
+
+### Инструкция по реализации
+
+1. **Шаблоны compose** — `context: ./app`, `image: schitayka:latest`, `Jwt__Key: ${JWT_KEY:?...}`, том `schitayka-data`, healthcheck `/api/health`. Отдельный `docker-compose.image.yml` без `build`.
+2. **Скрипты** — POSIX `sh`, без bash-измов (на DSM busybox), `set -eu`, определение `docker compose` / `docker-compose`, LF.
+3. **README архива** — писать под сценарий «я не читал репозиторий»: что внутри, требования, 3 шага, проверка, первый вход, бэкап/восстановление, обновление, HTTPS, диагностика, удаление.
+4. **Упаковщик** — параметры `-Version`, `-OutputDir`, `-RootName`, `-NoEnv`, `-Image`, `-KeepStage`; исключения по **полным путям** (не по именам: `data` регистронезависимо вырезает `backend/Data`); `.env` с ключом; `MANIFEST.txt`; `Compress-Archive`; проверка списка обязательных файлов внутри zip.
+5. **Проверки перед публикацией** (все выполняются автоматически/полуавтоматически):
+   - распаковать архив в чистую папку и `dotnet build backend/SchitayKa.Api.csproj` — 0 ошибок;
+   - `bash -n` для всех `scripts/*.sh`, в файлах нет `CR`;
+   - YAML парсится (`python -c "yaml.safe_load(...)"`);
+   - в архиве есть `docker-compose.yml`, `.env`, `app/Dockerfile`, `backend/Data/AppDbContext.cs`, `frontend/package-lock.json`, `scripts/update.sh`;
+   - в архиве **нет** `app.db`, `node_modules`, `bin`, `obj`, `wwwroot`.
+6. **Документация репозитория** — раздел «Установка из zip» в `README.md` и `deploy/xpenology/README.md` со ссылкой на `deploy/xpenology/release/`.
+7. **Выпуск** — поднять `VERSION`, собрать `build-release.ps1`, приложить zip к GitHub Release, указать SHA256 из вывода.
+
+### Обновление у пользователя
+
+1. Скачать новый zip → распаковать в `schitayka-new`.
+2. Container Manager → проект → **Остановить**.
+3. Заменить `app/`, `docker-compose.yml`, `scripts/`; **`.env` не трогать**.
+4. **Сборка → Запуск** (или `sh scripts/update.sh`).
+5. Проверить `/api/health` и версию в «Настройках».
+
+### Риски и меры
+
+| Риск | Мера |
+|---|---|
+| Сборка на слабом NAS (2 ГБ RAM) идёт долго или падает | Готовый образ из GHCR (B8) + `docker-compose.image.yml`; либо сборка на ПК и `docker save`/`load` |
+| Container Manager не показывает прогресс сборки | В README — SSH-путь `sh scripts/update.sh` и `docker logs` |
+| Удаление проекта с галочкой «удалить данные» уничтожает базу | Предупреждение в README + `scripts/backup.sh` в чек-листе |
+| Zip теряет `+x`, CRLF ломает скрипты | Запуск через `sh`, принудительный LF в упаковщике, проверка `CR=0` |
+| ARM-модели | Только готовый образ (B8), сборка на NAS не поддерживается |
+| Секрет в `.env` внутри архива | Для публичных релизов `-NoEnv`; `.env` не коммитится, в README — предупреждение |
+
+**Оценка:** 1,5–2 дня (каркас уже готов; осталось: прогон на NAS, CI-образ, GitHub Release).
+
+---
+
 ## Сквозные работы
 
 | Направление | Что сделать |
@@ -438,9 +544,10 @@ Task ReturnReserveLoanAsync(int userId, int loanId);
 | 0.3 | Резерв (на счёте или общий) + займы и напоминания о возврате | A, 0.2 (уведомления) | 2–3 дня |
 | 3 | Экспорт JSON | A, рефакторинг Summary | ✅ реализовано (MVP) |
 | 2 | Импорт из изображения | 0.1 (подсказки счёта/категории) | ✅ реализовано (OCR-путь) |
+| 4 | Zip-дистрибутив для Container Manager | 1.1.0 (готовый код) | ✅ каркас, ⬜ прогон на NAS |
 
 Рекомендуемый порядок: **A → 1 (быстрый эффект) → 0.1 → 0.2 → 0.3 → 3 → 2** — ✅ выполнен полностью (сборка **1.1.0**).
-Итого MVP: ~4 недели (из-за расширенных правил счетов).
+Задача 4 выполняется после 1.1.0: каркас готов, осталось проверить на реальном NAS и выпустить 1.2.0.
 
 ---
 
@@ -482,3 +589,4 @@ Task ReturnReserveLoanAsync(int userId, int loanId);
 | B5 | Выделить `BudgetSummaryService` (общая сводка для `/api/budget/summary` и экспорта) | Дублирование расчётов пока терпимо |
 | B6 | Синхронизация темы между устройствами (`User.Theme`) | Достаточно `localStorage` |
 | B7 | Вход через Yandex ID — код есть, выключен флагом `YandexOAuth:Enabled` | Требует регистрации приложения на `oauth.yandex.ru` |
+| B8 | Публикация образа в GHCR (GitHub Actions) + `docker-compose.image.yml` по умолчанию для слабых/ARM-NAS | Нужен workflow сборки и публикации пакета; пока архив собирает образ на NAS |

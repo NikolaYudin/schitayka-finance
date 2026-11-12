@@ -14,8 +14,20 @@ deploy/xpenology/
 ├── update.sh           # полное обновление (пересоздание контейнера, том сохраняется)
 ├── update-inplace.sh   # обновление кода без пересоздания контейнера
 ├── INSTALL.md          # полная пошаговая инструкция с нуля
+├── release/            # zip-дистрибутив для Container Manager (см. ниже)
 └── README.md
 ```
+
+> **Самый простой путь — zip-дистрибутив.** Не нужно копировать весь репозиторий и
+> возиться с контекстом сборки `../..`: архив распаковывается в `/volume1/docker`,
+> и проект Container Manager создаётся прямо на папке `schitayka`.
+> Сборка архива — [`release/PACKAGING.md`](release/PACKAGING.md), инструкция для
+> пользователя (попадает в zip) — [`release/README.md`](release/README.md):
+>
+> ```powershell
+> pwsh -File deploy/xpenology/release/build-release.ps1
+> # → dist/schitayka-<версия>-docker.zip
+> ```
 
 > Контекст сборки — **корень репозитория** (`../..`). На NAS должен лежать весь проект,
 > а не только папка `deploy/xpenology`.
