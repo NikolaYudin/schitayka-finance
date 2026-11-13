@@ -1,6 +1,6 @@
 import { useEffect, useState, type CSSProperties } from 'react';
 import {
-  AccountInfo, AccountType, FamilyMember, AccountRule, AccountAlert, ReserveLoan,
+  AccountInfo, AccountType, FamilyMember, AccountRule, AccountAlert, ReserveLoan, BankInfo,
   api, fmt, Transfer,
 } from './api';
 import { Icon } from './icons';
@@ -32,8 +32,10 @@ export function AccountsPage({ onChanged }: { onChanged?: () => void }) {
   const [alerts, setAlerts] = useState<AccountAlert[]>([]);
   const [loans, setLoans] = useState<ReserveLoan[]>([]);
   const [transfers, setTransfers] = useState<Transfer[]>([]);
+  const [banks, setBanks] = useState<BankInfo[]>([]);
 
   const load = () => {
+    api.get<BankInfo[]>('/api/banks').then(setBanks).catch(() => {});
     api.get<{ familyCode: string | null; members: FamilyMember[] }>('/api/family/members')
       .then(r => setInFamily(!!r.familyCode && r.members.length > 1))
       .catch(() => {});
@@ -72,6 +74,7 @@ export function AccountsPage({ onChanged }: { onChanged?: () => void }) {
       await api.put(`/api/accounts/${a.id}`, {
         name: a.name, type: a.type, balance: a.startingBalance ?? a.balance,
         creditLimit: a.creditLimit, cashbackRate: a.cashbackRate, color: a.color, archived: !a.isArchived,
+        bankId: a.bankId ?? null,
       });
       afterChange();
     } catch (e: any) { alert(e.message); }
@@ -100,6 +103,7 @@ export function AccountsPage({ onChanged }: { onChanged?: () => void }) {
   const newAccount = () => setEditing({
     id: 0, name: '', type: 0 as AccountType, typeName: 'Дебетовая карта', balance: 0, startingBalance: 0,
     creditLimit: 0, cashbackRate: 0, cashbackAccrued: 0, color: '#007aff', isArchived: false, available: 0, creditUsagePct: null,
+    bankId: null, bankName: null,
   });
 
   const minRulesFor = (a: AccountInfo) => rules.filter(r => r.kind === 1 && r.isEnabled && r.accountId === a.id);
@@ -191,6 +195,7 @@ export function AccountsPage({ onChanged }: { onChanged?: () => void }) {
                   <div style={{ minWidth: 0 }}>
                     <div className="account-name">{a.name}</div>
                     <div className="account-type">{a.typeName || TYPE_HINT[a.type]}{a.isArchived ? ' · архив' : ''}</div>
+                    {a.bankName && <div className="account-type">{a.bankName}</div>}
                   </div>
                 </div>
                 {showOwnerBadge && <span className="badge badge-muted">{a.ownerName || 'участник'}</span>}
@@ -345,6 +350,8 @@ function AccountForm({ account, onClose, onSaved }: {
   const [maturesAt, setMaturesAt] = useState(account.interest?.maturesAt ? account.interest.maturesAt.slice(0, 10) : '');
   const [taxRate, setTaxRate] = useState(account.interest?.interestTaxRate != null ? String(account.interest.interestTaxRate) : '13');
   const [color, setColor] = useState(account.color || '#007aff');
+  const [bankId, setBankId] = useState<number>(account.bankId ?? 0);
+  const [banks, setBanks] = useState<BankInfo[]>([]);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState('');
 
@@ -358,6 +365,7 @@ function AccountForm({ account, onClose, onSaved }: {
       balance: Number(balance.replace(',', '.')) || 0,
       creditLimit: isCredit ? (Number(limit.replace(',', '.')) || 0) : 0,
       cashbackRate: isCredit || isDeposit ? 0 : (Number(cashback.replace(',', '.')) || 0),
+      bankId: bankId || null,
       interestRate: isDeposit ? (Number(rate.replace(',', '.')) || 0) : 0,
       interestMode: isDeposit ? interestMode : 0,
       openedAt: isDeposit && openedAt ? new Date(openedAt + 'T00:00:00').toISOString() : null,
@@ -395,6 +403,12 @@ function AccountForm({ account, onClose, onSaved }: {
             <option value={2}>Наличные</option>
             <option value={3}>Вклад / накопительный</option>
             <option value={4}>Прочее</option>
+          </select>
+        </label>
+        <label style={{ flex: '1 1 220px' }}>Банк
+          <select value={bankId} onChange={e => setBankId(Number(e.target.value))}>
+            <option value={0}>Без привязки</option>
+            {banks.map(b => <option key={b.id} value={b.id}>{b.name}</option>)}
           </select>
         </label>
       </div>

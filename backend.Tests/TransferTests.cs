@@ -241,4 +241,37 @@ public class TransferTests
         Assert.Equal(0m, sdoc.RootElement.GetProperty("monthIncome").GetDecimal());
         Assert.Equal(0m, sdoc.RootElement.GetProperty("monthExpense").GetDecimal());
     }
+
+    [Fact]
+    public async Task Create_TransferBetweenFamilyAccounts_IsAllowed()
+    {
+        var (conn, db, user) = await CreateDbAsync();
+        using var _ = conn;
+        using var __ = db;
+
+        // Семья: я + участник.
+        user.FamilyCode = "FAM-TEST";
+        await db.SaveChangesAsync();
+        var member = new User { Email = "member@schitayka.ru", Name = "Член семьи", PasswordHash = "x:y", FamilyCode = "FAM-TEST" };
+        db.Users.Add(member);
+        await db.SaveChangesAsync();
+        var (from, to) = await AddAccountsAsync(db, user);
+        var memberAccount = new Account
+        {
+            UserId = member.Id, Name = "Карта члена", Type = AccountType.DebitCard,
+            StartingBalance = 5000m, Balance = 5000m,
+        };
+        db.Accounts.Add(memberAccount);
+        await db.SaveChangesAsync();
+
+        var service = new TransferService(db);
+
+        // Я → член семьи (со своей карты на его копилку/карту).
+        var toMember = await service.CreateAsync(user.Id, from.Id, memberAccount.Id, 1000m, new DateOnly(2026, 11, 13), null);
+        Assert.True(toMember.Ok);
+
+        // Член семьи → я (со счёта члена на мой счёт).
+        var toMe = await service.CreateAsync(user.Id, memberAccount.Id, to.Id, 200m, new DateOnly(2026, 11, 13), null);
+        Assert.True(toMe.Ok);
+    }
 }

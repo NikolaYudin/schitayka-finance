@@ -96,6 +96,7 @@ export const api = {
     a.remove();
     window.setTimeout(() => URL.revokeObjectURL(url), 1500);
   },
+  getBanks: () => request<BankInfo[]>('/api/banks'),
 };
 
 // ---- Типы ----
@@ -135,6 +136,8 @@ export interface AccountInfo {
   isArchived: boolean; available: number; creditUsagePct: number | null;
   ownerId?: number; ownerName?: string;
   isFamily?: boolean;
+  bankId?: number | null;
+  bankName?: string | null;
   interest?: InterestInfo | null;
 }
 

@@ -145,6 +145,35 @@ public class StageATests
     }
 
     [Fact]
+    public async Task Account_BankBinding_IsPersisted_AndReturnedInProjection()
+    {
+        var (conn, db, user) = await CreateDbAsync();
+        using var _ = conn;
+        using var __ = db;
+
+        var bank = new Bank { UserId = null, Name = "Т-Банк", Code = "tbank", Country = "RU", IsSystem = true };
+        db.Banks.Add(bank);
+        await db.SaveChangesAsync();
+
+        var controller = WithUser(new AccountsController(db, new AccountRulesService(db)), user.Id);
+        var created = await controller.Create(new AccountsController.AccountDto(
+            "Карта Т-Банка", AccountType.DebitCard, 1500m, null, 0, "#2b6cb0", BankId: bank.Id));
+        var createdOk = Assert.IsType<OkObjectResult>(created);
+        var createdJson = JsonSerializer.Serialize(createdOk.Value, createdOk.Value!.GetType());
+        using var cdoc = JsonDocument.Parse(createdJson);
+        Assert.Equal(bank.Id, cdoc.RootElement.GetProperty("bankId").GetInt32());
+
+        var stored = await db.Accounts.AsNoTracking().FirstAsync(a => a.Name == "Карта Т-Банка");
+        Assert.Equal(bank.Id, stored.BankId);
+
+        var updated = await controller.Update(stored.Id, new AccountsController.AccountDto(
+            "Карта Т-Банка", AccountType.DebitCard, 1500m, null, 0, "#2b6cb0", BankId: bank.Id));
+        var updatedOk = Assert.IsType<OkObjectResult>(updated);
+        var updatedStored = await db.Accounts.AsNoTracking().FirstAsync(a => a.Id == stored.Id);
+        Assert.Equal(bank.Id, updatedStored.BankId);
+    }
+
+    [Fact]
     public async Task TransactionUpdate_PersistsTransferFlag()
     {
         var (conn, db, user) = await CreateDbAsync();

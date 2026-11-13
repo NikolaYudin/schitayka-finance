@@ -198,6 +198,10 @@ public class Account
     public decimal CashbackRate { get; set; }        // ставка кэшбэка, %
     public decimal CashbackAccrued { get; set; }     // накопленный кэшбэк
 
+    // --- Привязка счёта к банку (дерево банков) ---
+    public int? BankId { get; set; }                 // банк, в котором открыт счёт; null — не привязан
+    public Bank? Bank { get; set; }
+
     // --- Доходность (Задача 5): для вкладов и накопительных счетов ---
     public decimal InterestRate { get; set; }        // ставка % годовых (вместо кэшбэка для вкладов)
     public InterestAccrualMode InterestMode { get; set; } = InterestAccrualMode.None;

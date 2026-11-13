@@ -19,7 +19,7 @@ public class AccountsController : ControllerBase
 
     public record AccountDto(string Name, AccountType Type, decimal Balance,
                              decimal? CreditLimit, decimal? CashbackRate, string? Color, bool? Archived = null,
-                             decimal? InterestRate = null, int? InterestMode = null,
+                             decimal? InterestRate = null, int? InterestMode = null, int? BankId = null,
                              DateTime? OpenedAt = null, DateTime? MaturesAt = null,
                              decimal? InterestTaxRate = null);
 
@@ -126,6 +126,8 @@ public class AccountsController : ControllerBase
             a.Balance, a.StartingBalance, a.CreditLimit, a.CashbackRate, a.CashbackAccrued, a.Color, a.IsArchived,
             ownerId = a.UserId, ownerName = owner?.Name ?? "",
             isFamily = a.UserId != Uid,
+            bankId = a.BankId,
+            bankName = await _db.Banks.Where(b => b.Id == a.BankId).Select(b => b.Name).FirstOrDefaultAsync(),
             interest = InterestProjection(a),
             // полезная информация для карточки счёта
             available = a.Type == AccountType.CreditCard && a.CreditLimit > 0
@@ -179,6 +181,7 @@ public class AccountsController : ControllerBase
             StartingBalance = Math.Abs(dto.Balance), // для кредитки — стартовый долг
             CreditLimit = dto.Type == AccountType.CreditCard ? (dto.CreditLimit ?? 0) : 0,
             CashbackRate = dto.CashbackRate is > 0 and <= 100 ? dto.CashbackRate.Value : 0,
+            BankId = dto.BankId,
             Color = string.IsNullOrWhiteSpace(dto.Color) ? DefaultColor(dto.Type) : dto.Color,
             IsArchived = dto.Archived ?? false,
             InterestRate = dto.InterestRate is > 0 and <= 100 ? dto.InterestRate.Value : 0,
@@ -212,6 +215,7 @@ public class AccountsController : ControllerBase
         acc.StartingBalance = Math.Abs(dto.Balance);
         acc.CreditLimit = dto.Type == AccountType.CreditCard ? (dto.CreditLimit ?? 0) : 0;
         acc.CashbackRate = dto.CashbackRate is > 0 and <= 100 ? dto.CashbackRate.Value : 0;
+        acc.BankId = dto.BankId;
         if (dto.InterestRate is not null)
             acc.InterestRate = dto.InterestRate.Value is > 0 and <= 100 ? dto.InterestRate.Value : 0;
         if (dto.InterestMode is int im2 && Enum.IsDefined((InterestAccrualMode)im2))

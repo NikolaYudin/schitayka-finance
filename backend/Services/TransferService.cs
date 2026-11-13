@@ -29,11 +29,13 @@ public sealed class TransferService
         if (date > DateOnly.FromDateTime(DateTime.Today)) return new(false, "Дата перевода не может быть в будущем", null);
         if (fromAccountId == toAccountId) return new(false, "Счёт-отправитель и счёт-получатель совпадают", null);
 
-        var from = await _db.Accounts.FirstOrDefaultAsync(a => a.Id == fromAccountId && a.UserId == userId);
+        // Счёт должен быть доступен текущему пользователю: он сам или любой участник его семьи.
+        var manageable = await FamilyAccess.ManageableUserIdsAsync(_db, userId);
+        var from = await _db.Accounts.FirstOrDefaultAsync(a => a.Id == fromAccountId && manageable.Contains(a.UserId));
         if (from is null) return new(false, "Счёт-отправитель не найден", null);
         if (from.IsArchived) return new(false, "Счёт-отправитель в архиве", null);
 
-        var to = await _db.Accounts.FirstOrDefaultAsync(a => a.Id == toAccountId && a.UserId == userId);
+        var to = await _db.Accounts.FirstOrDefaultAsync(a => a.Id == toAccountId && manageable.Contains(a.UserId));
         if (to is null) return new(false, "Счёт-получатель не найден", null);
         if (to.IsArchived) return new(false, "Счёт-получатель в архиве", null);
 
@@ -179,7 +181,7 @@ public sealed class TransferService
     {
         foreach (var id in accountIds.Distinct())
         {
-            var acc = await _db.Accounts.FirstOrDefaultAsync(a => a.Id == id && a.UserId == userId);
+            var acc = await _db.Accounts.FirstOrDefaultAsync(a => a.Id == id);
             if (acc is null) continue;
 
             var signed = await _db.Transactions.Where(t => t.AccountId == id)
