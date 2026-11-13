@@ -5,15 +5,16 @@ import LoginPage from './LoginPage';
 import { Dashboard, Journal, QuickTxModal } from './components';
 import { GoalsPage } from './GoalsPage';
 import { AccountsPage, FamilyCard } from './AccountsPage';
+import { InvestmentsPage } from './InvestmentsPage';
 import { AccountRulesCard } from './AccountRulesCard';
 import { useTheme, type ThemeController, type ThemeMode } from './theme';
 import { ToastProvider } from './toasts';
 import { Icon, type IconName } from './icons';
 import { plural } from './plural';
 
-type Route = '' | 'journal' | 'budget' | 'goals' | 'accounts' | 'settings' | 'login';
+type Route = '' | 'journal' | 'budget' | 'goals' | 'accounts' | 'investments' | 'settings' | 'login';
 
-const ROUTES: Route[] = ['', 'journal', 'budget', 'goals', 'accounts', 'settings'];
+const ROUTES: Route[] = ['', 'journal', 'budget', 'goals', 'accounts', 'investments', 'settings'];
 
 function useHashRoute(): [Route, (r: Route) => void] {
   const parse = (): Route => {
@@ -39,6 +40,7 @@ const NAV: NavItem[] = [
   { to: 'budget', label: 'Бюджет и лимиты', icon: 'budget' },
   { to: 'goals', label: 'Цели', icon: 'target' },
   { to: 'accounts', label: 'Счета', icon: 'wallet' },
+  { to: 'investments', label: 'Инвестиции', icon: 'trending-up' },
   { to: 'settings', label: 'Настройки', icon: 'settings' },
 ];
 
@@ -48,6 +50,7 @@ const PAGE_SUBTITLE: Record<Route, string> = {
   budget: 'Месячные лимиты и контроль трат',
   goals: 'Копилки, сроки и ежемесячные отчисления',
   accounts: 'Карты, наличные и вклады',
+  investments: 'Портфели, доходность и сравнение с копилкой',
   settings: 'Профиль, оформление и правила',
   login: 'Вход в приложение',
 };
@@ -155,8 +158,9 @@ function TopBar({ route, theme, onAdd, onMenu, user, hasUpdate }: {
     : route === 'journal' ? 'Операции'
       : route === 'goals' ? 'Цели'
         : route === 'accounts' ? 'Счета'
-          : route === 'settings' ? 'Настройки'
-            : 'Дашборд';
+          : route === 'investments' ? 'Инвестиции'
+            : route === 'settings' ? 'Настройки'
+              : 'Дашборд';
   const subtitle = route === '' ? today() : PAGE_SUBTITLE[route];
 
   return (
@@ -287,6 +291,7 @@ export default function App() {
 
   const page = route === 'journal' ? <Journal key={tick} />
     : route === 'accounts' ? <AccountsPage key={tick} onChanged={() => setTick(t => t + 1)} />
+    : route === 'investments' ? <InvestmentsPage key={tick} />
       : route === 'goals' ? <GoalsPage key={route} initialTab="goals" />
         : route === 'budget' ? <GoalsPage key={route} initialTab="limits" />
           : route === 'settings' ? (

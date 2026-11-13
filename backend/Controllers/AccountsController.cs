@@ -18,7 +18,44 @@ public class AccountsController : ControllerBase
     private int Uid => UserAccess.UidOf(User);
 
     public record AccountDto(string Name, AccountType Type, decimal Balance,
-                             decimal? CreditLimit, decimal? CashbackRate, string? Color, bool? Archived = null);
+                             decimal? CreditLimit, decimal? CashbackRate, string? Color, bool? Archived = null,
+                             decimal? InterestRate = null, int? InterestMode = null,
+                             DateTime? OpenedAt = null, DateTime? MaturesAt = null,
+                             decimal? InterestTaxRate = null);
+
+    // --- Задача 5: доходность счёта ---
+    public static string InterestModeName(InterestAccrualMode m) => m switch
+    {
+        InterestAccrualMode.DailyToBalance => "Ежедневно на остаток, с капитализацией",
+        InterestAccrualMode.MonthlyPayout => "Ежедневно на остаток, выплата раз в месяц",
+        InterestAccrualMode.EndOfTerm => "В конце срока",
+        _ => "Без ставки",
+    };
+
+    // Прогноз доходности счёта для карточки (брутто и после налога).
+    public static object InterestProjection(Account a)
+    {
+        var f = SchitayKa.Api.Services.InterestCalculator.Forecast(
+            a.InterestRate, a.InterestMode, a.Balance, 12, a.InterestTaxRate, a.OpenedAt, a.MaturesAt);
+        var taxFactor = 1m - Math.Clamp(a.InterestTaxRate, 0m, 100m) / 100m;
+        return new
+        {
+            a.InterestRate,
+            interestMode = (int)a.InterestMode,
+            interestModeName = InterestModeName(a.InterestMode),
+            a.OpenedAt,
+            a.MaturesAt,
+            a.InterestTaxRate,
+            interestDaily = f.Daily,
+            interestMonthly = f.MonthlyAvg,
+            interestMonthlyNet = Math.Round(f.MonthlyAvg * taxFactor, 2),
+            interestYearly = f.Yearly,
+            interestYearlyNet = Math.Round(f.Yearly * taxFactor, 2),
+            interestNetTotal = f.NetTotal,
+            interestNote = f.Note,
+            daysToMaturity = a.MaturesAt is { } m ? (m.Date - DateTime.Today).Days : (int?)null,
+        };
+    }
 
     // --- Управление счетами: своими и семейными ---
     // Id пользователей, чьими счетами может управлять текущий пользователь:
@@ -94,6 +131,7 @@ public class AccountsController : ControllerBase
             a.Id, a.Name, a.Type, typeName = AccountTypeNames.Ru(a.Type),
             a.Balance, a.StartingBalance, a.CreditLimit, a.CashbackRate, a.CashbackAccrued, a.Color, a.IsArchived,
             ownerId = a.UserId, ownerName = owner?.Name ?? "",
+            interest = InterestProjection(a),
             // полезная информация для карточки счёта
             available = a.Type == AccountType.CreditCard && a.CreditLimit > 0
                 ? Math.Max(0, a.CreditLimit - a.Balance) : (a.Type == AccountType.CreditCard ? 0 : a.Balance),
@@ -148,6 +186,12 @@ public class AccountsController : ControllerBase
             CashbackRate = dto.CashbackRate is > 0 and <= 100 ? dto.CashbackRate.Value : 0,
             Color = string.IsNullOrWhiteSpace(dto.Color) ? DefaultColor(dto.Type) : dto.Color,
             IsArchived = dto.Archived ?? false,
+            InterestRate = dto.InterestRate is > 0 and <= 100 ? dto.InterestRate.Value : 0,
+            InterestMode = dto.InterestMode is int im && Enum.IsDefined((InterestAccrualMode)im)
+                ? (InterestAccrualMode)im : InterestAccrualMode.None,
+            OpenedAt = dto.OpenedAt,
+            MaturesAt = dto.MaturesAt,
+            InterestTaxRate = dto.InterestTaxRate is >= 0 and <= 100 ? dto.InterestTaxRate.Value : 13m,
         };
         _db.Accounts.Add(acc);
         await _db.SaveChangesAsync();
@@ -173,6 +217,13 @@ public class AccountsController : ControllerBase
         acc.StartingBalance = Math.Abs(dto.Balance);
         acc.CreditLimit = dto.Type == AccountType.CreditCard ? (dto.CreditLimit ?? 0) : 0;
         acc.CashbackRate = dto.CashbackRate is > 0 and <= 100 ? dto.CashbackRate.Value : 0;
+        if (dto.InterestRate is not null)
+            acc.InterestRate = dto.InterestRate.Value is > 0 and <= 100 ? dto.InterestRate.Value : 0;
+        if (dto.InterestMode is int im2 && Enum.IsDefined((InterestAccrualMode)im2))
+            acc.InterestMode = (InterestAccrualMode)im2;
+        if (dto.OpenedAt is not null) acc.OpenedAt = dto.OpenedAt;
+        if (dto.MaturesAt is not null) acc.MaturesAt = dto.MaturesAt;
+        if (dto.InterestTaxRate is >= 0 and <= 100) acc.InterestTaxRate = dto.InterestTaxRate.Value;
         if (!string.IsNullOrWhiteSpace(dto.Color)) acc.Color = dto.Color;
         if (dto.Archived is { } archived) acc.IsArchived = archived;
         await _db.SaveChangesAsync();

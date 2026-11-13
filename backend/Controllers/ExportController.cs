@@ -392,6 +392,50 @@ public class ExportController : ControllerBase
                 l.Comment,
                 isOverdue = l.DueDate < DateTime.UtcNow.Date,
             }),
+            // Задача 5: доходность счетов (ставка % годовых вместо кэшбэка)
+            interest = accounts.Where(a => a.InterestRate > 0).Select(a => new
+            {
+                a.Id,
+                a.Name,
+                type = AccountTypeKey(a.Type),
+                typeName = AccountTypeNames.Ru(a.Type),
+                rate = a.InterestRate,
+                mode = (int)a.InterestMode,
+                modeName = AccountsController.InterestModeName(a.InterestMode),
+                openedAt = a.OpenedAt?.ToString("yyyy-MM-dd"),
+                maturesAt = a.MaturesAt?.ToString("yyyy-MM-dd"),
+                taxRate = a.InterestTaxRate,
+                yearly = SchitayKa.Api.Services.InterestCalculator.YearlySimple(a.Balance, a.InterestRate),
+                daily = Math.Round(SchitayKa.Api.Services.InterestCalculator.DailyIncome(a.Balance, a.InterestRate), 2),
+            }),
+            // Задача 6: мониторинг инвестиций (портфели по банкам)
+            investments = await _db.InvestmentPortfolios
+                .Where(p => p.UserId == Uid)
+                .Select(p => new
+                {
+                    p.Id,
+                    p.Name,
+                    bankName = p.Bank.Name,
+                    product = (int)p.Product,
+                    strategy = (int)p.Strategy,
+                    p.Currency,
+                    createdAt = p.CreatedAt.ToString("yyyy-MM-ddTHH:mm:ssZ"),
+                    holdings = p.Holdings.Select(h => new
+                    {
+                        h.Id,
+                        h.Name,
+                        h.Ticker,
+                        assetType = (int)h.AssetType,
+                        h.Quantity,
+                        h.AvgPrice,
+                        h.CurrentPrice,
+                        h.Currency,
+                        invested = Math.Round(h.Quantity * (h.AssetType == AssetType.Cash ? 1m : h.AvgPrice), 2),
+                        value = Math.Round(h.Quantity * (h.AssetType == AssetType.Cash ? 1m
+                            : (h.CurrentPrice > 0 ? h.CurrentPrice : h.AvgPrice)), 2),
+                    }),
+                })
+                .ToListAsync(),
         };
 
         var json = JsonSerializer.SerializeToUtf8Bytes(payload, new JsonSerializerOptions

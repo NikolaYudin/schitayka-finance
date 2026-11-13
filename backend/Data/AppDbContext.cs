@@ -16,6 +16,10 @@ public class AppDbContext : DbContext
     public DbSet<AccountRule> AccountRules => Set<AccountRule>();
     public DbSet<AccountAlert> AccountAlerts => Set<AccountAlert>();
     public DbSet<ReserveLoan> ReserveLoans => Set<ReserveLoan>();
+    public DbSet<InterestAccrual> InterestAccruals => Set<InterestAccrual>();
+    public DbSet<Bank> Banks => Set<Bank>();
+    public DbSet<InvestmentPortfolio> InvestmentPortfolios => Set<InvestmentPortfolio>();
+    public DbSet<InvestmentHolding> InvestmentHoldings => Set<InvestmentHolding>();
 
     protected override void OnModelCreating(ModelBuilder mb)
     {
@@ -79,6 +83,27 @@ public class AppDbContext : DbContext
             .HasOne<AccountRule>().WithMany().HasForeignKey(l => l.RuleId).OnDelete(DeleteBehavior.SetNull);
         mb.Entity<ReserveLoan>()
             .HasOne<Transaction>().WithMany().HasForeignKey(l => l.TransactionId).OnDelete(DeleteBehavior.SetNull);
+
+        // --- Задача 5: начисления процентов ---
+        mb.Entity<InterestAccrual>().HasIndex(a => new { a.UserId, a.AccountId, a.From });
+        mb.Entity<InterestAccrual>()
+            .HasOne(a => a.User).WithMany().HasForeignKey(a => a.UserId).OnDelete(DeleteBehavior.Cascade);
+        mb.Entity<InterestAccrual>()
+            .HasOne(a => a.Account).WithMany().HasForeignKey(a => a.AccountId).OnDelete(DeleteBehavior.Cascade);
+
+        // --- Задача 6: банки, портфели и активы ---
+        mb.Entity<Bank>().HasIndex(b => new { b.UserId, b.Code });
+        mb.Entity<InvestmentPortfolio>().HasIndex(p => new { p.UserId, p.Name });
+        mb.Entity<InvestmentPortfolio>()
+            .HasOne(p => p.User).WithMany().HasForeignKey(p => p.UserId).OnDelete(DeleteBehavior.Cascade);
+        mb.Entity<InvestmentPortfolio>()
+            .HasOne(p => p.Bank).WithMany().HasForeignKey(p => p.BankId).OnDelete(DeleteBehavior.Restrict);
+        mb.Entity<InvestmentHolding>().HasIndex(h => new { h.PortfolioId, h.Name });
+        mb.Entity<InvestmentHolding>()
+            .HasOne(h => h.User).WithMany().HasForeignKey(h => h.UserId).OnDelete(DeleteBehavior.Cascade);
+        mb.Entity<InvestmentHolding>()
+            .HasOne(h => h.Portfolio).WithMany(p => p.Holdings)
+            .HasForeignKey(h => h.PortfolioId).OnDelete(DeleteBehavior.Cascade);
     }
 }
 
@@ -162,10 +187,45 @@ public class Account
     public decimal CreditLimit { get; set; }         // лимит кредитной карты (0 — не задан)
     public decimal CashbackRate { get; set; }        // ставка кэшбэка, %
     public decimal CashbackAccrued { get; set; }     // накопленный кэшбэк
+
+    // --- Доходность (Задача 5): для вкладов и накопительных счетов ---
+    public decimal InterestRate { get; set; }        // ставка % годовых (вместо кэшбэка для вкладов)
+    public InterestAccrualMode InterestMode { get; set; } = InterestAccrualMode.None;
+    public DateTime? OpenedAt { get; set; }          // дата открытия (вклада)
+    public DateTime? MaturesAt { get; set; }         // дата окончания (вклада)
+    public decimal InterestTaxRate { get; set; } = 13m; // НДФЛ, %
+
     public string Color { get; set; } = "#2b6cb0";
     public bool IsArchived { get; set; }
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
     public List<Transaction> Transactions { get; set; } = [];
+}
+
+// Режим начисления процентов на счёте (Задача 5).
+public enum InterestAccrualMode
+{
+    None = 0,           // ставка не задана
+    DailyToBalance = 1, // накопительный счёт: % ежедневно на остаток, с капитализацией
+    MonthlyPayout = 2,  // накопительный счёт: % ежедневно на остаток, выплата раз в месяц
+    EndOfTerm = 3,      // вклад: % на сумму за срок, выплата в конце срока
+}
+
+// Журнал начислений процентов по счёту (Задача 5).
+public class InterestAccrual
+{
+    public int Id { get; set; }
+    public int UserId { get; set; }
+    public User User { get; set; } = null!;
+    public int AccountId { get; set; }
+    public Account Account { get; set; } = null!;
+    public DateTime From { get; set; }
+    public DateTime To { get; set; }
+    public int Days { get; set; }
+    public decimal Gross { get; set; }     // начислено брутто
+    public decimal Tax { get; set; }       // НДФЛ
+    public decimal Net { get; set; }       // на руки
+    public bool IsPaid { get; set; }
+    public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
 }
 
 // Пригласительный код для семьи: по коду другой пользователь присоединяется к FamilyCode создателя
@@ -268,4 +328,79 @@ public class ReserveLoan
     public DateTime? ReturnedAt { get; set; }
     public int? TransactionId { get; set; }
     public string Comment { get; set; } = "";
+}
+
+// ─── Задача 6. Мониторинг инвестиций и Инвесткопилки ───────────────────────
+
+// Продукт банка, в котором открыт инвестиционный счёт.
+public enum BankProduct
+{
+    Savings = 0,      // накопительный счёт
+    Deposit = 1,      // вклад
+    Broker = 2,       // брокерский счёт
+    IIS = 3,          // ИИС
+    MoneyBox = 4,     // Инвесткопилка (Т-Банк): копилка + автопилот в фонды
+}
+
+// Стратегия Инвесткопилки Т-Банка (tbank.ru/invest/moneybox).
+public enum MoneyBoxStrategy
+{
+    AlwaysPlus = 0,        // «Всегда в плюсе» — фонд «Денежный рынок», доход ≈ ставки ЦБ
+    Balanced = 1,          // «Сбалансированная» — фонд «Вечный портфель»
+    StableCompanies = 2,   // «Стабильные компании» — фонд «Крупнейшие компании РФ»
+}
+
+public enum AssetType
+{
+    Cash = 0,    // денежная часть копилки
+    Fund = 1,    // фонд / ETF
+    Share = 2,   // акция
+    Bond = 3,    // облигация
+    Gold = 4,    // золото
+    Other = 9,
+}
+
+// Банк, в котором открыт счёт. UserId = null — системный справочник.
+public class Bank
+{
+    public int Id { get; set; }
+    public int? UserId { get; set; }                 // null — общий справочник
+    public string Name { get; set; } = "";
+    public string Code { get; set; } = "";            // короткий код, например "tbank"
+    public string Country { get; set; } = "RU";
+    public bool IsSystem { get; set; } = true;
+}
+
+// Портфель инвестиций: счёт в конкретном банке.
+public class InvestmentPortfolio
+{
+    public int Id { get; set; }
+    public int UserId { get; set; }
+    public User User { get; set; } = null!;
+    public string Name { get; set; } = "";
+    public int BankId { get; set; }
+    public Bank Bank { get; set; } = null!;
+    public BankProduct Product { get; set; }
+    public MoneyBoxStrategy Strategy { get; set; } = MoneyBoxStrategy.AlwaysPlus;
+    public string Currency { get; set; } = "RUB";
+    public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
+    public List<InvestmentHolding> Holdings { get; set; } = [];
+}
+
+// Позиция портфеля: бумага, фонд или деньги копилки.
+public class InvestmentHolding
+{
+    public int Id { get; set; }
+    public int UserId { get; set; }
+    public User User { get; set; } = null!;
+    public int PortfolioId { get; set; }
+    public InvestmentPortfolio Portfolio { get; set; } = null!;
+    public string Name { get; set; } = "";
+    public string Ticker { get; set; } = "";           // ISIN / тикер / просто метка
+    public AssetType AssetType { get; set; }
+    public decimal Quantity { get; set; }
+    public decimal AvgPrice { get; set; }              // средняя цена покупки
+    public decimal CurrentPrice { get; set; }          // текущая цена (0 — не задана)
+    public string Currency { get; set; } = "RUB";
+    public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;
 }

@@ -42,11 +42,26 @@ namespace SchitayKa.Api.Migrations
                     b.Property<decimal>("CreditLimit")
                         .HasColumnType("TEXT");
 
+                    b.Property<int>("InterestMode")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<decimal>("InterestRate")
+                        .HasColumnType("TEXT");
+
+                    b.Property<decimal>("InterestTaxRate")
+                        .HasColumnType("TEXT");
+
                     b.Property<bool>("IsArchived")
                         .HasColumnType("INTEGER");
 
+                    b.Property<DateTime?>("MaturesAt")
+                        .HasColumnType("TEXT");
+
                     b.Property<string>("Name")
                         .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime?>("OpenedAt")
                         .HasColumnType("TEXT");
 
                     b.Property<decimal>("StartingBalance")
@@ -184,6 +199,37 @@ namespace SchitayKa.Api.Migrations
                     b.ToTable("AccountRules");
                 });
 
+            modelBuilder.Entity("SchitayKa.Api.Data.Bank", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("Code")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Country")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<bool>("IsSystem")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("Name")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<int?>("UserId")
+                        .HasColumnType("INTEGER");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("UserId", "Code");
+
+                    b.ToTable("Banks");
+                });
+
             modelBuilder.Entity("SchitayKa.Api.Data.BudgetLimit", b =>
                 {
                     b.Property<int>("Id")
@@ -280,6 +326,137 @@ namespace SchitayKa.Api.Migrations
                         .IsUnique();
 
                     b.ToTable("FamilyInvitations");
+                });
+
+            modelBuilder.Entity("SchitayKa.Api.Data.InterestAccrual", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int>("AccountId")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<int>("Days")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<DateTime>("From")
+                        .HasColumnType("TEXT");
+
+                    b.Property<decimal>("Gross")
+                        .HasColumnType("TEXT");
+
+                    b.Property<bool>("IsPaid")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<decimal>("Net")
+                        .HasColumnType("TEXT");
+
+                    b.Property<decimal>("Tax")
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime>("To")
+                        .HasColumnType("TEXT");
+
+                    b.Property<int>("UserId")
+                        .HasColumnType("INTEGER");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("AccountId");
+
+                    b.HasIndex("UserId", "AccountId", "From");
+
+                    b.ToTable("InterestAccruals");
+                });
+
+            modelBuilder.Entity("SchitayKa.Api.Data.InvestmentHolding", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int>("AssetType")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<decimal>("AvgPrice")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Currency")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<decimal>("CurrentPrice")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Name")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<int>("PortfolioId")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<decimal>("Quantity")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Ticker")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime>("UpdatedAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<int>("UserId")
+                        .HasColumnType("INTEGER");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("UserId");
+
+                    b.HasIndex("PortfolioId", "Name");
+
+                    b.ToTable("InvestmentHoldings");
+                });
+
+            modelBuilder.Entity("SchitayKa.Api.Data.InvestmentPortfolio", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int>("BankId")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Currency")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Name")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<int>("Product")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int>("Strategy")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int>("UserId")
+                        .HasColumnType("INTEGER");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("BankId");
+
+                    b.HasIndex("UserId", "Name");
+
+                    b.ToTable("InvestmentPortfolios");
                 });
 
             modelBuilder.Entity("SchitayKa.Api.Data.ReserveLoan", b =>
@@ -535,6 +712,63 @@ namespace SchitayKa.Api.Migrations
                     b.Navigation("User");
                 });
 
+            modelBuilder.Entity("SchitayKa.Api.Data.InterestAccrual", b =>
+                {
+                    b.HasOne("SchitayKa.Api.Data.Account", "Account")
+                        .WithMany()
+                        .HasForeignKey("AccountId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.HasOne("SchitayKa.Api.Data.User", "User")
+                        .WithMany()
+                        .HasForeignKey("UserId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("Account");
+
+                    b.Navigation("User");
+                });
+
+            modelBuilder.Entity("SchitayKa.Api.Data.InvestmentHolding", b =>
+                {
+                    b.HasOne("SchitayKa.Api.Data.InvestmentPortfolio", "Portfolio")
+                        .WithMany("Holdings")
+                        .HasForeignKey("PortfolioId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.HasOne("SchitayKa.Api.Data.User", "User")
+                        .WithMany()
+                        .HasForeignKey("UserId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("Portfolio");
+
+                    b.Navigation("User");
+                });
+
+            modelBuilder.Entity("SchitayKa.Api.Data.InvestmentPortfolio", b =>
+                {
+                    b.HasOne("SchitayKa.Api.Data.Bank", "Bank")
+                        .WithMany()
+                        .HasForeignKey("BankId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("SchitayKa.Api.Data.User", "User")
+                        .WithMany()
+                        .HasForeignKey("UserId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("Bank");
+
+                    b.Navigation("User");
+                });
+
             modelBuilder.Entity("SchitayKa.Api.Data.ReserveLoan", b =>
                 {
                     b.HasOne("SchitayKa.Api.Data.Account", null)
@@ -607,6 +841,11 @@ namespace SchitayKa.Api.Migrations
                     b.Navigation("Limits");
 
                     b.Navigation("Transactions");
+                });
+
+            modelBuilder.Entity("SchitayKa.Api.Data.InvestmentPortfolio", b =>
+                {
+                    b.Navigation("Holdings");
                 });
 
             modelBuilder.Entity("SchitayKa.Api.Data.User", b =>

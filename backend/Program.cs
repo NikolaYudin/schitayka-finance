@@ -539,6 +539,9 @@ using (var scope = app.Services.CreateScope())
         db.Database.Migrate();
     }
 
+    // Справочник банков для мониторинга инвестиций (Задача 6) — заполняется один раз.
+    SchitayKa.Api.Controllers.SeedBanks.Seed(db);
+
     // Демо-аккаунт создаётся по умолчанию (удобно для локального запуска).
     // В production на NAS отключается через SCHITAYKA_SEED_DEMO=false.
     var seedDemoSetting = Environment.GetEnvironmentVariable("SCHITAYKA_SEED_DEMO");

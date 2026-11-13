@@ -209,6 +209,24 @@ export function AccountsPage({ onChanged }: { onChanged?: () => void }) {
                 </div>
               )}
 
+              {a.type === 3 && a.interest && a.interest.interestRate > 0 && (
+                <div className="account-meta" style={{ display: 'block' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+                    <Icon name="sparkles" size={12} />
+                    <strong>{a.interest.interestRate}% годовых</strong>
+                    <span>· {a.interest.interestModeName}</span>
+                  </div>
+                  <div className="tx-sub" style={{ marginTop: 4 }}>
+                    ≈ {fmt(a.interest.interestMonthly)} ₽/мес · {fmt(a.interest.interestYearly)} ₽/год (до налога)
+                  </div>
+                  <div className="tx-sub">
+                    после налога {a.interest.interestTaxRate}%: {fmt(a.interest.interestYearlyNet)} ₽/год
+                    {a.interest.daysToMaturity != null && a.interest.daysToMaturity >= 0
+                      ? ` · до погашения ${a.interest.daysToMaturity} дн.` : ''}
+                  </div>
+                </div>
+              )}
+
               {minRulesFor(a).map(r => (
                 <div key={r.id} className={`badge-row ${minBreached(a, r) ? 'badge-danger' : ''}`}>
                   <Icon name="shield" size={13} />
@@ -290,11 +308,17 @@ function AccountForm({ account, onClose, onSaved }: {
   const [balance, setBalance] = useState(String(account.startingBalance ?? account.balance ?? 0));
   const [limit, setLimit] = useState(String(account.creditLimit || ''));
   const [cashback, setCashback] = useState(account.cashbackRate ? String(account.cashbackRate) : '');
+  const [rate, setRate] = useState(account.interest?.interestRate ? String(account.interest.interestRate) : '');
+  const [interestMode, setInterestMode] = useState<number>(account.interest?.interestMode ?? 2);
+  const [openedAt, setOpenedAt] = useState(account.interest?.openedAt ? account.interest.openedAt.slice(0, 10) : '');
+  const [maturesAt, setMaturesAt] = useState(account.interest?.maturesAt ? account.interest.maturesAt.slice(0, 10) : '');
+  const [taxRate, setTaxRate] = useState(account.interest?.interestTaxRate != null ? String(account.interest.interestTaxRate) : '13');
   const [color, setColor] = useState(account.color || '#007aff');
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState('');
 
   const isCredit = type === 1;
+  const isDeposit = type === 3;
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault(); setErr(''); setBusy(true);
@@ -302,7 +326,12 @@ function AccountForm({ account, onClose, onSaved }: {
       name, type,
       balance: Number(balance.replace(',', '.')) || 0,
       creditLimit: isCredit ? (Number(limit.replace(',', '.')) || 0) : 0,
-      cashbackRate: isCredit ? 0 : (Number(cashback.replace(',', '.')) || 0),
+      cashbackRate: isCredit || isDeposit ? 0 : (Number(cashback.replace(',', '.')) || 0),
+      interestRate: isDeposit ? (Number(rate.replace(',', '.')) || 0) : 0,
+      interestMode: isDeposit ? interestMode : 0,
+      openedAt: isDeposit && openedAt ? new Date(openedAt + 'T00:00:00').toISOString() : null,
+      maturesAt: isDeposit && maturesAt ? new Date(maturesAt + 'T00:00:00').toISOString() : null,
+      interestTaxRate: Number(taxRate.replace(',', '.')) || 13,
       color,
     };
     try {
@@ -348,9 +377,14 @@ function AccountForm({ account, onClose, onSaved }: {
             <input inputMode="decimal" value={limit} onChange={e => setLimit(e.target.value)} placeholder="100000" />
           </label>
         )}
-        {!isCredit && (
+        {!isCredit && !isDeposit && (
           <label>Кэшбэк, %
             <input inputMode="decimal" value={cashback} onChange={e => setCashback(e.target.value)} placeholder="5" />
+          </label>
+        )}
+        {isDeposit && (
+          <label>Ставка, % годовых
+            <input inputMode="decimal" value={rate} onChange={e => setRate(e.target.value)} placeholder="14" />
           </label>
         )}
         <label style={{ flex: '0 0 90px' }}>Цвет
@@ -358,10 +392,36 @@ function AccountForm({ account, onClose, onSaved }: {
         </label>
       </div>
 
+      {isDeposit && (
+        <div className="form-row">
+          <label style={{ flex: '1 1 260px' }}>Начисление процентов
+            <select value={interestMode} onChange={e => setInterestMode(Number(e.target.value))}>
+              <option value={2}>Ежедневно на остаток, выплата раз в месяц</option>
+              <option value={1}>Ежедневно на остаток, с капитализацией</option>
+              <option value={3}>В конце срока (вклад)</option>
+              <option value={0}>Без ставки</option>
+            </select>
+          </label>
+          <label>Дата открытия
+            <input type="date" value={openedAt} onChange={e => setOpenedAt(e.target.value)} />
+          </label>
+          {interestMode === 3 && (
+            <label>Дата погашения
+              <input type="date" value={maturesAt} onChange={e => setMaturesAt(e.target.value)} />
+            </label>
+          )}
+          <label>НДФЛ, %
+            <input inputMode="decimal" value={taxRate} onChange={e => setTaxRate(e.target.value)} placeholder="13" />
+          </label>
+        </div>
+      )}
+
       <div className="muted" style={{ marginBottom: 12 }}>
         {isCredit
           ? 'По кредитной карте баланс = сумма долга; считается доступный лимит и процент использования.'
-          : cashback ? 'Кэшбэк начисляется на расходы с этого счёта автоматически.' : 'Для наличных кэшбэк не нужен.'}
+          : isDeposit
+            ? 'Для вкладов и накопительных счетов задаётся ставка % годовых вместо кэшбэка. Приложение считает доход по формуле «остаток × ставка / 365» (Act/365) и показывает прогноз до и после налога.'
+            : cashback ? 'Кэшбэк начисляется на расходы с этого счёта автоматически.' : 'Для наличных кэшбэк не нужен.'}
       </div>
 
       {err && <div className="alert alert-danger">{err}</div>}

@@ -110,11 +110,68 @@ export interface Tx {
   isTransfer?: boolean;
 }
 export type AccountType = 0 | 1 | 2 | 3 | 4; // дебет, кредит, наличные, вклад, прочее
+
+/** Доходность счёта (Задача 5): ставка % годовых вместо кэшбэка для вкладов. */
+export interface InterestInfo {
+  interestRate: number;
+  interestMode: number;              // 0 нет, 1 ежедневно+капитализация, 2 ежедневно+выплата, 3 в конце срока
+  interestModeName: string;
+  openedAt: string | null;
+  maturesAt: string | null;
+  interestTaxRate: number;
+  interestDaily: number;
+  interestMonthly: number;
+  interestMonthlyNet: number;
+  interestYearly: number;
+  interestYearlyNet: number;
+  interestNetTotal: number;
+  interestNote: string;
+  daysToMaturity: number | null;
+}
+
 export interface AccountInfo {
   id: number; name: string; type: AccountType; typeName: string; balance: number; startingBalance: number;
   creditLimit: number; cashbackRate: number; cashbackAccrued: number; color: string;
   isArchived: boolean; available: number; creditUsagePct: number | null;
   ownerId?: number; ownerName?: string;
+  interest?: InterestInfo | null;
+}
+
+/** Мониторинг инвестиций (Задача 6). */
+export interface BankInfo { id: number; name: string; code: string; country: string; isSystem: boolean; }
+export interface HoldingSummary {
+  id: number; name: string; ticker: string; type: number; quantity: number;
+  avgPrice: number; currentPrice: number; invested: number; value: number; pnl: number; pnlPct: number;
+}
+export interface HoldingInfo {
+  id: number; name: string; ticker: string; assetType: number; quantity: number;
+  avgPrice: number; currentPrice: number; currency: string; updatedAt: string;
+}
+export interface PortfolioInfo {
+  id: number; name: string; bankId: number; bankName: string;
+  product: number; productName: string;
+  strategy: number; strategyName: string; strategyHint: string; riskNote: string;
+  currency: string; createdAt: string;
+  invested: number; value: number; pnl: number; pnlPct: number;
+  cashValue: number; investedValue: number; days: number;
+  savingsAt6: number; savingsAt8: number; riskPremium: number; taxEstimate: number;
+  holdings: HoldingSummary[];
+}
+export interface InvestmentsSummary {
+  invested: number; value: number; pnl: number; pnlPct: number;
+  cashValue: number; investedValue: number; days: number;
+  savingsAt6: number; savingsAt8: number; riskPremium: number; taxEstimate: number;
+  portfoliosCount: number; savingsRate: number; savingsRatePro: number; taxRate: number;
+}
+export interface InterestForecastRow {
+  year: number; month: number; gross: number; tax: number; net: number;
+  startBalance: number; endBalance: number;
+}
+export interface InterestForecast {
+  accountId: number; accountName: string; rate: number; mode: number; modeName: string;
+  balance: number; daily: number; monthlyAvg: number; yearly: number;
+  grossTotal: number; taxTotal: number; netTotal: number; rows: InterestForecastRow[];
+  note: string; openedAt: string | null; maturesAt: string | null; daysToMaturity: number | null; taxRate: number;
 }
 export interface FamilyMember { id: number; name: string; email: string; isOwner?: boolean; isCreator?: boolean; }
 export interface FamilyBoardColumn {
