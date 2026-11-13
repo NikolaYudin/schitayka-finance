@@ -247,6 +247,22 @@ export interface UpdateCheck {
   checkedAt: string;
 }
 
+/** Состояние автоматического обновления (Задача 9). */
+export interface SelfUpdateStatus {
+  enabled: boolean;
+  canUpdate: boolean;
+  status: string;              // Idle | Running | Downloading | Verifying | Extracting | BackingUp | Applying | Done | Failed | Restarting
+  targetVersion: string | null;
+  progress: number;
+  error: string | null;
+  installDir: string | null;
+  currentVersion: string | null;
+  startedAt: string | null;
+  finishedAt: string | null;
+  log: string[];
+  running: boolean;
+}
+
 // ---- Импорт чека/скриншота ----
 export interface ReceiptParseResult {
   amount: number | null;

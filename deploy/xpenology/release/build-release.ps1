@@ -32,6 +32,10 @@
     Собрать вариант без сборки на NAS: docker-compose.yml будет ссылаться на
     готовый образ (docker-compose.image.yml). Нужен опубликованный GHCR-образ.
 
+.PARAMETER NoApp
+    Не собирать артефакт приложения schitayka-<версия>-app.zip.
+    Он нужен кнопке «Обновить сейчас» (автоматическое обновление).
+
 .PARAMETER KeepStage
     Не удалять временную папку сборки (для отладки).
 
@@ -48,6 +52,7 @@ param(
     [string]$RootName = 'schitayka',
     [switch]$NoEnv,
     [switch]$Image,
+    [switch]$NoApp,
     [switch]$KeepStage
 )
 
@@ -264,8 +269,43 @@ if (-not $KeepStage) { Remove-Item -LiteralPath $StageRoot -Recurse -Force }
 $sizeMb = [Math]::Round((Get-Item -LiteralPath $ZipPath).Length / 1MB, 2)
 $sha = (Get-FileHash -LiteralPath $ZipPath -Algorithm SHA256).Hash
 
+# --- 7. Артефакт приложения для кнопки «Обновить сейчас» -------------------
+# schitayka-<версия>-app.zip — собранное приложение (dll + wwwroot).
+# Его скачивает SelfUpdateService при автообновлении.
+$appZipPath = $null
+if (-not $NoApp) {
+    Write-Host "`n[7/7] Собираю артефакт приложения для автообновления..." -ForegroundColor Yellow
+    $publishDir = Join-Path $OutputDir '.app-publish'
+    Remove-Item -LiteralPath $publishDir -Recurse -Force -ErrorAction SilentlyContinue
+
+    Push-Location (Join-Path $RepoRoot 'frontend')
+    try {
+        if (-not (Test-Path 'node_modules')) { & npm ci --no-audit --no-fund }
+        & npm run build
+        if ($LASTEXITCODE -ne 0) { throw 'Сборка фронтенда не удалась.' }
+    } finally { Pop-Location }
+
+    & dotnet publish (Join-Path $RepoRoot 'backend\SchitayKa.Api.csproj') `
+        -c Release -o $publishDir --nologo -v q /p:UseAppHost=false /p:SourceRevisionId=$commit
+    if ($LASTEXITCODE -ne 0) { throw 'dotnet publish не удался.' }
+
+    $appZipPath = Join-Path $OutputDir ("schitayka-{0}-app.zip" -f $Version)
+    if (Test-Path -LiteralPath $appZipPath) { Remove-Item -LiteralPath $appZipPath -Force }
+    Compress-Archive -Path (Join-Path $publishDir '*') -DestinationPath $appZipPath -CompressionLevel Optimal
+
+    $appSha = (Get-FileHash -LiteralPath $appZipPath -Algorithm SHA256).Hash.ToLowerInvariant()
+    Write-TextFile -Path "$appZipPath.sha256" -Text "$appSha  $(Split-Path -Leaf $appZipPath)`n"
+
+    Remove-Item -LiteralPath $publishDir -Recurse -Force -ErrorAction SilentlyContinue
+    Write-Host "  артефакт: $appZipPath ($([Math]::Round((Get-Item $appZipPath).Length/1MB,2)) МБ)"
+}
+
 Write-Host "`n== Готово ==" -ForegroundColor Green
 Write-Host "Архив:   $ZipPath"
 Write-Host "Размер:  $sizeMb МБ, файлов: $entryCount"
 Write-Host "SHA256:  $sha"
+if ($appZipPath) {
+    Write-Host "Артефакт обновления: $appZipPath"
+    Write-Host "SHA256:  $appSha"
+}
 Write-Host "`nДальше: загрузите архив на НАС в папку docker и распакуйте (см. README.md внутри архива)." -ForegroundColor Cyan

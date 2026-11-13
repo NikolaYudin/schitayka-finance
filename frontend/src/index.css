@@ -608,6 +608,42 @@ a:hover { text-decoration: none; }
 .wallet--family { opacity: 0.96; }
 .wallet--family .wallet-type { opacity: 0.85; }
 
+/* ---------- Автоматическое обновление ---------- */
+.self-update {
+  margin-top: 14px;
+  padding: 12px;
+  border-radius: 12px;
+  border: 1px solid var(--glass-border);
+  background: var(--hover, rgba(0, 0, 0, 0.03));
+}
+.self-update-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  font-size: 13px;
+  font-weight: 600;
+}
+.self-update-head span:first-child {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.update-log {
+  margin: 10px 0 0;
+  padding: 9px 11px;
+  max-height: 160px;
+  overflow: auto;
+  border-radius: 9px;
+  background: rgba(0, 0, 0, 0.05);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 11px;
+  line-height: 1.55;
+  white-space: pre-wrap;
+  word-break: break-word;
+  color: var(--text-dim, var(--muted));
+}
+
 .page-scroll {
   flex: 1;
   overflow-y: auto;

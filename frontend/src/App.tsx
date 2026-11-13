@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { useAuth } from './auth';
-import { api, Category, AccountInfo, UpdateCheck } from './api';
+import { api, Category, AccountInfo, UpdateCheck, SelfUpdateStatus } from './api';
 import LoginPage from './LoginPage';
 import { Dashboard, Journal, QuickTxModal } from './components';
 import { GoalsPage } from './GoalsPage';
@@ -513,10 +513,38 @@ function UpdateCard({ update, busy, error, onCheck }: {
   update: UpdateCheck | null; busy: boolean; error: string; onCheck: () => void;
 }) {
   const [copied, setCopied] = useState(false);
+  const [apply, setApply] = useState<SelfUpdateStatus | null>(null);
+  const [confirmOpen, setConfirmOpen] = useState(false);
+  const [applyError, setApplyError] = useState('');
   const current = update?.current;
   const latest = update?.latest;
   const repoUrl = update?.repoUrl ?? 'https://github.com/NikolaYudin/schitayka-finance';
   const updateCmd = 'cd /volume1/docker/schitayka && git pull --ff-only && sh deploy/xpenology/update-inplace.sh --no-pull';
+
+  // Состояние самообновления: подтягиваем сразу и далее опрашиваем, пока идёт процесс.
+  const loadApply = async () => {
+    try { setApply(await api.get<SelfUpdateStatus>('/api/version/apply/status')); }
+    catch { /* игнорируем */ }
+  };
+
+  useEffect(() => { loadApply(); }, []);
+
+  useEffect(() => {
+    if (!apply?.running) return;
+    const timer = window.setInterval(loadApply, 2000);
+    return () => window.clearInterval(timer);
+  }, [apply?.running]);
+
+  const startUpdate = async () => {
+    setConfirmOpen(false);
+    setApplyError('');
+    try {
+      await api.post('/api/version/apply', { version: latest?.version ?? null, restart: true });
+      await loadApply();
+    } catch (ex: any) {
+      setApplyError(ex.message || 'Не удалось запустить обновление');
+    }
+  };
 
   const when = (value?: string | null) => value
     ? new Date(value).toLocaleString('ru-RU', {
@@ -613,6 +641,90 @@ function UpdateCard({ update, busy, error, onCheck }: {
             Путь <code>/volume1/docker/schitayka</code> в команде замените на свой, если проект лежит в другом месте.
           </p>
         </>
+      )}
+
+      {/* ---------- Автоматическое обновление ---------- */}
+      {apply && apply.enabled && (
+        <div className="self-update">
+          <div className="self-update-head">
+            <span><Icon name="download" size={15} /> Автоматическое обновление</span>
+            <span className="badge badge-muted">{apply.status}</span>
+          </div>
+
+          {apply.running && (
+            <>
+              <div className="progress" style={{ marginTop: 8 }}>
+                <div style={{ width: `${Math.max(3, apply.progress)}%` }} />
+              </div>
+              <div className="muted" style={{ marginTop: 6 }}>
+                {apply.status === 'Downloading' ? 'Скачиваем обновление…'
+                  : apply.status === 'Verifying' ? 'Проверяем контрольную сумму…'
+                    : apply.status === 'Extracting' ? 'Распаковываем…'
+                      : apply.status === 'BackingUp' ? 'Делаем резервную копию…'
+                        : apply.status === 'Applying' ? 'Заменяем файлы приложения…'
+                          : apply.status === 'Restarting' ? 'Перезапускаем приложение…'
+                            : 'Выполняем обновление…'}
+                {' '}· {apply.progress}%
+              </div>
+            </>
+          )}
+
+          {apply.status === 'Done' && !apply.running && (
+            <div className="rec rec-good" style={{ marginTop: 8 }}>
+              <span className="rec-icon"><Icon name="check" size={16} /></span>
+              <span>Обновление до версии {apply.targetVersion} применено. Приложение перезапущено, база сохранена.</span>
+            </div>
+          )}
+
+          {apply.status === 'Failed' && !apply.running && (
+            <div className="alert alert-danger" style={{ marginTop: 8 }}>
+              Не удалось обновиться: {apply.error}
+            </div>
+          )}
+
+          {applyError && <div className="alert alert-danger" style={{ marginTop: 8 }}>{applyError}</div>}
+
+          {(apply.log?.length ?? 0) > 0 && (
+            <pre className="update-log">{(apply.log ?? []).slice(-8).join('\n')}</pre>
+          )}
+
+          {apply.canUpdate && !apply.running && update?.updateAvailable && (
+            confirmOpen ? (
+              <div className="action-row" style={{ marginTop: 10 }}>
+                <button className="btn primary" type="button" onClick={startUpdate}>
+                  <Icon name="download" size={15} /> Скачать и установить {latest?.version ? `v${latest.version}` : 'обновление'}
+                </button>
+                <button className="btn secondary" type="button" onClick={() => setConfirmOpen(false)}>Отмена</button>
+              </div>
+            ) : (
+              <div className="action-row" style={{ marginTop: 10 }}>
+                <button className="btn primary" type="button" onClick={() => setConfirmOpen(true)}>
+                  <Icon name="download" size={16} /> Обновить сейчас
+                </button>
+              </div>
+            )
+          )}
+
+          {confirmOpen && (
+            <p className="muted update-note" style={{ marginTop: 6 }}>
+              Приложение скачает сборку {latest?.version ? `v${latest.version}` : ''} из GitHub Releases,
+              проверит контрольную сумму, сохранит резервную копию текущих файлов и перезапустится.
+              База данных в томе <b>schitayka-data</b> не затрагивается.
+            </p>
+          )}
+
+          {apply.enabled && !apply.canUpdate && (
+            <p className="muted update-note" style={{ marginTop: 6 }}>
+              Обновлять может только администратор экземпляра (первый зарегистрированный пользователь).
+            </p>
+          )}
+        </div>
+      )}
+
+      {apply && !apply.enabled && (
+        <p className="muted update-note" style={{ marginTop: 8 }}>
+          Автоматическое обновление выключено. Включается переменной <code>SelfUpdate__Enabled=true</code> в <code>.env</code>.
+        </p>
       )}
 
       <div className="action-row">

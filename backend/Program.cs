@@ -499,7 +499,10 @@ builder.Services.AddControllers().AddJsonOptions(o =>
 });
 // Проверка обновлений по GitHub: короткий таймаут и кэш на 10 минут внутри UpdateChecker.
 builder.Services.AddHttpClient("github", c => c.Timeout = TimeSpan.FromSeconds(8));
+// Отдельный клиент для скачивания артефактов обновления (файлы крупные, таймаут длиннее).
+builder.Services.AddHttpClient("github-download", c => c.Timeout = TimeSpan.FromMinutes(10));
 builder.Services.AddSingleton<SchitayKa.Api.Services.UpdateChecker>();
+builder.Services.AddSingleton<SchitayKa.Api.Services.SelfUpdateService>();
 builder.Services.AddSingleton<SchitayKa.Api.Services.ReceiptOcrService>();
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();

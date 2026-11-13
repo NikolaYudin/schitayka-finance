@@ -45,6 +45,10 @@ services:
       Update__RepoUrl: "${UPDATE_REPO_URL:-https://github.com/NikolaYudin/schitayka-finance}"
       # Необязательный токен GitHub повышает лимит API (60 запросов/час без него).
       GITHUB_TOKEN: ${GITHUB_TOKEN:-}
+      # Автоматическое обновление по кнопке в настройках: приложение само скачивает
+      # артефакт schitayka-<версия>-app.zip из GitHub Releases и перезапускается.
+      SelfUpdate__Enabled: ${SELF_UPDATE_ENABLED:-true}
+      SelfUpdate__ReleaseAsset: "schitayka-{version}-app.zip"
 
     volumes:
       # SQLite-база и WAL-файлы. Именованный том переживает пересборку контейнера
