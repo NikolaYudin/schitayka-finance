@@ -3,6 +3,7 @@ import { useAuth } from './auth';
 import {
   Summary, Category, Tx, TxType, AccountInfo, api, fmt, MONTHS_RU,
   ReserveInfo, ShareRow, AccountSummaryRow, FamilyAccountRow, MonthRow, ReceiptParseResult,
+  Transfer,
 } from './api';
 import { useToast } from './toasts';
 import { Icon, type IconName } from './icons';
@@ -677,16 +678,28 @@ export function QuickTxModal({ categories, accounts = [], onClose, onSaved, pres
   presetAccountId?: number | null;
 }) {
   const [type, setType] = useState<TxType>(1);
+  const [mode, setMode] = useState<'tx' | 'transfer'>('tx');
   const cats = categories.filter(c => c.type === type);
   const [categoryId, setCategoryId] = useState<number>(cats[0]?.id ?? 0);
   const [amount, setAmount] = useState('');
   const [date, setDate] = useState(new Date().toISOString().slice(0, 10));
   const [comment, setComment] = useState('');
   const [accountId, setAccountId] = useState<number | null>(presetAccountId ?? accounts[0]?.id ?? null);
+  const [fromId, setFromId] = useState<number | null>(null);
+  const [toId, setToId] = useState<number | null>(null);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState('');
   const [reserves, setReserves] = useState<ReserveInfo[]>([]);
   const [warn, setWarn] = useState<{ reserve: ReserveInfo; amount: number } | null>(null);
+
+  // Переводить можно только между своими счетами.
+  const ownAccounts = accounts.filter(a => !a.isFamily);
+
+  useEffect(() => {
+    if (fromId !== null && ownAccounts.some(a => a.id === fromId)) return;
+    setFromId(ownAccounts[0]?.id ?? null);
+    if (ownAccounts.length > 1) setToId(ownAccounts[1]?.id ?? null);
+  }, [accounts, fromId, ownAccounts.length]);
 
   const [importing, setImporting] = useState(false);
   const [importError, setImportError] = useState('');
@@ -777,6 +790,24 @@ export function QuickTxModal({ categories, accounts = [], onClose, onSaved, pres
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault(); setErr(''); setBusy(true);
+
+    // --- Перевод между своими счетами (Задача 7) ---
+    if (mode === 'transfer') {
+      if (!fromId || !toId) { setErr('Выберите оба счёта для перевода'); setBusy(false); return; }
+      if (fromId === toId) { setErr('Счёт-отправитель и счёт-получатель совпадают'); setBusy(false); return; }
+      try {
+        await api.post('/api/transfers', {
+          fromAccountId: fromId,
+          toAccountId: toId,
+          amount: Number(amount.replace(',', '.')) || 0,
+          date,
+          comment,
+        });
+        onSaved(); onClose();
+      } catch (ex: any) { setErr(ex.message); } finally { setBusy(false); }
+      return;
+    }
+
     const acc = accounts.find(a => a.id === accountId) || null;
     const amountVal = Number(amount.replace(',', '.')) || 0;
     const reserve = type === 1 && acc
@@ -816,24 +847,46 @@ export function QuickTxModal({ categories, accounts = [], onClose, onSaved, pres
           </button>
         </div>
 
+        {/* Режим: обычная операция или перевод между счетами */}
         <div className="segmented type-toggle">
           <button
             type="button"
-            className={`segment ${type === 0 ? 'active income' : ''}`}
-            onClick={() => setType(0)}
+            className={`segment ${mode === 'tx' ? 'active' : ''}`}
+            onClick={() => setMode('tx')}
           >
-            Доход
+            Операция
           </button>
           <button
             type="button"
-            className={`segment ${type === 1 ? 'active expense' : ''}`}
-            onClick={() => setType(1)}
+            className={`segment ${mode === 'transfer' ? 'active' : ''}`}
+            onClick={() => setMode('transfer')}
           >
-            Расход
+            <Icon name="operations" size={14} /> Перевод
           </button>
         </div>
 
-        <div className="receipt-import">
+        {mode === 'tx' && (
+          <div className="segmented type-toggle">
+            <button
+              type="button"
+              className={`segment ${type === 0 ? 'active income' : ''}`}
+              onClick={() => setType(0)}
+            >
+              Доход
+            </button>
+            <button
+              type="button"
+              className={`segment ${type === 1 ? 'active expense' : ''}`}
+              onClick={() => setType(1)}
+            >
+              Расход
+            </button>
+          </div>
+        )}
+
+        {mode === 'tx' && (
+          <>
+          <div className="receipt-import">
           <input
             ref={fileRef}
             type="file"
@@ -920,6 +973,8 @@ export function QuickTxModal({ categories, accounts = [], onClose, onSaved, pres
             </button>
           </div>
         )}
+          </>
+        )}
 
         <label className="amount-field">
           <span>Сумма</span>
@@ -945,17 +1000,34 @@ export function QuickTxModal({ categories, accounts = [], onClose, onSaved, pres
           ))}
         </div>
 
-        <label>Категория
+        {mode === 'transfer' && (
+          <div className="form-row">
+            <label>Откуда
+              <select value={fromId ?? 0} onChange={e => setFromId(Number(e.target.value) || null)}>
+                <option value={0}>Выберите счёт</option>
+                {ownAccounts.map(a => <option key={a.id} value={a.id}>{a.name}</option>)}
+              </select>
+            </label>
+            <label>Куда
+              <select value={toId ?? 0} onChange={e => setToId(Number(e.target.value) || null)}>
+                <option value={0}>Выберите счёт</option>
+                {ownAccounts.map(a => <option key={a.id} value={a.id}>{a.name}</option>)}
+              </select>
+            </label>
+          </div>
+        )}
+
+        {mode === 'tx' && <label>Категория
           <select value={categoryId} onChange={e => setCategoryId(Number(e.target.value))}>
             {cats.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
           </select>
-        </label>
+        </label>}
 
         <div className="form-row">
           <label>Дата
             <input type="date" value={date} onChange={e => setDate(e.target.value)} required />
           </label>
-          {accounts.length > 0 && (
+          {mode === 'tx' && accounts.length > 0 && (
             <label>Счёт
               <select value={accountId ?? 0} onChange={e => setAccountId(Number(e.target.value) || null)}>
                 <option value={0}>Без счёта</option>
@@ -1003,20 +1075,31 @@ export function Journal() {
   const now = new Date();
   const [ym, setYm] = useState(`${now.getFullYear()}-${pad2(now.getMonth() + 1)}`);
   const [txs, setTxs] = useState<Tx[] | null>(null);
+  const [transfers, setTransfers] = useState<Transfer[] | null>(null);
   const [err, setErr] = useState('');
   const [q, setQ] = useState('');
 
   const load = () => {
     const [y, m] = ym.split('-').map(Number);
     setTxs(null);
-    api.get<Tx[]>(`/api/transactions?month=${m}&year=${y}&take=500`)
-      .then(setTxs).catch(e => setErr(e.message));
+    setTransfers(null);
+    Promise.all([
+      api.get<Tx[]>(`/api/transactions?month=${m}&year=${y}&take=500`),
+      api.get<Transfer[]>(`/api/transfers?month=${m}&year=${y}`),
+    ]).then(([t, tr]) => { setTxs(t); setTransfers(tr); }).catch(e => setErr(e.message));
   };
   useEffect(load, [ym]);
 
   const del = async (id: number) => {
     if (!confirm('Удалить операцию?')) return;
     try { await api.del(`/api/transactions/${id}`); load(); }
+    catch (e: any) { alert(e.message); }
+  };
+
+  // Отмена перевода удаляет обе его операции.
+  const cancelTransfer = async (id: number) => {
+    if (!confirm('Отменить перевод? Обе его операции будут удалены, остатки вернутся.')) return;
+    try { await api.del(`/api/transfers/${id}`); load(); }
     catch (e: any) { alert(e.message); }
   };
 
@@ -1073,6 +1156,38 @@ export function Journal() {
             <div className="metric neg"><span>−{fmt(totalOut)}</span><small>расходы</small></div>
             <div className="metric"><span>{fmt(totalIn - totalOut)}</span><small>итог</small></div>
           </div>
+
+          {(transfers ?? []).length > 0 && (
+            <div className="transfer-block">
+              <div className="transfer-head">
+                <Icon name="operations" size={15} /> Переводы
+                <span className="badge badge-muted">{transfers!.length}</span>
+              </div>
+              {transfers!.map(tr => (
+                <div className="transfer-row" key={tr.id}>
+                  <div className="transfer-main">
+                    <div className="transfer-title">
+                      {tr.fromAccountName} <Icon name="arrow-up-right" size={13} /> {tr.toAccountName}
+                    </div>
+                    <div className="transfer-sub">
+                      {new Date(tr.date + 'T00:00:00').toLocaleDateString('ru-RU')}
+                      {tr.comment ? ` · ${tr.comment}` : ''}
+                    </div>
+                  </div>
+                  <span className="transfer-amount">{fmt(tr.amount)}</span>
+                  <button
+                    type="button"
+                    className="btn small danger-ghost"
+                    onClick={() => cancelTransfer(tr.id)}
+                    title="Отменить перевод (удалит обе операции)"
+                  >
+                    <Icon name="x" size={13} /> Отменить
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+
           {list.length === 0 ? (
             <EmptyState
               icon="operations"

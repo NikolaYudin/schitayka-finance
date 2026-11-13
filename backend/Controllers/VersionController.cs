@@ -1,5 +1,6 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.EntityFrameworkCore;
 using SchitayKa.Api.Services;
 
 namespace SchitayKa.Api.Controllers;
@@ -11,11 +12,21 @@ public class VersionController : ControllerBase
 {
     private readonly UpdateChecker _checker;
     private readonly SelfUpdateService _selfUpdate;
+    private readonly SchitayKa.Api.Data.AppDbContext _db;
 
-    public VersionController(UpdateChecker checker, SelfUpdateService selfUpdate)
+    public VersionController(UpdateChecker checker, SelfUpdateService selfUpdate, SchitayKa.Api.Data.AppDbContext db)
     {
         _checker = checker;
         _selfUpdate = selfUpdate;
+        _db = db;
+    }
+
+    /// <summary>Администратор экземпляра: e-mail из списка или первый зарегистрированный пользователь.</summary>
+    private async Task<bool> IsAdminAsync(int uid, string? email)
+    {
+        if (_selfUpdate.IsAdminByEmail(email)) return true;
+        var firstId = await _db.Users.OrderBy(u => u.Id).Select(u => (int?)u.Id).FirstOrDefaultAsync();
+        return firstId is int id && id == uid;
     }
 
     /// <summary>Текущая версия сборки без обращения к GitHub.</summary>
@@ -39,7 +50,7 @@ public class VersionController : ControllerBase
         if (uid < 0) return Unauthorized(new { error = "Требуется вход" });
 
         var email = User.FindFirst(System.Security.Claims.ClaimTypes.Email)?.Value;
-        var canUpdate = await _selfUpdate.IsAdminAsync(uid, email);
+        var canUpdate = await IsAdminAsync(uid, email);
         var state = _selfUpdate.State;
         var statusName = state.Status.ToString();
 
@@ -76,7 +87,7 @@ public class VersionController : ControllerBase
             return BadRequest(new { error = "Автообновление выключено (SelfUpdate:Enabled=false)." });
 
         var email = User.FindFirst(System.Security.Claims.ClaimTypes.Email)?.Value;
-        if (!await _selfUpdate.IsAdminAsync(uid, email))
+        if (!await IsAdminAsync(uid, email))
             return Forbid();
 
         var state = await _selfUpdate.StartAsync(dto?.Version, dto?.Restart ?? true);

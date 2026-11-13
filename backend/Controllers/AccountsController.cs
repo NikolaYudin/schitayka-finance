@@ -85,7 +85,7 @@ public class AccountsController : ControllerBase
             var acc = await db.Accounts.FirstOrDefaultAsync(a => a.Id == id!.Value);
             if (acc is null) continue;
             var signed = await db.Transactions.Where(t => t.AccountId == id)
-                .Select(t => new { t.Type, t.Amount }).ToListAsync();
+                .Select(t => new { t.Type, t.Amount, t.IsTransfer }).ToListAsync();
             var net = signed.Sum(t => t.Type == TxType.Income ? t.Amount : -t.Amount);
             if (acc.Type == AccountType.CreditCard)
             {
@@ -95,7 +95,7 @@ public class AccountsController : ControllerBase
             else
             {
                 var cashback = acc.CashbackRate > 0
-                    ? Math.Round(signed.Where(t => t.Type == TxType.Expense).Sum(t => t.Amount) * acc.CashbackRate / 100m, 2)
+                    ? Math.Round(signed.Where(t => t.Type == TxType.Expense && !t.IsTransfer).Sum(t => t.Amount) * acc.CashbackRate / 100m, 2)
                     : 0m;
                 acc.Balance = Math.Max(0, acc.StartingBalance + net + cashback);
                 acc.CashbackAccrued = cashback;
@@ -334,6 +334,8 @@ public class AccountsController : ControllerBase
         if (!await CanManage(id)) return NotFound();
         var acc = await _db.Accounts.FirstOrDefaultAsync(a => a.Id == id);
         if (acc is null) return NotFound();
+        if (await _db.Transfers.AnyAsync(t => t.FromAccountId == id || t.ToAccountId == id))
+            return BadRequest(new { error = "У счёта есть переводы. Перенесите его в архив или сначала отмените переводы." });
         _db.Accounts.Remove(acc); // операции останутся, AccountId станет NULL (SetNull)
         await _db.SaveChangesAsync();
         await _rules.EvaluateAllAsync(acc.UserId);

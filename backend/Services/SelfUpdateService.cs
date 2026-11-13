@@ -64,19 +64,17 @@ public sealed class SelfUpdateService
     private readonly IConfiguration _cfg;
     private readonly IHttpClientFactory _http;
     private readonly ILogger<SelfUpdateService> _log;
-    private readonly AppDbContext _db;
     private readonly SemaphoreSlim _gate = new(1, 1);
 
     private readonly List<string> _logLines = [];
     private SelfUpdateState _state;
     private Task? _running;
 
-    public SelfUpdateService(IConfiguration cfg, IHttpClientFactory http, ILogger<SelfUpdateService> log, AppDbContext db)
+    public SelfUpdateService(IConfiguration cfg, IHttpClientFactory http, ILogger<SelfUpdateService> log)
     {
         _cfg = cfg;
         _http = http;
         _log = log;
-        _db = db;
         _state = SelfUpdateState.Idle(Enabled, InstallDir, AppVersion.Current.Version);
     }
 
@@ -98,18 +96,16 @@ public sealed class SelfUpdateService
         }
     }
 
-    /// <summary>Может ли этот пользователь запускать обновление.</summary>
-    public async Task<bool> IsAdminAsync(int uid, string? email)
+    /// <summary>
+    /// Разрешён ли запуск обновления этому пользователю:
+    /// e-mail из списка администраторов. Проверка «первый пользователь» — в контроллере.
+    /// </summary>
+    public bool IsAdminByEmail(string? email)
     {
         var list = (_cfg["SelfUpdate:AdminEmails"] ?? "")
             .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
-        if (list.Length > 0 && email is not null
-            && list.Any(e => string.Equals(e, email, StringComparison.OrdinalIgnoreCase)))
-            return true;
-
-        // Первый зарегистрированный пользователь — администратор экземпляра.
-        var firstId = await _db.Users.OrderBy(u => u.Id).Select(u => (int?)u.Id).FirstOrDefaultAsync();
-        return firstId is int id && id == uid;
+        if (list.Length == 0 || email is null) return false;
+        return list.Any(e => string.Equals(e, email, StringComparison.OrdinalIgnoreCase));
     }
 
     /// <summary>Запускает обновление в фоне. Возвращает текущее состояние процесса.</summary>

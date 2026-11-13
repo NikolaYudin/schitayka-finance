@@ -255,7 +255,7 @@ public class AccountRulesController : ControllerBase
         foreach (var acc in accounts)
         {
             var signed = await _db.Transactions.Where(t => t.AccountId == acc.Id)
-                .Select(t => new { t.Type, t.Amount }).ToListAsync();
+                .Select(t => new { t.Type, t.Amount, t.IsTransfer }).ToListAsync();
             var net = signed.Sum(t => t.Type == TxType.Income ? t.Amount : -t.Amount);
             if (acc.Type == AccountType.CreditCard)
             {
@@ -265,7 +265,7 @@ public class AccountRulesController : ControllerBase
             else
             {
                 var cashback = acc.CashbackRate > 0
-                    ? Math.Round(signed.Where(t => t.Type == TxType.Expense).Sum(t => t.Amount) * acc.CashbackRate / 100m, 2)
+                    ? Math.Round(signed.Where(t => t.Type == TxType.Expense && !t.IsTransfer).Sum(t => t.Amount) * acc.CashbackRate / 100m, 2)
                     : 0m;
                 acc.Balance = Math.Max(0, acc.StartingBalance + net + cashback);
                 acc.CashbackAccrued = cashback;

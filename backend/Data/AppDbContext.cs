@@ -17,6 +17,7 @@ public class AppDbContext : DbContext
     public DbSet<AccountAlert> AccountAlerts => Set<AccountAlert>();
     public DbSet<ReserveLoan> ReserveLoans => Set<ReserveLoan>();
     public DbSet<InterestAccrual> InterestAccruals => Set<InterestAccrual>();
+    public DbSet<Transfer> Transfers => Set<Transfer>();
     public DbSet<Bank> Banks => Set<Bank>();
     public DbSet<InvestmentPortfolio> InvestmentPortfolios => Set<InvestmentPortfolio>();
     public DbSet<InvestmentHolding> InvestmentHoldings => Set<InvestmentHolding>();
@@ -84,8 +85,17 @@ public class AppDbContext : DbContext
         mb.Entity<ReserveLoan>()
             .HasOne<Transaction>().WithMany().HasForeignKey(l => l.TransactionId).OnDelete(DeleteBehavior.SetNull);
 
-        // --- Задача 5: начисления процентов ---
-        mb.Entity<InterestAccrual>().HasIndex(a => new { a.UserId, a.AccountId, a.From });
+        // --- Задача 7: переводы между счетами ---
+        mb.Entity<Transfer>().HasIndex(t => new { t.UserId, t.Date });
+        mb.Entity<Transfer>().HasIndex(t => new { t.FromTxId, t.ToTxId });
+        mb.Entity<Transfer>()
+            .HasOne(t => t.User).WithMany().HasForeignKey(t => t.UserId).OnDelete(DeleteBehavior.Cascade);
+        mb.Entity<Transfer>()
+            .HasOne(t => t.FromAccount).WithMany().HasForeignKey(t => t.FromAccountId).OnDelete(DeleteBehavior.Restrict);
+        mb.Entity<Transfer>()
+            .HasOne(t => t.ToAccount).WithMany().HasForeignKey(t => t.ToAccountId).OnDelete(DeleteBehavior.Restrict);
+
+        // --- Задача 5: начисления процентов ---        mb.Entity<InterestAccrual>().HasIndex(a => new { a.UserId, a.AccountId, a.From });
         mb.Entity<InterestAccrual>()
             .HasOne(a => a.User).WithMany().HasForeignKey(a => a.UserId).OnDelete(DeleteBehavior.Cascade);
         mb.Entity<InterestAccrual>()
@@ -328,6 +338,29 @@ public class ReserveLoan
     public DateTime? ReturnedAt { get; set; }
     public int? TransactionId { get; set; }
     public string Comment { get; set; } = "";
+}
+
+// ─── Задача 7. Переводы между своими счетами ──────────────────────────────
+
+/// <summary>
+/// Перевод между своими счетами — одна бизнес-сущность с двумя операциями:
+/// расход на счёте-отправителе и доход на счёте-получателе (обе с IsTransfer).
+/// </summary>
+public class Transfer
+{
+    public int Id { get; set; }
+    public int UserId { get; set; }
+    public User User { get; set; } = null!;
+    public int FromAccountId { get; set; }
+    public Account FromAccount { get; set; } = null!;
+    public int ToAccountId { get; set; }
+    public Account ToAccount { get; set; } = null!;
+    public decimal Amount { get; set; }
+    public DateOnly Date { get; set; }
+    public string Comment { get; set; } = "";
+    public int? FromTxId { get; set; }      // операция «расход» на отправителе
+    public int? ToTxId { get; set; }        // операция «доход» на получателе
+    public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
 }
 
 // ─── Задача 6. Мониторинг инвестиций и Инвесткопилки ───────────────────────

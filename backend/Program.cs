@@ -474,6 +474,7 @@ PrepareDatabase();
 Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools();
 builder.Services.AddDbContext<AppDbContext>(o => o.UseSqlite(connStr));
 builder.Services.AddScoped<SchitayKa.Api.Services.AccountRulesService>();
+builder.Services.AddScoped<SchitayKa.Api.Services.TransferService>();
 
 builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
     .AddJwtBearer(o =>

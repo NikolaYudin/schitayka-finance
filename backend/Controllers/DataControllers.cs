@@ -1,6 +1,7 @@
 using System.Security.Claims;
 using Microsoft.Extensions.DependencyInjection;
 using SchitayKa.Api.Data;
+using SchitayKa.Api.Services;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
@@ -112,7 +113,7 @@ public class TransactionsController : ControllerBase
             var acc = await _db.Accounts.FirstOrDefaultAsync(a => a.Id == id && a.UserId == userId);
             if (acc is null) continue;
             var signed = await _db.Transactions.Where(t => t.AccountId == id)
-                .Select(t => new { t.Type, t.Amount }).ToListAsync();
+                .Select(t => new { t.Type, t.Amount, t.IsTransfer }).ToListAsync();
             var net = signed.Sum(t => t.Type == TxType.Income ? t.Amount : -t.Amount);
             if (acc.Type == AccountType.CreditCard)
             {
@@ -122,7 +123,7 @@ public class TransactionsController : ControllerBase
             else
             {
                 var cashback = acc.CashbackRate > 0
-                    ? Math.Round(signed.Where(t => t.Type == TxType.Expense).Sum(t => t.Amount) * acc.CashbackRate / 100m, 2)
+                    ? Math.Round(signed.Where(t => t.Type == TxType.Expense && !t.IsTransfer).Sum(t => t.Amount) * acc.CashbackRate / 100m, 2)
                     : 0m;
                 acc.Balance = Math.Max(0, acc.StartingBalance + net + cashback);
                 acc.CashbackAccrued = cashback;
@@ -138,6 +139,16 @@ public class TransactionsController : ControllerBase
         var q = _db.Transactions.Where(t => t.UserId == Uid);
         if (month > 0 && year > 0)
             q = q.Where(t => t.Date.Month == month && t.Date.Year == year);
+
+        // Операции, входящие в перевод, показываем отдельным блоком «Переводы»,
+        // чтобы не было дублей в журнале операций.
+        var transferTxIds = await new TransferService(_db).TransferTransactionIdsAsync(Uid);
+        if (transferTxIds.Count > 0)
+        {
+            var ids = transferTxIds.ToList();
+            q = q.Where(t => !ids.Contains(t.Id));
+        }
+
         var list = await q.OrderByDescending(t => t.Date).ThenByDescending(t => t.Id)
             .Take(Math.Clamp(take, 1, 500))
             .Select(t => new
@@ -198,6 +209,8 @@ public class TransactionsController : ControllerBase
         var tx = await _db.Transactions.FirstOrDefaultAsync(t => t.Id == id && t.UserId == Uid);
         if (tx is null) return NotFound();
         var cat = await _db.Categories.FirstOrDefaultAsync(c => c.Id == dto.CategoryId && c.UserId == Uid);
+        if (await _db.Transfers.AnyAsync(t => t.UserId == Uid && (t.FromTxId == id || t.ToTxId == id)))
+            return BadRequest(new { error = "Стороны перевода нельзя изменять отдельно. Отмените перевод и создайте его заново." });
         if (cat is null) return BadRequest(new { error = "Категория не найдена" });
         if (dto.Amount <= 0) return BadRequest(new { error = "Сумма должна быть больше нуля" });
         if (dto.AccountId is { } accId && accId != tx.AccountId
@@ -221,12 +234,20 @@ public class TransactionsController : ControllerBase
         var tx = await _db.Transactions.FirstOrDefaultAsync(t => t.Id == id && t.UserId == Uid);
         if (tx is null) return NotFound();
         var accId = tx.AccountId;
-        _db.Transactions.Remove(tx);
+
+        // Операция входит в перевод — отменяем перевод целиком (обе стороны),
+        // иначе суммы по счетам разойдутся.
+        var canceledTransferId = await new TransferService(_db).CancelByTransactionAsync(Uid, id);
+        if (canceledTransferId is null)
+        {
+            _db.Transactions.Remove(tx);
+        }
+
         await _db.SaveChangesAsync();
         await RecalcAccounts(accId);
         await _db.SaveChangesAsync();
         await _rules.EvaluateAllAsync(Uid);
-        return Ok();
+        return Ok(new { canceledTransferId });
     }
 }
 

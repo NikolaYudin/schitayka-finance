@@ -1,7 +1,7 @@
 import { useEffect, useState, type CSSProperties } from 'react';
 import {
   AccountInfo, AccountType, FamilyMember, AccountRule, AccountAlert, ReserveLoan,
-  api, fmt,
+  api, fmt, Transfer,
 } from './api';
 import { Icon } from './icons';
 
@@ -31,6 +31,7 @@ export function AccountsPage({ onChanged }: { onChanged?: () => void }) {
   const [rules, setRules] = useState<AccountRule[]>([]);
   const [alerts, setAlerts] = useState<AccountAlert[]>([]);
   const [loans, setLoans] = useState<ReserveLoan[]>([]);
+  const [transfers, setTransfers] = useState<Transfer[]>([]);
 
   const load = () => {
     api.get<{ familyCode: string | null; members: FamilyMember[] }>('/api/family/members')
@@ -38,6 +39,7 @@ export function AccountsPage({ onChanged }: { onChanged?: () => void }) {
       .catch(() => {});
     api.get<AccountInfo[]>(`/api/accounts?includeArchived=${showArchived}&family=${familyMode}`)
       .then(setList).catch(e => setErr(e.message));
+    api.get<Transfer[]>('/api/transfers').then(setTransfers).catch(() => {});
   };
   const loadRules = () => {
     api.get<AccountRule[]>('/api/account-rules').then(setRules).catch(() => {});
@@ -49,6 +51,14 @@ export function AccountsPage({ onChanged }: { onChanged?: () => void }) {
     api.get<ReserveLoan[]>('/api/reserve-loans?activeOnly=true').then(setLoans).catch(() => {});
   };
   useEffect(() => { load(); loadRules(); loadAlerts(); loadLoans(); }, [showArchived, familyMode]);
+
+  const cancelTransfer = async (id: number) => {
+    if (!confirm('Отменить перевод? Обе его операции будут удалены, остатки вернутся.')) return;
+    try { await api.del(`/api/transfers/${id}`); afterChange(); }
+    catch (e: any) { alert(e.message); }
+  };
+  const transfersFor = (accountId: number) =>
+    transfers.filter(t => t.fromAccountId === accountId || t.toAccountId === accountId).slice(0, 3);
 
   const afterChange = () => { load(); onChanged?.(); };
 
@@ -254,6 +264,27 @@ export function AccountsPage({ onChanged }: { onChanged?: () => void }) {
                     <div className="tx-sub">до {new Date(l.dueDate).toLocaleDateString('ru-RU')}{l.isOverdue ? ' · просрочен' : ''}</div>
                   </div>
                   <button className="btn small" onClick={() => returnLoan(l.id)}>Вернул</button>
+                </div>
+              ))}
+
+              {transfersFor(a.id).map(t => (
+                <div className="tx-item" key={`tr-${t.id}`} style={{ padding: '7px 0' }}>
+                  <span className="tx-ico" style={{ width: 30, height: 30, flex: '0 0 30px', color: 'var(--accent)', background: 'var(--accent-soft, rgba(0, 122, 255, 0.12))' }}>
+                    <Icon name="operations" size={14} />
+                  </span>
+                  <div className="tx-main">
+                    <div className="tx-title" style={{ fontSize: 12.5 }}>
+                      {t.fromAccountId === a.id ? '→ ' + t.toAccountName : '← ' + t.fromAccountName}
+                      {' '}· {fmt(t.amount)}
+                    </div>
+                    <div className="tx-sub">
+                      {new Date(t.date + 'T00:00:00').toLocaleDateString('ru-RU')}
+                      {t.comment ? ` · ${t.comment}` : ''}
+                    </div>
+                  </div>
+                  <button className="btn small danger-ghost" title="Отменить перевод" onClick={() => cancelTransfer(t.id)}>
+                    <Icon name="x" size={13} />
+                  </button>
                 </div>
               ))}
 

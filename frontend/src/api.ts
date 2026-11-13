@@ -247,6 +247,15 @@ export interface UpdateCheck {
   checkedAt: string;
 }
 
+/** Перевод между своими счетами (Задача 7). */
+export interface Transfer {
+  id: number;
+  fromAccountId: number; fromAccountName: string;
+  toAccountId: number; toAccountName: string;
+  amount: number; date: string; comment: string; createdAt: string;
+  fromTxId: number | null; toTxId: number | null;
+}
+
 /** Состояние автоматического обновления (Задача 9). */
 export interface SelfUpdateStatus {
   enabled: boolean;

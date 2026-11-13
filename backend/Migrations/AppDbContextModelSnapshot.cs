@@ -368,7 +368,7 @@ namespace SchitayKa.Api.Migrations
 
                     b.HasIndex("AccountId");
 
-                    b.HasIndex("UserId", "AccountId", "From");
+                    b.HasIndex("UserId");
 
                     b.ToTable("InterestAccruals");
                 });
@@ -581,6 +581,53 @@ namespace SchitayKa.Api.Migrations
                     b.HasIndex("UserId", "Date");
 
                     b.ToTable("Transactions");
+                });
+
+            modelBuilder.Entity("SchitayKa.Api.Data.Transfer", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("INTEGER");
+
+                    b.Property<decimal>("Amount")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Comment")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateOnly>("Date")
+                        .HasColumnType("TEXT");
+
+                    b.Property<int>("FromAccountId")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int?>("FromTxId")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int>("ToAccountId")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int?>("ToTxId")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int>("UserId")
+                        .HasColumnType("INTEGER");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("FromAccountId");
+
+                    b.HasIndex("ToAccountId");
+
+                    b.HasIndex("FromTxId", "ToTxId");
+
+                    b.HasIndex("UserId", "Date");
+
+                    b.ToTable("Transfers");
                 });
 
             modelBuilder.Entity("SchitayKa.Api.Data.User", b =>
@@ -827,6 +874,33 @@ namespace SchitayKa.Api.Migrations
                     b.Navigation("Account");
 
                     b.Navigation("Category");
+
+                    b.Navigation("User");
+                });
+
+            modelBuilder.Entity("SchitayKa.Api.Data.Transfer", b =>
+                {
+                    b.HasOne("SchitayKa.Api.Data.Account", "FromAccount")
+                        .WithMany()
+                        .HasForeignKey("FromAccountId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("SchitayKa.Api.Data.Account", "ToAccount")
+                        .WithMany()
+                        .HasForeignKey("ToAccountId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("SchitayKa.Api.Data.User", "User")
+                        .WithMany()
+                        .HasForeignKey("UserId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("FromAccount");
+
+                    b.Navigation("ToAccount");
 
                     b.Navigation("User");
                 });

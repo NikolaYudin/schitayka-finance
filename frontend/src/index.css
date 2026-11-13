@@ -608,6 +608,60 @@ a:hover { text-decoration: none; }
 .wallet--family { opacity: 0.96; }
 .wallet--family .wallet-type { opacity: 0.85; }
 
+/* ---------- Переводы в журнале (Задача 7) ---------- */
+.transfer-block {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-bottom: 18px;
+  padding: 12px;
+  border-radius: 12px;
+  border: 1px solid var(--glass-border);
+  background: var(--hover, rgba(0, 0, 0, 0.03));
+}
+.transfer-head {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 13px;
+  font-weight: 650;
+}
+.transfer-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 9px 10px;
+  border-radius: 10px;
+  background: var(--card, rgba(255, 255, 255, 0.7));
+  border: 1px solid var(--glass-border);
+}
+.transfer-main { flex: 1 1 auto; min-width: 0; }
+.transfer-title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.transfer-sub {
+  font-size: 11.5px;
+  color: var(--text-dim, var(--muted));
+  margin-top: 2px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.transfer-amount {
+  font-size: 13.5px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  flex: 0 0 auto;
+}
+.transfer-row .btn { flex: 0 0 auto; }
+
 /* ---------- Автоматическое обновление ---------- */
 .self-update {
   margin-top: 14px;
