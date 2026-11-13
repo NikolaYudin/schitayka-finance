@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { useAuth } from './auth';
 import {
   Summary, Category, Tx, TxType, AccountInfo, api, fmt, MONTHS_RU,
-  ReserveInfo, ShareRow, AccountSummaryRow, MonthRow, ReceiptParseResult,
+  ReserveInfo, ShareRow, AccountSummaryRow, FamilyAccountRow, MonthRow, ReceiptParseResult,
 } from './api';
 import { useToast } from './toasts';
 import { Icon, type IconName } from './icons';
@@ -40,7 +40,7 @@ const pctOf = (part: number, whole: number) =>
 // ============================================================================
 // Дашборд
 // ============================================================================
-export function Dashboard({ onAdd }: { onAdd?: () => void }) {
+export function Dashboard({ onAdd, onFamilyTx }: { onAdd?: () => void; onFamilyTx?: (accountId: number) => void }) {
   const [sum, setSum] = useState<Summary | null>(null);
   const [recent, setRecent] = useState<Tx[]>([]);
   const [err, setErr] = useState('');
@@ -123,6 +123,7 @@ export function Dashboard({ onAdd }: { onAdd?: () => void }) {
   const firstName = auth.user?.name?.trim().split(/\s+/)[0] ?? 'друг';
   const savings = Math.max(0, Math.min(100, sum.savingsRate));
   const accounts = sum.accounts ?? [];
+  const familyAccounts = sum.familyAccounts ?? [];
   const monthName = MONTHS_RU[sum.month - 1];
   const balanceTone = sum.balance >= 0 ? 'pos' : 'neg';
 
@@ -246,6 +247,29 @@ export function Dashboard({ onAdd }: { onAdd?: () => void }) {
           )}
         </div>
       </section>
+
+      {/* ---------- Счета семьи ---------- */}
+      {familyAccounts.length > 0 && (
+        <section className="section">
+          <div className="section-head">
+            <div>
+              <div className="section-title">Счета семьи</div>
+              <div className="section-sub">
+                {familyAccounts.length} {plural(familyAccounts.length, 'счёт', 'счёта', 'счетов')} ·
+                общий баланс {fmt(sum.familyTotalBalance ?? 0)} ₽ · управление — во вкладке «Счета»
+              </div>
+            </div>
+            <a className="card-link" href="#/accounts">
+              Все счета <Icon name="chevron-right" size={14} />
+            </a>
+          </div>
+          <div className="wallet-grid">
+            {familyAccounts.map(a => (
+              <FamilyWalletCard key={a.id} account={a} onTx={() => onFamilyTx?.(a.id)} />
+            ))}
+          </div>
+        </section>
+      )}
 
       {/* ---------- Динамика + структура ---------- */}
       <div className="grid-2">
@@ -546,6 +570,34 @@ export function Dashboard({ onAdd }: { onAdd?: () => void }) {
   );
 }
 
+// Карточка счёта члена семьи: та же стилистика, но с владельцем и быстрым действием.
+function FamilyWalletCard({ account, onTx }: { account: FamilyAccountRow; onTx?: () => void }) {
+  const tone = ACCOUNT_TONE[account.type] ?? 'other';
+  return (
+    <div className={`wallet wallet--${tone} wallet--family`}>
+      <div className="wallet-top">
+        <span className="wallet-type">
+          <Icon name="user" size={13} />
+          {account.ownerName || 'Семья'}
+        </span>
+        <span className="wallet-chip" aria-hidden="true" />
+      </div>
+      <div>
+        <div className="wallet-name">{account.name}</div>
+        <div className="wallet-balance">{fmt(account.balance)}</div>
+      </div>
+      <div className="wallet-foot">
+        <span className="wallet-foot-item">{account.typeName}</span>
+        {onTx && (
+          <button className="btn small" onClick={onTx} title="Добавить операцию по счёту семьи">
+            <Icon name="plus" size={12} /> Операция
+          </button>
+        )}
+      </div>
+    </div>
+  );
+}
+
 // ============================================================================
 // Карточка счёта в стиле Apple Wallet
 // ============================================================================
@@ -620,8 +672,9 @@ export function TxRow({ tx, onDelete }: { tx: Tx; onDelete?: (id: number) => voi
 // ============================================================================
 // Быстрая операция
 // ============================================================================
-export function QuickTxModal({ categories, accounts = [], onClose, onSaved }: {
+export function QuickTxModal({ categories, accounts = [], onClose, onSaved, presetAccountId }: {
   categories: Category[]; accounts?: AccountInfo[]; onClose: () => void; onSaved: () => void;
+  presetAccountId?: number | null;
 }) {
   const [type, setType] = useState<TxType>(1);
   const cats = categories.filter(c => c.type === type);
@@ -629,7 +682,7 @@ export function QuickTxModal({ categories, accounts = [], onClose, onSaved }: {
   const [amount, setAmount] = useState('');
   const [date, setDate] = useState(new Date().toISOString().slice(0, 10));
   const [comment, setComment] = useState('');
-  const [accountId, setAccountId] = useState<number | null>(accounts[0]?.id ?? null);
+  const [accountId, setAccountId] = useState<number | null>(presetAccountId ?? accounts[0]?.id ?? null);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState('');
   const [reserves, setReserves] = useState<ReserveInfo[]>([]);
@@ -705,9 +758,20 @@ export function QuickTxModal({ categories, accounts = [], onClose, onSaved }: {
   }, []);
 
   const saveTxn = async () => {
-    await api.post('/api/transactions', {
-      categoryId, type, amount: Number(amount.replace(',', '.')), date, comment, accountId,
-    });
+    const acc = accounts.find(a => a.id === accountId) || null;
+    const amountVal = Number(amount.replace(',', '.')) || 0;
+    if (acc?.isFamily) {
+      // Операция по счёту члена семьи: записывается владельцу счёта,
+      // категория подбирается по названию среди его категорий.
+      const catName = cats.find(c => c.id === categoryId)?.name ?? 'Прочее';
+      await api.post(`/api/accounts/${acc.id}/tx`, {
+        type, amount: amountVal, date, comment, categoryName: catName,
+      });
+    } else {
+      await api.post('/api/transactions', {
+        categoryId, type, amount: amountVal, date, comment, accountId,
+      });
+    }
     onSaved(); onClose();
   };
 
@@ -895,7 +959,7 @@ export function QuickTxModal({ categories, accounts = [], onClose, onSaved }: {
             <label>Счёт
               <select value={accountId ?? 0} onChange={e => setAccountId(Number(e.target.value) || null)}>
                 <option value={0}>Без счёта</option>
-                {accounts.map(a => <option key={a.id} value={a.id}>{a.name}</option>)}
+                {accounts.map(a => <option key={a.id} value={a.id}>{a.name}{a.isFamily ? ` · ${a.ownerName || 'семья'}` : ''}</option>)}
               </select>
             </label>
           )}

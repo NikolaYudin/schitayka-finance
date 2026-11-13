@@ -104,6 +104,21 @@ public class BudgetController : ControllerBase
         var limits = await _db.BudgetLimits.Where(l => l.UserId == uid && l.Year == year && l.Month == month).ToListAsync();
         var accounts = await _db.Accounts.Where(a => a.UserId == uid && !a.IsArchived).ToListAsync();
 
+        // Счета семьи: видны всем членам группы, но не влияют на личный бюджет
+        // (доходы/расходы считаются только по собственным операциям).
+        var familyIds = await SchitayKa.Api.Services.FamilyAccess.ManageableUserIdsAsync(_db, uid);
+        var familyAccounts = await _db.Accounts
+            .Where(a => familyIds.Contains(a.UserId) && a.UserId != uid && !a.IsArchived)
+            .OrderBy(a => a.UserId).ThenBy(a => a.Name)
+            .Select(a => new
+            {
+                a.Id, a.Name, a.Type, typeName = AccountTypeNames.Ru(a.Type),
+                a.Balance, a.CreditLimit, a.CashbackRate, a.CashbackAccrued, a.Color,
+                ownerId = a.UserId,
+                ownerName = _db.Users.Where(u => u.Id == a.UserId).Select(u => u.Name).FirstOrDefault(),
+            })
+            .ToListAsync();
+
         var alerts = await _db.AccountAlerts
             .Where(a => a.UserId == uid && a.ResolvedAt == null && a.DismissedAt == null)
             .OrderBy(a => a.Level == "danger" ? 0 : 1).ThenByDescending(a => a.CreatedAt)
@@ -243,6 +258,8 @@ public class BudgetController : ControllerBase
                 a.Id, a.Name, a.Type, typeName = AccountTypeNames.Ru(a.Type),
                 a.Balance, a.CreditLimit, a.CashbackRate, a.CashbackAccrued, a.Color,
             }),
+            familyAccounts,
+            familyTotalBalance = familyAccounts.Sum(a => a.Balance),
             cashbackTotal,
             recommendations,
             alerts,

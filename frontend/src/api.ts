@@ -134,7 +134,15 @@ export interface AccountInfo {
   creditLimit: number; cashbackRate: number; cashbackAccrued: number; color: string;
   isArchived: boolean; available: number; creditUsagePct: number | null;
   ownerId?: number; ownerName?: string;
+  isFamily?: boolean;
   interest?: InterestInfo | null;
+}
+
+/** Счёт члена семьи — виден в дашборде, но не входит в личный бюджет. */
+export interface FamilyAccountRow {
+  id: number; name: string; type: AccountType; typeName: string; balance: number;
+  creditLimit: number; cashbackRate: number; cashbackAccrued: number; color: string;
+  ownerId: number; ownerName: string | null;
 }
 
 /** Мониторинг инвестиций (Задача 6). */
@@ -268,6 +276,8 @@ export interface Summary {
   limits: LimitRow[];
   goals: Goal[];
   accounts: AccountSummaryRow[];
+  familyAccounts?: FamilyAccountRow[];
+  familyTotalBalance?: number;
   cashbackTotal: number;
   recommendations: Recommendation[];
   alerts: AccountAlert[];

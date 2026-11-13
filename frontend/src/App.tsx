@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useAuth } from './auth';
 import { api, Category, AccountInfo, UpdateCheck } from './api';
 import LoginPage from './LoginPage';
@@ -150,10 +150,29 @@ function Sidebar({ route, setRoute, collapsed, setCollapsed, theme, mobileOpen, 
 }
 
 // ---------- Верхняя панель ----------
-function TopBar({ route, theme, onAdd, onMenu, user, hasUpdate }: {
+function TopBar({ route, theme, onAdd, onMenu, user, hasUpdate, onLogout, onGoSettings }: {
   route: Route; theme: ThemeController; onAdd: () => void; onMenu: () => void;
-  user: { name?: string } | null; hasUpdate: boolean;
+  user: { name?: string; email?: string } | null; hasUpdate: boolean;
+  onLogout: () => void; onGoSettings: () => void;
 }) {
+  const [menu, setMenu] = useState(false);
+  const menuRef = useRef<HTMLDivElement>(null);
+
+  // Закрываем меню по клику вне и по Escape.
+  useEffect(() => {
+    if (!menu) return;
+    const onDown = (e: MouseEvent) => {
+      if (menuRef.current && !menuRef.current.contains(e.target as Node)) setMenu(false);
+    };
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setMenu(false); };
+    document.addEventListener('mousedown', onDown);
+    document.addEventListener('keydown', onKey);
+    return () => {
+      document.removeEventListener('mousedown', onDown);
+      document.removeEventListener('keydown', onKey);
+    };
+  }, [menu]);
+
   const title = route === 'budget' ? 'Бюджет и лимиты'
     : route === 'journal' ? 'Операции'
       : route === 'goals' ? 'Цели'
@@ -203,8 +222,42 @@ function TopBar({ route, theme, onAdd, onMenu, user, hasUpdate }: {
           <Icon name="plus" size={17} strokeWidth={2.3} />
           <span className="add-btn-text">Операция</span>
         </button>
-        <div className="avatar" title={user?.name ?? 'Профиль'} aria-hidden="true">
-          {initials(user?.name)}
+        <div className="profile-wrap" ref={menuRef}>
+          <button
+            type="button"
+            className="avatar"
+            title={user?.name ?? 'Профиль'}
+            aria-haspopup="menu"
+            aria-expanded={menu}
+            onClick={() => setMenu(v => !v)}
+          >
+            {initials(user?.name)}
+          </button>
+
+          {menu && (
+            <div className="profile-menu" role="menu">
+              <div className="profile-menu-head">
+                <div className="profile-menu-name">{user?.name || 'Профиль'}</div>
+                {user?.email && <div className="profile-menu-sub">{user.email}</div>}
+              </div>
+              <button
+                type="button"
+                className="profile-menu-item"
+                role="menuitem"
+                onClick={() => { setMenu(false); onGoSettings(); }}
+              >
+                <Icon name="user" size={15} /> Профиль и настройки
+              </button>
+              <button
+                type="button"
+                className="profile-menu-item profile-menu-item--danger"
+                role="menuitem"
+                onClick={() => { setMenu(false); onLogout(); }}
+              >
+                <Icon name="logout" size={15} /> Выйти из профиля
+              </button>
+            </div>
+          )}
         </div>
       </div>
     </header>
@@ -217,6 +270,7 @@ export default function App() {
   const theme = useTheme();
   const [route, setRoute] = useHashRoute();
   const [showQuick, setShowQuick] = useState(false);
+  const [presetAccountId, setPresetAccountId] = useState<number | null>(null);
   const [cats, setCats] = useState<Category[]>([]);
   const [accounts, setAccounts] = useState<AccountInfo[]>([]);
   const [tick, setTick] = useState(0);
@@ -235,7 +289,8 @@ export default function App() {
   useEffect(() => {
     if (auth.user) {
       api.get<Category[]>('/api/categories').then(setCats).catch(() => {});
-      api.get<AccountInfo[]>('/api/accounts').then(setAccounts).catch(() => {});
+      // family=true — чтобы в окне операции были видны и счета членов семьи.
+      api.get<AccountInfo[]>('/api/accounts?family=true').then(setAccounts).catch(() => {});
     }
   }, [auth.user, tick]);
 
@@ -306,7 +361,10 @@ export default function App() {
               onCheckUpdates={checkUpdates}
             />
           )
-            : <Dashboard key={tick} onAdd={() => setShowQuick(true)} />;
+            : <Dashboard key={tick}
+                onAdd={() => { setPresetAccountId(null); setShowQuick(true); }}
+                onFamilyTx={(id) => { setPresetAccountId(id); setShowQuick(true); }}
+              />;
 
   return (
     <ToastProvider>
@@ -326,9 +384,11 @@ export default function App() {
             route={route}
             theme={theme}
             user={auth.user}
-            onAdd={() => setShowQuick(true)}
+            onAdd={() => { setPresetAccountId(null); setShowQuick(true); }}
             onMenu={() => setMobileOpen(true)}
             hasUpdate={!!update?.updateAvailable}
+            onLogout={() => { setPresetAccountId(null); auth.logout(); }}
+            onGoSettings={() => setRoute('settings')}
           />
           <main className="page-scroll">
             <div className="page page-enter" key={route}>

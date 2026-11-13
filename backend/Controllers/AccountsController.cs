@@ -60,14 +60,8 @@ public class AccountsController : ControllerBase
     // --- Управление счетами: своими и семейными ---
     // Id пользователей, чьими счетами может управлять текущий пользователь:
     // он сам + все участники его семьи (пусто, если семьи нет).
-    private async Task<List<int>> ManageableUserIds()
-    {
-        var me = await _db.Users.FindAsync(Uid);
-        if (me is null) return new List<int>();
-        if (string.IsNullOrEmpty(me.FamilyCode)) return new List<int> { Uid };
-        return await _db.Users.Where(u => u.FamilyCode == me.FamilyCode)
-            .Select(u => u.Id).ToListAsync();
-    }
+    private async Task<List<int>> ManageableUserIds() =>
+        await SchitayKa.Api.Services.FamilyAccess.ManageableUserIdsAsync(_db, Uid);
 
     // Счёт доступен, если он принадлежит пользователю из семьи (или самому мне)
     private async Task<bool> CanManage(int accountId)
@@ -131,6 +125,7 @@ public class AccountsController : ControllerBase
             a.Id, a.Name, a.Type, typeName = AccountTypeNames.Ru(a.Type),
             a.Balance, a.StartingBalance, a.CreditLimit, a.CashbackRate, a.CashbackAccrued, a.Color, a.IsArchived,
             ownerId = a.UserId, ownerName = owner?.Name ?? "",
+            isFamily = a.UserId != Uid,
             interest = InterestProjection(a),
             // полезная информация для карточки счёта
             available = a.Type == AccountType.CreditCard && a.CreditLimit > 0
@@ -264,6 +259,72 @@ public class AccountsController : ControllerBase
         await RecalcAllAccounts(acc.UserId);
         await _rules.EvaluateAllAsync(acc.UserId);
         return Ok(await ProjectWithOwner(acc));
+    }
+
+    // Операция по СЕМЕЙНОМУ счёту (счёт другого члена семьи).
+    // Операция записывается владельцу счёта, категория подбирается по названию
+    // среди его категорий (набор стартовых категорий у всех одинаковый).
+    public record FamilyTxDto(TxType Type, decimal Amount, DateOnly? Date, string? Comment, string? CategoryName);
+    [HttpPost("{id:int}/tx")]
+    public async Task<IActionResult> CreateTxForFamilyAccount(int id, FamilyTxDto dto)
+    {
+        if (Uid < 0) return Unauthorized(new { error = "Требуется вход" });
+        if (dto.Amount <= 0) return BadRequest(new { error = "Сумма должна быть больше нуля" });
+
+        var acc = await _db.Accounts.FirstOrDefaultAsync(a => a.Id == id);
+        if (acc is null) return NotFound(new { error = "Счёт не найден" });
+        if (acc.UserId == Uid) return BadRequest(new { error = "Это ваш счёт — используйте обычное добавление операции" });
+        if (acc.IsArchived) return BadRequest(new { error = "Счёт в архиве" });
+        if (!await CanManage(id)) return Forbid();
+
+        var ownerId = acc.UserId;
+        var catName = string.IsNullOrWhiteSpace(dto.CategoryName) ? "Прочее" : dto.CategoryName.Trim();
+
+        var cat = await _db.Categories
+            .FirstOrDefaultAsync(c => c.UserId == ownerId && c.Name == catName && c.Type == dto.Type);
+        if (cat is null)
+        {
+            // Тип операции может отличаться от типа одноимённой категории — берём по названию без типа.
+            cat = await _db.Categories.FirstOrDefaultAsync(c => c.UserId == ownerId && c.Name == catName);
+            if (cat is null)
+            {
+                cat = new Category
+                {
+                    UserId = ownerId,
+                    Name = catName,
+                    Type = dto.Type,
+                    Color = dto.Type == TxType.Income ? "#38a169" : "#718096",
+                    IsSystem = true,
+                };
+                _db.Categories.Add(cat);
+                await _db.SaveChangesAsync();
+            }
+        }
+
+        var tx = new Transaction
+        {
+            UserId = ownerId,
+            CategoryId = cat.Id,
+            Type = dto.Type,
+            Amount = dto.Amount,
+            Date = dto.Date ?? DateOnly.FromDateTime(DateTime.Today),
+            Comment = dto.Comment?.Trim() ?? "",
+            AccountId = acc.Id,
+        };
+        _db.Transactions.Add(tx);
+        await _db.SaveChangesAsync();
+
+        // Пересчёт остатка счёта (владелец счёта — не я, поэтому считаем напрямую).
+        await RecalcAccountsOf(_db, _db.Accounts.Where(a => a.Id == acc.Id));
+        await _rules.EvaluateAllAsync(ownerId);
+
+        return Ok(new
+        {
+            tx.Id, tx.CategoryId, tx.Type, tx.Amount, tx.Date, tx.Comment, tx.AccountId,
+            ownerId,
+            accountName = acc.Name,
+            accountBalance = acc.Balance,
+        });
     }
 
     [HttpDelete("{id:int}")]
