@@ -26,6 +26,9 @@ namespace SchitayKa.Api.Migrations
                     b.Property<decimal>("Balance")
                         .HasColumnType("TEXT");
 
+                    b.Property<int?>("BankId")
+                        .HasColumnType("INTEGER");
+
                     b.Property<decimal>("CashbackAccrued")
                         .HasColumnType("TEXT");
 
@@ -74,6 +77,8 @@ namespace SchitayKa.Api.Migrations
                         .HasColumnType("INTEGER");
 
                     b.HasKey("Id");
+
+                    b.HasIndex("BankId");
 
                     b.HasIndex("UserId", "Name")
                         .IsUnique();
@@ -673,11 +678,17 @@ namespace SchitayKa.Api.Migrations
 
             modelBuilder.Entity("SchitayKa.Api.Data.Account", b =>
                 {
+                    b.HasOne("SchitayKa.Api.Data.Bank", "Bank")
+                        .WithMany()
+                        .HasForeignKey("BankId");
+
                     b.HasOne("SchitayKa.Api.Data.User", "User")
                         .WithMany("Accounts")
                         .HasForeignKey("UserId")
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();
+
+                    b.Navigation("Bank");
 
                     b.Navigation("User");
                 });
