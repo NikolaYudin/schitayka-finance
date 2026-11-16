@@ -128,13 +128,14 @@ public class BudgetController : ControllerBase
         var accounts = await _db.Accounts.Where(a => targetIds.Contains(a.UserId) && !a.IsArchived).ToListAsync();
 
         // При личном охвате отдельно отдаём счета семьи (как раньше).
-        List<object> familyAccounts = [];
+        var familyAccounts = new List<object>();
+        decimal familyTotalBalance = 0m;
         if (scopeNorm == "me")
         {
-            familyAccounts = await _db.Accounts
+            var familyAccRows = await _db.Accounts
                 .Where(a => familyAll.Contains(a.UserId) && a.UserId != uid && !a.IsArchived)
                 .OrderBy(a => a.UserId).ThenBy(a => a.Name)
-                .Select(a => (object)new
+                .Select(a => new
                 {
                     a.Id, a.Name, a.Type, typeName = AccountTypeNames.Ru(a.Type),
                     a.Balance, a.CreditLimit, a.CashbackRate, a.CashbackAccrued, a.Color,
@@ -142,6 +143,8 @@ public class BudgetController : ControllerBase
                     ownerName = _db.Users.Where(u => u.Id == a.UserId).Select(u => u.Name).FirstOrDefault(),
                 })
                 .ToListAsync();
+            familyTotalBalance = familyAccRows.Sum(a => a.Balance);
+            familyAccounts.AddRange(familyAccRows);
         }
 
         var alerts = await _db.AccountAlerts
@@ -312,7 +315,7 @@ public class BudgetController : ControllerBase
             goals = goalRows,
             accounts = accountRows,
             familyAccounts,
-            familyTotalBalance = familyAccounts.Sum(a => ((dynamic)a).Balance),
+            familyTotalBalance,
             cashbackTotal,
             recommendations,
             alerts,
