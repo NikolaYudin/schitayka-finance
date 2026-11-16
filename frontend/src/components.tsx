@@ -45,18 +45,32 @@ export function Dashboard({ onAdd, onFamilyTx }: { onAdd?: () => void; onFamilyT
   const [sum, setSum] = useState<Summary | null>(null);
   const [recent, setRecent] = useState<Tx[]>([]);
   const [err, setErr] = useState('');
+  const [scope, setScope] = useState<'me' | 'family'>(() => (localStorage.getItem('sk_dash_scope') as 'me' | 'family') || 'me');
+  const [familyMembers, setFamilyMembers] = useState<{ id: number; name: string }[]>([]);
   const auth = useAuth();
   const toast = useToast();
   const seenAlerts = useRef<Set<number>>(new Set());
 
+  useEffect(() => {
+    api.get<{ familyCode: string | null; members: { id: number; name: string }[] }>('/api/family/members')
+      .then(r => setFamilyMembers(r.familyCode ? r.members : []))
+      .catch(() => setFamilyMembers([]));
+  }, []);
+
   const reload = () => {
     const now = new Date();
+    const qs = scope === 'family' ? '?scope=family' : '';
     Promise.all([
-      api.get<Summary>('/api/budget/summary'),
+      api.get<Summary>(`/api/budget/summary${qs}`),
       api.get<Tx[]>(`/api/transactions?month=${now.getMonth() + 1}&year=${now.getFullYear()}&take=8`),
     ]).then(([s, t]) => { setSum(s); setRecent(t); }).catch(e => setErr(e.message));
   };
-  useEffect(reload, []);
+  useEffect(reload, [scope]);
+
+  const changeScope = (s: 'me' | 'family') => {
+    setScope(s);
+    try { localStorage.setItem('sk_dash_scope', s); } catch {}
+  };
 
   // Мягко подсвечиваем новые активные уведомления.
   useEffect(() => {
@@ -141,6 +155,13 @@ export function Dashboard({ onAdd, onFamilyTx }: { onAdd?: () => void; onFamilyT
 
   return (
     <>
+      {familyMembers.length > 1 && (
+        <div className="scope-switch" style={{ display: 'flex', gap: 8, marginBottom: 12, flexWrap: 'wrap' }}>
+          <button type="button" className={`btn small ${scope === 'me' ? 'primary' : ''}`} onClick={() => changeScope('me')}>Только я</button>
+          <button type="button" className={`btn small ${scope === 'family' ? 'primary' : ''}`} onClick={() => changeScope('family')}>Вся семья</button>
+          {scope === 'family' && <span className="muted" style={{ alignSelf: 'center' }}>Охват: {sum.scopeLabel ?? 'Вся семья'}</span>}
+        </div>
+      )}
       {/* ---------- Hero ---------- */}
       <section className="hero">
         <div className="hero-main">

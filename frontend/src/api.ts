@@ -297,6 +297,9 @@ export interface ReceiptParseResult {
 export interface Summary {
   year: number;
   month: number;
+  scope?: 'me' | 'family' | 'ids';
+  scopeLabel?: string;
+  scopeUserIds?: number[];
   startingBalance: number;
   balance: number;
   monthIncome: number;
