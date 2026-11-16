@@ -39,4 +39,27 @@ public static class AppVersion
 
         return new CurrentVersion(version, commit, shortCommit, buildDate);
     }
+
+    /// <summary>Отбрасывает semver-суффикс (-beta) — для сравнения достаточно major.minor.patch.</summary>
+    private static string Core(string version) => version.Split('-')[0].Trim();
+
+    /// <summary>Равны ли версии (без учёта semver-суффикса и ведущего «v»).</summary>
+    public static bool IsSame(string current, string? other)
+    {
+        if (string.IsNullOrWhiteSpace(other)) return false;
+        var a = Core(current).TrimStart('v', 'V');
+        var b = Core(other).TrimStart('v', 'V');
+        return Version.TryParse(a, out var va) && Version.TryParse(b, out var vb) && va == vb;
+    }
+
+    /// <summary>Является ли <paramref name="latest"/> более новой версией, чем <paramref name="current"/>.</summary>
+    public static bool IsNewer(string current, string? latest)
+    {
+        if (string.IsNullOrWhiteSpace(latest)) return false;
+        var a = Core(current).TrimStart('v', 'V');
+        var b = Core(latest).TrimStart('v', 'V');
+        return Version.TryParse(b, out var latestVer)
+               && Version.TryParse(a, out var currentVer)
+               && latestVer > currentVer;
+    }
 }

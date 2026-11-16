@@ -248,6 +248,8 @@ export interface UpdateCheck {
   repoUrl: string;
   compareUrl: string | null;
   checkedAt: string;
+  /** Коммит в репозитории новее сборки, но релиз (версия) тот же. */
+  commitIsNewer?: boolean;
 }
 
 /** Перевод между своими счетами (Задача 7). */

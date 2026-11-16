@@ -134,6 +134,27 @@ public sealed class SelfUpdateService
             }
         }
 
+        // Обновление на уже установленную версию не запускаем: иначе кнопка «Обновить сейчас»
+        // повторно скачивала бы тот же app.zip и перезаписывала файлы.
+        if (target is not null && AppVersion.IsSame(AppVersion.Current.Version, target))
+        {
+            lock (_logLines)
+            {
+                _logLines.Clear();
+                _logLines.Add($"{DateTime.Now:HH:mm:ss}  Версия {target} уже установлена — обновление не требуется.");
+                _state = _state with
+                {
+                    Status = SelfUpdateStatus.Done,
+                    TargetVersion = target,
+                    Progress = 100,
+                    Error = null,
+                    StartedAt = DateTimeOffset.Now,
+                    FinishedAt = DateTimeOffset.Now,
+                };
+            }
+            return Task.FromResult(State);
+        }
+
         lock (_logLines)
         {
             if (_state.Status is SelfUpdateStatus.Running or SelfUpdateStatus.Downloading

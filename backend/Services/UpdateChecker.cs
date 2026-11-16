@@ -20,7 +20,8 @@ public sealed record UpdateCheckResult(
     bool UpdateAvailable,
     string RepoUrl,
     string? CompareUrl,
-    DateTimeOffset CheckedAt);
+    DateTimeOffset CheckedAt,
+    bool CommitIsNewer = false);
 
 /// <summary>
 /// Проверяет последний коммит в GitHub-репозитории и сравнивает его с текущей сборкой.
@@ -138,6 +139,7 @@ public sealed class UpdateChecker
             if (firstLine.Length > 180) firstLine = firstLine[..180] + "…";
 
             var latestVersion = await TryReadVersionAsync(client, owner, repo, ct);
+            var (releaseVersion, releaseUrl) = await TryReadLatestReleaseAsync(client, owner, repo, ct);
 
             var currentKnown = !string.Equals(current.Commit, "unknown", StringComparison.OrdinalIgnoreCase)
                                && current.Commit.Length >= 4;
@@ -145,13 +147,20 @@ public sealed class UpdateChecker
                        && (sha.StartsWith(current.Commit, StringComparison.OrdinalIgnoreCase)
                            || current.Commit.StartsWith(sha, StringComparison.OrdinalIgnoreCase));
 
-            var available = currentKnown
-                ? !same && (date is null || current.BuildDate is null || date.Value.UtcDateTime > current.BuildDate.Value)
-                : latestVersion is not null && IsNewerVersion(current.Version, latestVersion)
-                    ? true
-                    : current.BuildDate is { } bd
-                        ? date is null || date.Value.UtcDateTime > bd
-                        : true;
+            // Обновление предлагаем по РЕЛИЗУ, а не по коммиту: иначе любой коммит после релиза
+            // (документация, план) давал бы «Доступно обновление · v<текущая версия>».
+            // Сам факт «код новее» остаётся информационным полем CommitIsNewer.
+            var commitIsNewer = currentKnown && !same;
+            var versionIsNewer = releaseVersion is not null
+                ? AppVersion.IsNewer(current.Version, releaseVersion)
+                : latestVersion is not null && AppVersion.IsNewer(current.Version, latestVersion);
+            var dateIsNewer = date is null || current.BuildDate is null || date.Value.UtcDateTime > current.BuildDate.Value;
+            var sameReleaseVersion = latestVersion is not null && AppVersion.IsSame(current.Version, latestVersion);
+
+            var available = versionIsNewer
+                || (sameReleaseVersion
+                    ? false
+                    : commitIsNewer && dateIsNewer);
 
             var compareUrl = currentKnown
                 ? $"{repoUrl}/compare/{current.Commit}...{sha}"
@@ -165,7 +174,8 @@ public sealed class UpdateChecker
                 UpdateAvailable: available,
                 RepoUrl: repoUrl,
                 CompareUrl: compareUrl,
-                CheckedAt: checkedAt);
+                CheckedAt: checkedAt,
+                CommitIsNewer: commitIsNewer);
         }
         catch (OperationCanceledException) when (!ct.IsCancellationRequested)
         {
@@ -198,6 +208,37 @@ public sealed class UpdateChecker
         catch
         {
             // Например, EventLog недоступен в ограниченном окружении.
+        }
+    }
+
+    /// <summary>Последний опубликованный релиз: версия из tag_name (v0.2.4 → 0.2.4) и ссылка.</summary>
+    private static async Task<(string? Version, string? Url)> TryReadLatestReleaseAsync(
+        HttpClient client, string owner, string repo, CancellationToken ct)
+    {
+        try
+        {
+            using var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            timeout.CancelAfter(RequestTimeout);
+            using var response = await client.GetAsync(
+                $"https://api.github.com/repos/{owner}/{repo}/releases/latest",
+                HttpCompletionOption.ResponseHeadersRead,
+                timeout.Token);
+            if (!response.IsSuccessStatusCode) return (null, null);
+
+            var text = await response.Content.ReadAsStringAsync(timeout.Token);
+            using var doc = JsonDocument.Parse(text);
+            var root = doc.RootElement;
+            if (root.ValueKind != JsonValueKind.Object) return (null, null);
+
+            string? tag = root.TryGetProperty("tag_name", out var tagEl) ? tagEl.GetString() : null;
+            var url = root.TryGetProperty("html_url", out var urlEl) ? urlEl.GetString() : null;
+
+            var version = tag?.Trim().TrimStart('v', 'V');
+            return (string.IsNullOrWhiteSpace(version) ? null : version, url);
+        }
+        catch
+        {
+            return (null, null);
         }
     }
 
@@ -249,16 +290,5 @@ public sealed class UpdateChecker
             repo = repo[..^4];
 
         return owner.Length > 0 && repo.Length > 0;
-    }
-
-    private static bool IsNewerVersion(string current, string? latest)
-    {
-        if (string.IsNullOrWhiteSpace(latest)) return false;
-        // Отбрасываем semver-суффикс (-beta) — для сравнения достаточно numeric major.minor.patch.
-        var currentCore = current.Split('-')[0];
-        var latestCore = latest.Split('-')[0];
-        return Version.TryParse(latestCore, out var latestVer)
-               && Version.TryParse(currentCore, out var currentVer)
-               && latestVer > currentVer;
     }
 }

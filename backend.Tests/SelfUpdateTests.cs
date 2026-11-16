@@ -1,5 +1,8 @@
 using System.IO.Compression;
+using System.Net;
 using System.Text;
+using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.Logging.Abstractions;
 using SchitayKa.Api.Services;
 
 namespace SchitayKa.Tests;
@@ -94,5 +97,48 @@ public class SelfUpdateTests
     public void IsSkipped_ProtectsDataAndBackups(string path, bool expected)
     {
         Assert.Equal(expected, SelfUpdateService.IsSkipped(path));
+    }
+
+    // N1: обновление на уже установленную версию не запускается (нет скачивания и замены файлов).
+    [Fact]
+    public async Task StartAsync_SameVersion_DoesNothing()
+    {
+        var dir = TempDir("same");
+        try
+        {
+            var config = new ConfigurationBuilder()
+                .AddInMemoryCollection(new Dictionary<string, string?>
+                {
+                    ["SelfUpdate:Enabled"] = "true",
+                    ["SelfUpdate:InstallDir"] = dir,
+                })
+                .Build();
+            var service = new SelfUpdateService(
+                config,
+                new FakeFactory(new HttpClient(new FakeHandler())),
+                NullLogger<SelfUpdateService>.Instance);
+
+            var state = await service.StartAsync(AppVersion.Current.Version, true);
+
+            Assert.Equal(SelfUpdateStatus.Done, state.Status);
+            Assert.Equal(100, state.Progress);
+            Assert.Null(state.Error);
+            Assert.Contains(state.Log, line => line.Contains("уже установлена", StringComparison.Ordinal));
+        }
+        finally { Directory.Delete(dir, true); }
+    }
+
+    private sealed class FakeFactory : IHttpClientFactory
+    {
+        private readonly HttpClient _client;
+        public FakeFactory(HttpClient client) => _client = client;
+        public HttpClient CreateClient(string name) => _client;
+    }
+
+    private sealed class FakeHandler : HttpMessageHandler
+    {
+        protected override Task<HttpResponseMessage> SendAsync(
+            HttpRequestMessage request, CancellationToken cancellationToken)
+            => Task.FromResult(new HttpResponseMessage(HttpStatusCode.NotFound));
     }
 }
