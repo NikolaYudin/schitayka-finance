@@ -48,39 +48,25 @@
 - `backend.Tests/` — xUnit-тесты, `.github/workflows/ci.yml` — сборка, тесты и проверка типов фронтенда.
 
 ### Структура проекта
+
 ```
-SchitayKa.sln
-backend/
-  SchitayKa.Api.csproj      # автосборка фронтенда при F5 в Visual Studio
-  Program.cs                # конфигурация, создание БД, демо-сид, раздача SPA
-  appsettings.json          # Jwt, ConnectionStrings, YandexOAuth, FrontUrl
-  Data/AppDbContext.cs       # User, Category, Transaction, SavingsGoal, BudgetLimit
-  Controllers/
-    AuthController.cs        # регистрация/вход, /me, Яндекс-OAuth (выключен)
-    DataControllers.cs       # api/categories, api/transactions, api/goals, api/limits
-    BudgetController.cs      # api/budget/summary (анализ + рекомендации), start-balance
-    AccountsController.cs    # api/accounts + api/family (счета и семья)
-    AccountRulesController.cs # api/account-rules, api/alerts, api/reserve-loans
-frontend/
-  src/
-    index.css                # дизайн-система: токены, стекло, компоненты, адаптив
-    icons.tsx                # минималистичные SVG-иконки в духе lucide
-    App.tsx                  # каркас: sidebar, topbar, роутинг, настройки
-    components.tsx           # дашборд, кошелёк, графики, быстрая операция, журнал
-    AccountsPage.tsx         # счета и семья
-    GoalsPage.tsx            # цели + лимиты месяца
-    AccountRulesCard.tsx     # правила счетов
-    LoginPage.tsx            # экран входа
-    api.ts auth.ts theme.ts toasts.tsx main.tsx
-  backend/Services/
-    ReceiptOcrService.cs     # OCR через tesseract CLI (jpg/png/webp/bmp/tiff)
-    ReceiptParser.cs         # эвристики: сумма, дата, тип, продавец, категория
-    UpdateChecker.cs         # проверка последнего коммита в GitHub
-    AppVersion.cs            # версия и коммит сборки
-deploy/
-  xpenology/                 # Dockerfile, docker-compose.yml и инструкция для Container Manager
-VERSION                      # версия приложения (читается backend при сборке)
+schitayka-finance/
+├── backend/           # ASP.NET Core 8: Program.cs, Controllers/, Services/, Data/, Migrations/
+├── backend.Tests/     # xUnit: 56 тестов (сервисы, калькуляторы, P0-регрессии)
+├── frontend/          # React 18 + TypeScript + Vite, собирается в backend/wwwroot
+├── deploy/xpenology/  # Dockerfile, docker-compose, INSTALL.md, упаковщик релиза
+├── docs/              # README (точка входа), STATUS (история и дефекты), PROJECT-MAP (карта файлов)
+├── PLAN.md            # план работ, бэклог B1–B21, журнал исправлений
+├── VERSION            # версия приложения
+└── SchitayKa.sln      # backend + backend.Tests
 ```
+
+Подробная карта — за что отвечает каждый файл, все маршруты API, сущности БД, потоки данных
+и «где искать функционал»: [`docs/PROJECT-MAP.md`](docs/PROJECT-MAP.md).
+
+Ключевые места: конфигурация и старт — `backend/Program.cs`; расчёт остатков — один файл
+`backend/Services/AccountBalanceService.cs`; контроллеры — `backend/Controllers/`;
+экраны — `frontend/src/App.tsx` (каркас) и `frontend/src/components.tsx` (дашборд).
 
 ### Дизайн
 Интерфейс построен по брифу `schitayka-design-prompt.md`:
@@ -179,6 +165,17 @@ docker compose up -d --build
 | GET | /api/health | проверка работоспособности |
 
 Все данные изолированы по пользователю (фильтрация по UserId из JWT).
+
+## Документация
+
+| Документ | Что внутри |
+|---|---|
+| [`docs/README.md`](docs/README.md) | **Точка входа**: порядок чтения, правила работы с проектом, все инструкции, быстрые команды |
+| [`docs/STATUS.md`](docs/STATUS.md) | Что сделано и что нет: история версий, результаты аудита, известные дефекты, договорённости |
+| [`docs/PROJECT-MAP.md`](docs/PROJECT-MAP.md) | Карта проекта: ответственность файлов, маршруты API, сущности, потоки данных |
+| [`PLAN.md`](PLAN.md) | План работ: этапы, задачи, бэклог B1–B21, критерии готовности, журнал исправлений |
+| [`deploy/xpenology/INSTALL.md`](deploy/xpenology/INSTALL.md) | Установка на Synology / Xpenology с нуля |
+| [`deploy/xpenology/release/PACKAGING.md`](deploy/xpenology/release/PACKAGING.md) | Сборка и проверка zip-дистрибутива |
 
 ## О проекте-источнике
 Создано на основе наработки [NikolaYudin/Finance](https://github.com/NikolaYudin/Finance)
