@@ -252,13 +252,15 @@ export interface UpdateCheck {
   commitIsNewer?: boolean;
 }
 
-/** Перевод между своими счетами (Задача 7). */
+/** Перевод между своими счетами / в семье (Задачи 7, N3). */
 export interface Transfer {
   id: number;
   fromAccountId: number; fromAccountName: string;
   toAccountId: number; toAccountName: string;
   amount: number; date: string; comment: string; createdAt: string;
   fromTxId: number | null; toTxId: number | null;
+  initiatorUserId?: number;
+  initiatorName?: string;
 }
 
 /** Состояние автоматического обновления (Задача 9). */

@@ -1171,6 +1171,7 @@ export function Journal() {
                     </div>
                     <div className="transfer-sub">
                       {new Date(tr.date + 'T00:00:00').toLocaleDateString('ru-RU')}
+                      {tr.initiatorName ? ` · ${tr.initiatorName}` : ''}
                       {tr.comment ? ` · ${tr.comment}` : ''}
                     </div>
                   </div>

@@ -35,6 +35,8 @@ public class TransfersController : ControllerBase
         t.CreatedAt,
         t.FromTxId,
         t.ToTxId,
+        initiatorUserId = t.UserId,
+        initiatorName = t.User?.Name ?? "",
     };
 
     /// <summary>Переводы пользователя (по месяцу/году и/или счёту).</summary>
