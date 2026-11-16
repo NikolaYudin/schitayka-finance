@@ -248,31 +248,11 @@ public class AccountRulesController : ControllerBase
         rule.NotifyInApp = dto.NotifyInApp;
     }
 
-    // Локальный пересчёт балансов: bulk-apply меняет привязку операций к счетам.
-    private async Task RecalcAllAccountsAsync(int uid)
-    {
-        var accounts = await _db.Accounts.Where(a => a.UserId == uid).ToListAsync();
-        foreach (var acc in accounts)
-        {
-            var signed = await _db.Transactions.Where(t => t.AccountId == acc.Id)
-                .Select(t => new { t.Type, t.Amount, t.IsTransfer }).ToListAsync();
-            var net = signed.Sum(t => t.Type == TxType.Income ? t.Amount : -t.Amount);
-            if (acc.Type == AccountType.CreditCard)
-            {
-                acc.Balance = Math.Max(0, acc.StartingBalance - net);
-                acc.CashbackAccrued = 0;
-            }
-            else
-            {
-                var cashback = acc.CashbackRate > 0
-                    ? Math.Round(signed.Where(t => t.Type == TxType.Expense && !t.IsTransfer).Sum(t => t.Amount) * acc.CashbackRate / 100m, 2)
-                    : 0m;
-                acc.Balance = Math.Max(0, acc.StartingBalance + net + cashback);
-                acc.CashbackAccrued = cashback;
-            }
-        }
-        await _db.SaveChangesAsync();
-    }
+    // Пересчёт балансов: bulk-apply меняет привязку операций к счетам.
+    // Формула — в AccountBalanceService, чтобы не дублировать её в контроллерах.
+    private Task RecalcAllAccountsAsync(int uid) =>
+        SchitayKa.Api.Services.AccountBalanceService.RecalcAsync(
+            _db, _db.Accounts.Where(a => a.UserId == uid));
 }
 
 [ApiController]

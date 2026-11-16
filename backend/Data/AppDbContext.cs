@@ -95,7 +95,8 @@ public class AppDbContext : DbContext
         mb.Entity<Transfer>()
             .HasOne(t => t.ToAccount).WithMany().HasForeignKey(t => t.ToAccountId).OnDelete(DeleteBehavior.Restrict);
 
-        // --- Задача 5: начисления процентов ---        mb.Entity<InterestAccrual>().HasIndex(a => new { a.UserId, a.AccountId, a.From });
+        // --- Задача 5: начисления процентов ---
+        mb.Entity<InterestAccrual>().HasIndex(a => new { a.UserId, a.AccountId, a.From });
         mb.Entity<InterestAccrual>()
             .HasOne(a => a.User).WithMany().HasForeignKey(a => a.UserId).OnDelete(DeleteBehavior.Cascade);
         mb.Entity<InterestAccrual>()

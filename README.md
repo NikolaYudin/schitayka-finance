@@ -39,7 +39,7 @@
   По счёту семьи можно сразу создать операцию — она записывается владельцу счёта, а личный бюджет
   при этом не искажается. Полное управление (архив, переименование, лимиты) остаётся во вкладке «Счета».
 - **Профиль** — клик по аватару в правом верхнем углу открывает меню: «Профиль и настройки» и «Выйти из профиля».
-- **Демо-данные** — при первом запуске создаётся аккаунт `demo@schitayka.ru / demo123` с операциями, лимитами и целями. В production отключается переменной `SCHITAYKA_SEED_DEMO=false`.
+- **Демо-данные** — в Development создаётся аккаунт `demo@schitayka.ru / demo123` с операциями, лимитами и целями. В production демо по умолчанию **не создаётся**; включить можно явно — `SCHITAYKA_SEED_DEMO=true` (в Docker: `SEED_DEMO=true` в `.env`).
 
 ## Архитектура
 - `backend/` — ASP.NET Core 8 (Minimal hosting + контроллеры), SQLite через EF Core, JWT-автентификация, Swagger (`/swagger`).
@@ -173,7 +173,7 @@ docker compose up -d --build
 | GET/POST/PUT/DELETE | /api/investments, /api/investments/{id}/holdings | портфели и позиции по банкам |
 | GET | /api/investments/summary | сводка по инвестициям и сравнение с накопительным счётом |
 | GET | /api/version · /api/version/check | текущая версия и проверка обновлений по GitHub |
-| GET/POST | /api/version/apply · /apply/status | автообновление по кнопке: запуск и статус с прогрессом |
+| GET/POST | /api/version/apply · /apply/status | автообновление по кнопке: запуск и статус с прогрессом (включается `SELFUPDATE_ENABLED=true`, см. `deploy/xpenology/INSTALL.md` п. 7.5) |
 | POST | /api/import/receipt · /receipt/text | распознавание чека/скриншота и разбор текста |
 | GET | /api/export/profile | полный JSON-профиль для ИИ-анализа |
 | GET | /api/health | проверка работоспособности |

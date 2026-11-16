@@ -47,12 +47,12 @@ public class TransfersController : ControllerBase
         return Ok(list.Select(Project));
     }
 
-    /// <summary>Создать перевод: две операции одним действием.</summary>
+    /// <summary>Один перевод по идентификатору.</summary>
     [HttpGet("{id:int}")]
     public async Task<IActionResult> Details(int id)
     {
         if (Uid < 0) return Unauthorized(new { error = "Требуется вход" });
-        var transfer = (await _transfers.ListAsync(Uid)).FirstOrDefault(t => t.Id == id);
+        var transfer = await _transfers.GetAsync(Uid, id);
         return transfer is null ? NotFound(new { error = "Перевод не найден" }) : Ok(Project(transfer));
     }
 

@@ -22,7 +22,7 @@ public class InterestController : ControllerBase
     private int Uid => UserAccess.UidOf(User);
 
     public record AccrueDto(string? Note = null, DateTime? From = null, DateTime? To = null);
-    public record PayoutDto(decimal Amount, DateOnly? Date = null, string? Note = null);
+    public record PayoutDto(decimal? Amount = null, DateOnly? Date = null, string? Note = null);
 
     /// <summary>Прогноз доходности счёта на N месяцев вперёд.</summary>
     [HttpGet("forecast/{accountId:int}")]
@@ -142,15 +142,38 @@ public class InterestController : ControllerBase
     public async Task<IActionResult> Payout([FromRoute] int accountId, [FromBody] PayoutDto dto)
     {
         if (Uid < 0) return Unauthorized(new { error = "Требуется вход" });
-        if (dto.Amount <= 0) return BadRequest(new { error = "Сумма выплаты должна быть больше нуля" });
 
         var acc = await _db.Accounts.FirstOrDefaultAsync(a => a.Id == accountId && a.UserId == Uid);
         if (acc is null) return NotFound(new { error = "Счёт не найден" });
 
+        // Сумма выплаты определяется журналом, а не телом запроса: иначе можно было
+        // закрыть все начисления произвольной суммой (например, выплатить 1 ₽ из 500 ₽).
+        var pending = await _db.InterestAccruals
+            .Where(a => a.AccountId == acc.Id && a.UserId == Uid && !a.IsPaid)
+            .ToListAsync();
+        if (pending.Count == 0)
+            return BadRequest(new { error = "Нет неоплаченных начислений по этому счёту." });
+
+        var expected = decimal.Round(pending.Sum(a => a.Net), 2);
+        var amount = dto.Amount ?? expected;
+        if (amount <= 0)
+            return BadRequest(new { error = "Сумма выплаты должна быть больше нуля" });
+        if (Math.Abs(amount - expected) > 0.01m)
+            return BadRequest(new
+            {
+                error = $"Сумма {amount:0.00} не совпадает с неоплаченными начислениями {expected:0.00}. " +
+                        "Не передавайте amount, чтобы выплатить всю сумму.",
+                expected,
+            });
+
         var date = dto.Date ?? DateOnly.FromDateTime(DateTime.Today);
 
+        // Операция, пометка начислений и пересчёт баланса — одной транзакцией.
+        await using var tr = await _db.Database.BeginTransactionAsync();
+
         // Категория дохода для процентов — создаём системную при первом разе.
-        var cat = await _db.Categories.FirstOrDefaultAsync(c => c.UserId == Uid && c.Name == "Проценты");
+        var cat = await _db.Categories
+            .FirstOrDefaultAsync(c => c.UserId == Uid && c.Name == "Проценты" && c.Type == TxType.Income);
         if (cat is null)
         {
             cat = new Category { UserId = Uid, Name = "Проценты", Type = TxType.Income, Color = "#38a169", IsSystem = true };
@@ -163,22 +186,20 @@ public class InterestController : ControllerBase
             UserId = Uid,
             CategoryId = cat.Id,
             Type = TxType.Income,
-            Amount = dto.Amount,
+            Amount = amount,
             Date = date,
             Comment = string.IsNullOrWhiteSpace(dto.Note) ? $"Проценты по счёту «{acc.Name}»" : dto.Note.Trim(),
             AccountId = acc.Id,
         };
         _db.Transactions.Add(tx);
 
-        var pending = await _db.InterestAccruals
-            .Where(a => a.AccountId == acc.Id && a.UserId == Uid && !a.IsPaid)
-            .ToListAsync();
         foreach (var p in pending) p.IsPaid = true;
 
         await _db.SaveChangesAsync();
 
         // Пересчёт остатка счёта (старт + операции + кэшбэк) — как в AccountsController.
         await AccountsController.RecalcAccountsOf(_db, _db.Accounts.Where(a => a.Id == acc.Id));
+        await tr.CommitAsync();
 
         return Ok(new { tx.Id, tx.Amount, tx.Date, paidAccruals = pending.Count, tx.Comment });
     }

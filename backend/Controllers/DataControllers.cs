@@ -98,6 +98,8 @@ public class TransactionsController : ControllerBase
     private int Uid => UserAccess.UidOf(User);
 
     public record TxDto(int CategoryId, TxType Type, decimal Amount, DateOnly Date, string? Comment, int? AccountId,
+                        // Оставлено для обратной совместимости API, но значение игнорируется:
+                        // признак перевода ставит только сервер (TransferService).
                         bool IsTransfer = false);
 
     // Пересчёт баланса счёта при изменении набора операций.
@@ -108,27 +110,10 @@ public class TransactionsController : ControllerBase
     // Публичный вариант: пересчёт для произвольного пользователя (используется для семейных операций)
     public async Task RecalcAccountsFor(int userId, params int?[] accountIds)
     {
-        foreach (var id in accountIds.Where(a => a.HasValue).Select(a => a!.Value).Distinct())
-        {
-            var acc = await _db.Accounts.FirstOrDefaultAsync(a => a.Id == id && a.UserId == userId);
-            if (acc is null) continue;
-            var signed = await _db.Transactions.Where(t => t.AccountId == id)
-                .Select(t => new { t.Type, t.Amount, t.IsTransfer }).ToListAsync();
-            var net = signed.Sum(t => t.Type == TxType.Income ? t.Amount : -t.Amount);
-            if (acc.Type == AccountType.CreditCard)
-            {
-                acc.Balance = Math.Max(0, acc.StartingBalance - net);
-                acc.CashbackAccrued = 0;
-            }
-            else
-            {
-                var cashback = acc.CashbackRate > 0
-                    ? Math.Round(signed.Where(t => t.Type == TxType.Expense && !t.IsTransfer).Sum(t => t.Amount) * acc.CashbackRate / 100m, 2)
-                    : 0m;
-                acc.Balance = Math.Max(0, acc.StartingBalance + net + cashback);
-                acc.CashbackAccrued = cashback;
-            }
-        }
+        var ids = accountIds.Where(a => a.HasValue).Select(a => a!.Value).Distinct().ToList();
+        if (ids.Count == 0) return;
+        await AccountBalanceService.RecalcAsync(_db,
+            _db.Accounts.Where(a => ids.Contains(a.Id) && a.UserId == userId));
     }
 
     [HttpGet]
@@ -191,7 +176,9 @@ public class TransactionsController : ControllerBase
             Date = dto.Date,
             Comment = dto.Comment?.Trim() ?? "",
             AccountId = effectiveAccountId,
-            IsTransfer = dto.IsTransfer,
+            // IsTransfer из клиента игнорируем: иначе любую операцию можно вывести
+            // из доходов/расходов и расчёта кэшбэка. Переводы создаёт TransferService.
+            IsTransfer = false,
         };
         _db.Transactions.Add(tx);
         await _db.SaveChangesAsync();
@@ -219,7 +206,7 @@ public class TransactionsController : ControllerBase
         var oldAccountId = tx.AccountId;
         tx.CategoryId = cat.Id; tx.Type = dto.Type; tx.Amount = dto.Amount;
         tx.Date = dto.Date; tx.Comment = dto.Comment?.Trim() ?? ""; tx.AccountId = dto.AccountId;
-        tx.IsTransfer = dto.IsTransfer;
+        // Признак перевода не меняется клиентом: его выставляет только TransferService.
         await _db.SaveChangesAsync();
         await RecalcAccounts(oldAccountId, dto.AccountId);
         await _db.SaveChangesAsync();

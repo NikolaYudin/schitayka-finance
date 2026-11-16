@@ -111,19 +111,68 @@ public sealed class SelfUpdateService
     /// <summary>Запускает обновление в фоне. Возвращает текущее состояние процесса.</summary>
     public Task<SelfUpdateState> StartAsync(string? version, bool restart)
     {
+        var target = string.IsNullOrWhiteSpace(version) ? null : version.Trim();
+
+        // Версия попадает в URL загрузки и в имя каталога резервной копии, поэтому
+        // допускаем только цифры и точки — иначе «..\..» выводит запись за каталог.
+        if (target is not null && !System.Text.RegularExpressions.Regex.IsMatch(target, @"^[0-9]+(\.[0-9]+){0,3}$"))
+        {
+            lock (_logLines)
+            {
+                _logLines.Clear();
+                _logLines.Add($"{DateTime.Now:HH:mm:ss}  Некорректная версия: {target}");
+                _state = _state with
+                {
+                    Status = SelfUpdateStatus.Failed,
+                    TargetVersion = target,
+                    Progress = 0,
+                    Error = "Некорректная версия обновления: допустимы цифры и точки (например, 0.2.3).",
+                    StartedAt = null,
+                    FinishedAt = DateTimeOffset.Now,
+                };
+                return Task.FromResult(State);
+            }
+        }
+
         lock (_logLines)
         {
             if (_state.Status is SelfUpdateStatus.Running or SelfUpdateStatus.Downloading
+                or SelfUpdateStatus.Verifying or SelfUpdateStatus.Extracting or SelfUpdateStatus.BackingUp
                 or SelfUpdateStatus.Applying or SelfUpdateStatus.Restarting)
                 return Task.FromResult(State);
 
             _logLines.Clear();
-            _running = Task.Run(() => RunAsync(version, restart));
+            // Статус Running выставляем до возврата из StartAsync: иначе второй клик
+            // видел Idle и запускал параллельное обновление.
+            _state = _state with
+            {
+                Status = SelfUpdateStatus.Running,
+                TargetVersion = target,
+                Progress = 0,
+                Error = null,
+                StartedAt = DateTimeOffset.Now,
+                FinishedAt = null,
+            };
+            _running = Task.Run(() => RunAsync(target, restart));
             return Task.FromResult(State);
         }
     }
 
+    /// <summary>Обёртка с семафором: одновременно выполняется только одно обновление.</summary>
     private async Task RunAsync(string? version, bool restart)
+    {
+        await _gate.WaitAsync();
+        try
+        {
+            await RunCoreAsync(version, restart);
+        }
+        finally
+        {
+            _gate.Release();
+        }
+    }
+
+    private async Task RunCoreAsync(string? version, bool restart)
     {
         var started = DateTimeOffset.UtcNow;
         void Step(SelfUpdateStatus status, int progress, string message)
@@ -293,26 +342,28 @@ public sealed class SelfUpdateService
         }
     }
 
-    /// <summary>Сверяет SHA256 с опубликованным файлом `.sha256` (если он есть).</summary>
+    /// <summary>
+    /// Сверяет SHA256 с опубликованным файлом `.sha256`.
+    /// Недоступная или пустая контрольная сумма — ошибка: fail-open позволял применить
+    /// непроверенный архив при 404 или сетевой ошибке.
+    /// </summary>
     private async Task VerifyChecksumAsync(string checksumUrl, string filePath)
     {
-        try
-        {
-            var client = _http.CreateClient("github-download");
-            using var response = await client.GetAsync(checksumUrl);
-            if (!response.IsSuccessStatusCode) return; // контрольной суммы нет — не критично
-            var text = await response.Content.ReadAsStringAsync();
-            var expected = text.Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
-                .FirstOrDefault(t => t.Length == 64);
-            if (expected is null) return;
-            var actual = Sha256Hex(filePath);
-            if (!string.Equals(actual, expected, StringComparison.OrdinalIgnoreCase))
-                throw new InvalidOperationException("Контрольная сумма не совпадает — обновление отменено.");
-        }
-        catch (HttpRequestException)
-        {
-            // сеть недоступна для проверки — не блокируем обновление
-        }
+        var client = _http.CreateClient("github-download");
+        using var response = await client.GetAsync(checksumUrl);
+        if (!response.IsSuccessStatusCode)
+            throw new InvalidOperationException(
+                $"Контрольная сумма недоступна (HTTP {(int)response.StatusCode}) — обновление отменено.");
+
+        var text = await response.Content.ReadAsStringAsync();
+        var expected = text.Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .FirstOrDefault(t => t.Length == 64);
+        if (expected is null)
+            throw new InvalidOperationException("Файл контрольной суммы пуст или повреждён — обновление отменено.");
+
+        var actual = Sha256Hex(filePath);
+        if (!string.Equals(actual, expected, StringComparison.OrdinalIgnoreCase))
+            throw new InvalidOperationException("Контрольная сумма не совпадает — обновление отменено.");
     }
 
     public static string Sha256Hex(string filePath)

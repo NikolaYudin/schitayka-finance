@@ -70,39 +70,25 @@ public class AccountsController : ControllerBase
         return await _db.Accounts.AnyAsync(a => a.Id == accountId && ids.Contains(a.UserId));
     }
 
+    // Привязать счёт можно только к системному банку или к банку из своей семьи:
+    // иначе есть возможность увидеть название чужого приватного банка в проекции счёта.
+    private async Task<bool> CanUseBankAsync(int? bankId)
+    {
+        if (bankId is not int id) return true;
+        var ids = await ManageableUserIds();
+        return await _db.Banks.AnyAsync(b => b.Id == id && (b.UserId == null || ids.Contains(b.UserId.Value)));
+    }
+
     // Полный пересчёт остатков всех счетов (старт + операции + кэшбэк).
     // Архивные счета тоже пересчитываем — иначе при возврате из архива
     // баланс оказался бы устаревшим; в итоги и выбор они при этом не попадают.
     private async Task RecalcAllAccounts(int uid) =>
         await RecalcAccountsOf(_db, _db.Accounts.Where(a => a.UserId == uid));
 
-    // Пересчёт для набора счетов (используется и для семейной карточки на главной)
-    public static async Task RecalcAccountsOf(AppDbContext db, IQueryable<Account> accountsQ)
-    {
-        var ids = await accountsQ.Select(a => (int?)a.Id).ToListAsync();
-        foreach (var id in ids)
-        {
-            var acc = await db.Accounts.FirstOrDefaultAsync(a => a.Id == id!.Value);
-            if (acc is null) continue;
-            var signed = await db.Transactions.Where(t => t.AccountId == id)
-                .Select(t => new { t.Type, t.Amount, t.IsTransfer }).ToListAsync();
-            var net = signed.Sum(t => t.Type == TxType.Income ? t.Amount : -t.Amount);
-            if (acc.Type == AccountType.CreditCard)
-            {
-                acc.Balance = Math.Max(0, acc.StartingBalance - net);
-                acc.CashbackAccrued = 0;
-            }
-            else
-            {
-                var cashback = acc.CashbackRate > 0
-                    ? Math.Round(signed.Where(t => t.Type == TxType.Expense && !t.IsTransfer).Sum(t => t.Amount) * acc.CashbackRate / 100m, 2)
-                    : 0m;
-                acc.Balance = Math.Max(0, acc.StartingBalance + net + cashback);
-                acc.CashbackAccrued = cashback;
-            }
-        }
-        await db.SaveChangesAsync();
-    }
+    // Пересчёт для набора счетов (используется и для семейной карточки на главной).
+    // Публичная обёртка сохранена для тестов и внешних вызовов; сама формула — в AccountBalanceService.
+    public static Task RecalcAccountsOf(AppDbContext db, IQueryable<Account> accountsQ) =>
+        SchitayKa.Api.Services.AccountBalanceService.RecalcAsync(db, accountsQ);
 
     // Статическая проекция для FamilyBoard (без владельца — колонка уже привязана к пользователю)
     internal static object Project(Account a) => new
@@ -172,6 +158,8 @@ public class AccountsController : ControllerBase
         var name = dto.Name.Trim();
         if (await _db.Accounts.AnyAsync(a => a.UserId == targetUid && a.Name == name))
             return BadRequest(new { error = "Счёт с таким именем уже есть" });
+        if (!await CanUseBankAsync(dto.BankId))
+            return BadRequest(new { error = "Банк не найден" });
 
         var acc = new Account
         {
@@ -215,6 +203,8 @@ public class AccountsController : ControllerBase
         acc.StartingBalance = Math.Abs(dto.Balance);
         acc.CreditLimit = dto.Type == AccountType.CreditCard ? (dto.CreditLimit ?? 0) : 0;
         acc.CashbackRate = dto.CashbackRate is > 0 and <= 100 ? dto.CashbackRate.Value : 0;
+        if (!await CanUseBankAsync(dto.BankId))
+            return BadRequest(new { error = "Банк не найден" });
         acc.BankId = dto.BankId;
         if (dto.InterestRate is not null)
             acc.InterestRate = dto.InterestRate.Value is > 0 and <= 100 ? dto.InterestRate.Value : 0;

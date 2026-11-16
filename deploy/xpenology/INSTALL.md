@@ -124,6 +124,8 @@ APP_PORT=5023
 JWT_KEY=сюда_вставьте_сгенерированную_строку
 TZ=Europe/Moscow
 SEED_DEMO=false
+SELFUPDATE_ENABLED=false
+SELFUPDATE_ADMIN_EMAILS=
 UPDATE_REPO_URL=https://github.com/NikolaYudin/schitayka-finance
 GITHUB_TOKEN=
 ```
@@ -136,6 +138,8 @@ GITHUB_TOKEN=
 | `APP_PORT` | внешний порт на NAS (по умолчанию 5023) |
 | `SEED_DEMO` | `false` — без демо-аккаунта; `true` — создать demo для теста |
 | `TZ` | часовой пояс контейнера |
+| `SELFUPDATE_ENABLED` | `false` — кнопка автообновления выключена; `true` — включена (см. 7.5) |
+| `SELFUPDATE_ADMIN_EMAILS` | кому разрешено автообновление (e-mail через запятую); пусто — первый пользователь |
 
 Пока `JWT_KEY` пуст, `docker compose up` специально завершится ошибкой.
 
@@ -369,6 +373,33 @@ sudo docker compose up -d --build
 
 Измените [`VERSION`](../../VERSION) (например, `1.2.0`), закоммитьте и запустите
 обновление. При сборке версия попадёт в backend, коммит подставится скриптом.
+
+### 7.5. Автообновление по кнопке (необязательно)
+
+В разделе **Настройки → Версия и обновления** может быть кнопка «Обновить сейчас»:
+она скачивает zip-релиз с GitHub Releases, проверяет SHA256, делает резервную копию
+и заменяет файлы приложения. Том `schitayka-data` при этом не трогается.
+
+По умолчанию кнопка выключена. Чтобы включить:
+
+```dotenv
+# deploy/xpenology/.env
+SELFUPDATE_ENABLED=true
+SELFUPDATE_ADMIN_EMAILS=admin@example.com
+```
+
+```bash
+cd /volume1/docker/schitayka/deploy/xpenology
+sudo docker compose up -d
+```
+
+Права: если `SELFUPDATE_ADMIN_EMAILS` пуст, обновление доступно первому
+зарегистрированному пользователю. Контрольная сумма `.sha256` обязательна —
+без неё обновление отменяется. После замены файлов контейнер перезапускается
+(в Docker — через `restart: unless-stopped`).
+
+> Для NAS с ограниченным местом резервные копии `.backup-*` копятся в каталоге
+> установки: периодически удаляйте старые вручную.
 
 ---
 

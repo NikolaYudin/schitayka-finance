@@ -174,7 +174,29 @@ public class StageATests
     }
 
     [Fact]
-    public async Task TransactionUpdate_PersistsTransferFlag()
+    public async Task TransactionCreate_IgnoresClientTransferFlag()
+    {
+        var (conn, db, user) = await CreateDbAsync();
+        using var _ = conn;
+        using var __ = db;
+
+        var cat = new Category { UserId = user.Id, Name = "Продукты", Type = TxType.Expense };
+        db.Categories.Add(cat);
+        await db.SaveChangesAsync();
+
+        var controller = WithUser(new TransactionsController(db, new AccountRulesService(db)), user.Id);
+        // Клиент пытается пометить обычную трату переводом, чтобы вывести её из аналитики.
+        var dto = new TransactionsController.TxDto(
+            cat.Id, TxType.Expense, 500, new DateOnly(2026, 11, 2), "Продукты", null, IsTransfer: true);
+        var result = await controller.Create(dto);
+        Assert.IsType<OkObjectResult>(result);
+
+        var stored = await db.Transactions.AsNoTracking().FirstAsync(t => t.UserId == user.Id);
+        Assert.False(stored.IsTransfer);
+    }
+
+    [Fact]
+    public async Task TransactionUpdate_KeepsServerTransferFlag()
     {
         var (conn, db, user) = await CreateDbAsync();
         using var _ = conn;
@@ -183,17 +205,18 @@ public class StageATests
         var cat = new Category { UserId = user.Id, Name = "Перевод", Type = TxType.Expense };
         db.Categories.Add(cat);
         await db.SaveChangesAsync();
+        // Признак выставлен сервером (например, TransferService) — клиент не может его снять.
         var tx = new Transaction
         {
             UserId = user.Id, CategoryId = cat.Id, Type = TxType.Expense,
-            Amount = 5000, Date = new DateOnly(2026, 11, 2),
+            Amount = 5000, Date = new DateOnly(2026, 11, 2), IsTransfer = true,
         };
         db.Transactions.Add(tx);
         await db.SaveChangesAsync();
 
         var controller = WithUser(new TransactionsController(db, new AccountRulesService(db)), user.Id);
         var dto = new TransactionsController.TxDto(
-            cat.Id, TxType.Expense, 5000, new DateOnly(2026, 11, 2), "Перевод", null, IsTransfer: true);
+            cat.Id, TxType.Expense, 5000, new DateOnly(2026, 11, 2), "Перевод", null, IsTransfer: false);
         await controller.Update(tx.Id, dto);
 
         var stored = await db.Transactions.AsNoTracking().FirstAsync(t => t.Id == tx.Id);

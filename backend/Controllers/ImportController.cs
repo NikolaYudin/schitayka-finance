@@ -1,5 +1,6 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.EntityFrameworkCore;
 using SchitayKa.Api.Data;
 using SchitayKa.Api.Services;
@@ -24,6 +25,7 @@ public class ImportController : ControllerBase
 
     /// <summary>Распознать фото чека или скриншот банка.</summary>
     [HttpPost("receipt")]
+    [EnableRateLimiting("import")]
     [RequestSizeLimit(12_000_000)]
     public async Task<IActionResult> Receipt([FromForm] IFormFile? file, CancellationToken ct)
     {
@@ -36,8 +38,10 @@ public class ImportController : ControllerBase
         var contentType = file.ContentType ?? "";
         var ext = Path.GetExtension(file.FileName);
         var allowedExt = new[] { ".jpg", ".jpeg", ".png", ".webp", ".bmp", ".tif", ".tiff" };
+        // Проверяем оба признака: и Content-Type, и расширение. Раньше условия были
+        // объединены через «ИЛИ», поэтому произвольные байты уходили в tesseract/libtiff.
         if (!contentType.StartsWith("image/", StringComparison.OrdinalIgnoreCase)
-            && !allowedExt.Contains(ext, StringComparer.OrdinalIgnoreCase))
+            || !allowedExt.Contains(ext, StringComparer.OrdinalIgnoreCase))
         {
             return BadRequest(new { error = "Нужно изображение JPG, PNG, WebP, BMP или TIFF." });
         }
@@ -54,6 +58,7 @@ public class ImportController : ControllerBase
 
     /// <summary>Разобрать текст, вставленный вручную (резервный путь, если OCR недоступен).</summary>
     [HttpPost("receipt/text")]
+    [EnableRateLimiting("import")]
     public async Task<IActionResult> ReceiptText([FromBody] TextDto dto)
     {
         if (Uid < 0) return Unauthorized(new { error = "Требуется вход" });

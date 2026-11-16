@@ -40,7 +40,7 @@ public sealed class TransferService
         if (to.IsArchived) return new(false, "Счёт-получатель в архиве", null);
 
         await using var transaction = await _db.Database.BeginTransactionAsync();
-        await RecalcAsync(userId, from.Id, to.Id);
+        await RecalcAsync(from.Id, to.Id);
         var available = from.Type == AccountType.CreditCard
             ? Math.Max(0m, from.CreditLimit - from.Balance) : from.Balance;
         if (amount > available) return new(false, "Недостаточно средств на счёте-отправителе", null);
@@ -94,7 +94,7 @@ public sealed class TransferService
         _db.Transfers.Add(transfer);
         await _db.SaveChangesAsync();
 
-        await RecalcAsync(userId, from.Id, to.Id);
+        await RecalcAsync(from.Id, to.Id);
         await transaction.CommitAsync();
 
         return new(true, null, transfer);
@@ -124,7 +124,7 @@ public sealed class TransferService
         _db.Transfers.Remove(transfer);
         await _db.SaveChangesAsync();
 
-        await RecalcAsync(userId, transfer.FromAccountId, transfer.ToAccountId);
+        await RecalcAsync(transfer.FromAccountId, transfer.ToAccountId);
         await transaction.CommitAsync();
         return (true, null);
     }
@@ -160,6 +160,13 @@ public sealed class TransferService
         return await q.OrderByDescending(t => t.Date).ThenByDescending(t => t.Id).ToListAsync();
     }
 
+    /// <summary>Один перевод пользователя (без загрузки всего списка).</summary>
+    public Task<Transfer?> GetAsync(int userId, int transferId) =>
+        _db.Transfers
+            .Include(t => t.FromAccount)
+            .Include(t => t.ToAccount)
+            .FirstOrDefaultAsync(t => t.Id == transferId && t.UserId == userId);
+
     /// <summary>Идентификаторы операций, входящих в переводы (для исключения из журнала операций).</summary>
     public async Task<HashSet<int>> TransferTransactionIdsAsync(int userId)
     {
@@ -176,34 +183,9 @@ public sealed class TransferService
         return ids;
     }
 
-    /// <summary>Пересчёт остатков указанных счетов (старт + операции + кэшбэк).</summary>
-    private async Task RecalcAsync(int userId, params int[] accountIds)
-    {
-        foreach (var id in accountIds.Distinct())
-        {
-            var acc = await _db.Accounts.FirstOrDefaultAsync(a => a.Id == id);
-            if (acc is null) continue;
-
-            var signed = await _db.Transactions.Where(t => t.AccountId == id)
-                .Select(t => new { t.Type, t.Amount, t.IsTransfer }).ToListAsync();
-            var net = signed.Sum(t => t.Type == TxType.Income ? t.Amount : -t.Amount);
-
-            if (acc.Type == AccountType.CreditCard)
-            {
-                acc.Balance = Math.Max(0, acc.StartingBalance - net);
-                acc.CashbackAccrued = 0;
-            }
-            else
-            {
-                var cashback = acc.CashbackRate > 0
-                    ? Math.Round(signed.Where(t => t.Type == TxType.Expense && !t.IsTransfer).Sum(t => t.Amount) * acc.CashbackRate / 100m, 2)
-                    : 0m;
-                acc.Balance = Math.Max(0, acc.StartingBalance + net + cashback);
-                acc.CashbackAccrued = cashback;
-            }
-        }
-        await _db.SaveChangesAsync();
-    }
+    /// <summary>Пересчёт остатков указанных счетов (формула — в AccountBalanceService).</summary>
+    private Task RecalcAsync(params int[] accountIds) =>
+        AccountBalanceService.RecalcAsync(_db, accountIds);
 
     private async Task<Category> EnsureCategoryAsync(int userId, TxType type)
     {

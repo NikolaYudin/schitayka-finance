@@ -373,7 +373,7 @@ namespace SchitayKa.Api.Migrations
 
                     b.HasIndex("AccountId");
 
-                    b.HasIndex("UserId");
+                    b.HasIndex("UserId", "AccountId", "From");
 
                     b.ToTable("InterestAccruals");
                 });

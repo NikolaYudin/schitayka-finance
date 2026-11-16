@@ -62,15 +62,18 @@ public class BudgetController : ControllerBase
             AccountId = accId,
         };
         _db.Transactions.Add(tx);
+
+        // Операция и пересчёт баланса счёта получателя должны применяться вместе:
+        // иначе при ошибке клиент получит 500, а операция останется в базе.
+        await using var tr = await _db.Database.BeginTransactionAsync();
         await _db.SaveChangesAsync();
-        // Пересчёт баланса счёта получателя через логику TransactionsController
         if (tx.AccountId is { } txAccId)
         {
-            using var scope = HttpContext.RequestServices.CreateScope();
-            var txCtrl = scope.ServiceProvider.GetRequiredService<TransactionsController>();
-            await txCtrl.RecalcAccountsFor(target.Id, txAccId);
-            await _db.SaveChangesAsync();
+            await AccountsController.RecalcAccountsOf(_db, _db.Accounts.Where(a => a.Id == txAccId));
+            await _rules.EvaluateAllAsync(target.Id);
         }
+        await tr.CommitAsync();
+
         return Ok(new { tx.Id });
     }
 

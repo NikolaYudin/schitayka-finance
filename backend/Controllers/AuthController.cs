@@ -49,7 +49,8 @@ public class AuthController : ControllerBase
             issuer: _cfg["Jwt:Issuer"],
             audience: _cfg["Jwt:Audience"],
             claims: [new Claim(ClaimTypes.NameIdentifier, user.Id.ToString()),
-                     new Claim("name", user.Name)],
+                     new Claim("name", user.Name),
+                     new Claim(ClaimTypes.Email, user.Email)],
             expires: DateTime.UtcNow.AddDays(30),
             signingCredentials: creds);
         return new JwtSecurityTokenHandler().WriteToken(token);
@@ -59,9 +60,11 @@ public class AuthController : ControllerBase
     [EnableRateLimiting("auth")]
     public async Task<IActionResult> Register(RegisterDto dto)
     {
-        var email = dto.Email.Trim().ToLowerInvariant();
+        var email = (dto.Email ?? "").Trim().ToLowerInvariant();
+        if (email.Length == 0) return BadRequest(new { error = "Укажите email" });
         if (string.IsNullOrWhiteSpace(dto.Name)) return BadRequest(new { error = "Укажите имя" });
-        if (dto.Password.Length < 6) return BadRequest(new { error = "Пароль минимум 6 символов" });
+        if (string.IsNullOrEmpty(dto.Password) || dto.Password.Length < 6)
+            return BadRequest(new { error = "Пароль минимум 6 символов" });
         if (await _db.Users.AnyAsync(u => u.Email == email))
             return BadRequest(new { error = "Email уже зарегистрирован" });
 
@@ -101,7 +104,9 @@ public class AuthController : ControllerBase
     [EnableRateLimiting("auth")]
     public async Task<IActionResult> Login(LoginDto dto)
     {
-        var email = dto.Email.Trim().ToLowerInvariant();
+        var email = (dto.Email ?? "").Trim().ToLowerInvariant();
+        if (email.Length == 0 || string.IsNullOrEmpty(dto.Password))
+            return Unauthorized(new { error = "Неверный email или пароль" });
         var user = await _db.Users.FirstOrDefaultAsync(u => u.Email == email);
         if (user is null || !VerifyPassword(dto.Password, user.PasswordHash))
             return Unauthorized(new { error = "Неверный email или пароль" });

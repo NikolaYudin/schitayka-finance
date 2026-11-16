@@ -524,6 +524,18 @@ builder.Services.AddRateLimiter(o =>
                 QueueLimit = 0,
                 AutoReplenishment = true,
             }));
+    // OCR/импорт чеков: 20 запросов в минуту на IP — распознавание ресурсоёмкое.
+    // Политика "import" подключается атрибутом [EnableRateLimiting("import")] в ImportController.
+    o.AddPolicy("import", context =>
+        System.Threading.RateLimiting.RateLimitPartition.GetFixedWindowLimiter(
+            partitionKey: context.Connection.RemoteIpAddress?.ToString() ?? "unknown",
+            factory: _ => new System.Threading.RateLimiting.FixedWindowRateLimiterOptions
+            {
+                PermitLimit = 20,
+                Window = TimeSpan.FromMinutes(1),
+                QueueLimit = 0,
+                AutoReplenishment = true,
+            }));
 });
 
 var app = builder.Build();
@@ -546,13 +558,13 @@ using (var scope = app.Services.CreateScope())
     // Справочник банков для мониторинга инвестиций (Задача 6) — заполняется один раз.
     SchitayKa.Api.Controllers.SeedBanks.Seed(db);
 
-    // Демо-аккаунт создаётся по умолчанию (удобно для локального запуска).
-    // В production на NAS отключается через SCHITAYKA_SEED_DEMO=false.
+    // Демо-аккаунт создаётся только в Development или по явному флагу SCHITAYKA_SEED_DEMO=true.
+    // Безопасный дефолт — не создавать демо-пользователя с общеизвестным паролем в production.
     var seedDemoSetting = Environment.GetEnvironmentVariable("SCHITAYKA_SEED_DEMO");
-    var seedDemo = reseedDemo
-        || string.IsNullOrWhiteSpace(seedDemoSetting)
-        || !(string.Equals(seedDemoSetting, "false", StringComparison.OrdinalIgnoreCase)
-             || string.Equals(seedDemoSetting, "0", StringComparison.OrdinalIgnoreCase));
+    var seedDemoExplicit = string.Equals(seedDemoSetting, "true", StringComparison.OrdinalIgnoreCase)
+        || string.Equals(seedDemoSetting, "1", StringComparison.OrdinalIgnoreCase);
+    var seedDemo = reseedDemo || seedDemoExplicit
+        || (string.IsNullOrWhiteSpace(seedDemoSetting) && builder.Environment.IsDevelopment());
 
     if (seedDemo)
     {
@@ -583,7 +595,7 @@ using (var scope = app.Services.CreateScope())
     }
     else
     {
-        Console.WriteLine("[SchitayKa] SCHITAYKA_SEED_DEMO=false — демо-аккаунт не создаётся.");
+        Console.WriteLine("[SchitayKa] SCHITAYKA_SEED_DEMO не задан и окружение не Development — демо-аккаунт не создаётся.");
     }
 }
 
@@ -678,6 +690,14 @@ async Task SeedDemoDataAsync(AppDbContext db, User demo)
         await db.SaveChangesAsync();
     }
     else spouse.FamilyCode = demo.FamilyCode;
+
+    // У супруги тоже должны быть стартовые категории: без них семейный сценарий
+    // (операция для члена семьи) невозможно выполнить — выбирать нечего.
+    if (!db.Categories.Any(c => c.UserId == spouse.Id))
+    {
+        SchitayKa.Api.Controllers.SeedCategories.SeedForUser(db, spouse.Id);
+        await db.SaveChangesAsync();
+    }
     if (!db.FamilyInvitations.Any(i => i.OwnerUserId == demo.Id))
         db.FamilyInvitations.Add(new FamilyInvitation
         {

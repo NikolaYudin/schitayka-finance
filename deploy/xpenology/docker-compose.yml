@@ -43,6 +43,11 @@ services:
       SCHITAYKA_AUTOBUILD_FRONTEND: "false"
       # false = не создавать demo@schitayka.ru/demo123 на production.
       SCHITAYKA_SEED_DEMO: ${SEED_DEMO:-false}
+      # Автообновление по кнопке (Задача 9). false по умолчанию: приложение
+      # скачивает zip-релиз с GitHub и заменяет свои файлы. Включайте осознанно.
+      SelfUpdate__Enabled: "${SELFUPDATE_ENABLED:-false}"
+      # Кому разрешено автообновление (e-mail через запятую). Пусто — первый пользователь.
+      SelfUpdate__AdminEmails: "${SELFUPDATE_ADMIN_EMAILS:-}"
       DOTNET_EnableDiagnostics: "0"
       # Репозиторий, по которому проверяются обновления (можно указать форк).
       Update__RepoUrl: "${UPDATE_REPO_URL:-https://github.com/NikolaYudin/schitayka-finance}"
