@@ -10,7 +10,6 @@ using Microsoft.IdentityModel.Tokens;
 
 namespace SchitayKa.Api.Controllers;
 
-public record RegisterDto(string Email, string Password, string Name, string? InviteCode = null);
 public record LoginDto(string Email, string Password);
 
 [ApiController]
@@ -56,49 +55,7 @@ public class AuthController : ControllerBase
         return new JwtSecurityTokenHandler().WriteToken(token);
     }
 
-    [HttpPost("register")]
-    [EnableRateLimiting("auth")]
-    public async Task<IActionResult> Register(RegisterDto dto)
-    {
-        var email = (dto.Email ?? "").Trim().ToLowerInvariant();
-        if (email.Length == 0) return BadRequest(new { error = "Укажите email" });
-        if (string.IsNullOrWhiteSpace(dto.Name)) return BadRequest(new { error = "Укажите имя" });
-        if (string.IsNullOrEmpty(dto.Password) || dto.Password.Length < 6)
-            return BadRequest(new { error = "Пароль минимум 6 символов" });
-        if (await _db.Users.AnyAsync(u => u.Email == email))
-            return BadRequest(new { error = "Email уже зарегистрирован" });
-
-        var user = new User { Email = email, Name = dto.Name.Trim(), PasswordHash = HashPassword(dto.Password) };
-        _db.Users.Add(user);
-        await _db.SaveChangesAsync();
-
-        // Стартовые категории для нового пользователя
-        SeedCategories.SeedForUser(_db, user.Id);
-
-        // Регистрация по пригласительному коду семьи (необязательно): новый аккаунт сразу присоединяется к семье
-        string? joinedFamily = null;
-        var inviteCode = (dto.InviteCode ?? "").Trim().ToUpperInvariant();
-        if (inviteCode.Length > 0)
-        {
-            var invite = await _db.FamilyInvitations.FirstOrDefaultAsync(i => i.Code == inviteCode && i.AcceptedAt == null);
-            if (invite is not null && invite.ExpiresAt > DateTime.UtcNow)
-            {
-                var owner = await _db.Users.FindAsync(invite.OwnerUserId);
-                if (owner is not null && !string.IsNullOrEmpty(owner.FamilyCode))
-                {
-                    user.FamilyCode = owner.FamilyCode;
-                    invite.AcceptedAt = DateTime.UtcNow;
-                    invite.AcceptedByUserId = user.Id;
-                    joinedFamily = owner.FamilyCode;
-                }
-            }
-            // Неверный/просроченный код не блокирует регистрацию — пользователь просто останется без семьи.
-        }
-
-        await _db.SaveChangesAsync();
-
-        return Ok(new { token = BuildJwt(user), user = new { user.Id, user.Email, user.Name }, familyCode = joinedFamily });
-    }
+    // Регистрация отключена: новые аккаунты не создаются через публичный интерфейс.
 
     [HttpPost("login")]
     [EnableRateLimiting("auth")]

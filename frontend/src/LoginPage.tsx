@@ -9,11 +9,8 @@ import { Icon } from './icons';
 const ENABLE_YANDEX = false;
 
 export default function LoginPage({ auth }: { auth: ReturnType<typeof useAuth> }) {
-  const [mode, setMode] = useState<'login' | 'register'>('login');
-  const [name, setName] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
-  const [inviteCode, setInviteCode] = useState('');
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
   const [demoEnabled, setDemoEnabled] = useState<boolean | null>(null);
@@ -28,8 +25,7 @@ export default function LoginPage({ auth }: { auth: ReturnType<typeof useAuth> }
     e.preventDefault();
     setError(''); setBusy(true);
     try {
-      if (mode === 'login') await auth.login(email, password);
-      else await auth.register(name, email, password, inviteCode);
+      await auth.login(email, password);
       location.hash = '#/';
     } catch (err: any) {
       setError(err.message || 'Не удалось войти');
@@ -51,21 +47,7 @@ export default function LoginPage({ auth }: { auth: ReturnType<typeof useAuth> }
           </div>
         </div>
 
-        <div className="tabs">
-          <button type="button" className={`tab ${mode === 'login' ? 'active' : ''}`} onClick={() => setMode('login')}>
-            Вход
-          </button>
-          <button type="button" className={`tab ${mode === 'register' ? 'active' : ''}`} onClick={() => setMode('register')}>
-            Регистрация
-          </button>
-        </div>
-
         <form onSubmit={submit}>
-          {mode === 'register' && (
-            <label>Имя
-              <input value={name} onChange={e => setName(e.target.value)} placeholder="Анна" required />
-            </label>
-          )}
           <label>Email
             <input type="email" value={email} onChange={e => setEmail(e.target.value)} placeholder="you@mail.ru" required autoComplete="email" />
           </label>
@@ -74,28 +56,17 @@ export default function LoginPage({ auth }: { auth: ReturnType<typeof useAuth> }
               type="password"
               value={password}
               onChange={e => setPassword(e.target.value)}
-              placeholder="Минимум 6 символов"
+              placeholder="Введите пароль"
               minLength={6}
               required
-              autoComplete={mode === 'login' ? 'current-password' : 'new-password'}
+              autoComplete="current-password"
             />
           </label>
-          {mode === 'register' && (
-            <label>Код семьи (необязательно)
-              <input
-                value={inviteCode}
-                onChange={e => setInviteCode(e.target.value.toUpperCase())}
-                placeholder="напр. FAM2026"
-                maxLength={12}
-                style={{ textTransform: 'uppercase', letterSpacing: 2 }}
-              />
-            </label>
-          )}
 
           {error && <div className="alert alert-danger">{error}</div>}
 
           <button className="btn primary block" style={{ height: 46, marginTop: 6 }} disabled={busy}>
-            {busy ? 'Подождите…' : mode === 'login' ? 'Войти' : 'Создать аккаунт'}
+            {busy ? 'Подождите…' : 'Войти'}
             {!busy && <Icon name="chevron-right" size={16} />}
           </button>
         </form>
@@ -119,7 +90,7 @@ export default function LoginPage({ auth }: { auth: ReturnType<typeof useAuth> }
         {demoEnabled === false && (
           <div className="auth-demo">
             <Icon name="user" size={15} />
-            <span>Первый запуск? Создайте аккаунт во вкладке <b>«Регистрация»</b>.</span>
+            <span>Регистрация отключена. Войдите с существующей учётной записью.</span>
           </div>
         )}
       </div>

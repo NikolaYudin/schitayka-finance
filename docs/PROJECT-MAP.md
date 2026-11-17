@@ -77,7 +77,7 @@ SelfUpdate, Ocr, YandexOAuth, FrontUrl), `backend/appsettings.Development.json` 
 
 | Файл | Базовый маршрут | Ответственность |
 |---|---|---|
-| `AuthController.cs` | `/api/auth` | `register`, `login` (PBKDF2 + JWT), `me`, `demo-status`, `yandex/start`, `yandex/callback` (выключен флагом) |
+| `AuthController.cs` | `/api/auth` | `login` (PBKDF2 + JWT), `me`, `demo-status`, `yandex/start`, `yandex/callback` (выключен флагом); публичная регистрация отключена |
 | `DataControllers.cs` | `/api/categories`, `/api/transactions`, `/api/goals`, `/api/limits` | 4 контроллера в одном файле: справочник категорий, операции (фильтр по месяцу/году), цели (`POST {id}/deposit`), месячные лимиты (upsert) |
 | `BudgetController.cs` | `/api/budget` | `GET summary` — сводка, анализ, рекомендации, счета семьи; охват агрегатов `scope=me|family|ids&ids=…` (0.3/N4: дашборд семьи, объединение одноимённых категорий, личные инструменты всегда свои); `POST start-balance`; `POST tx-for` — быстрая операция из сводки (пересчёт счетов в транзакции) |
 | `AccountsController.cs` | `/api/accounts` | Счета: `GET`, `POST`, `PUT {id}`, `DELETE {id}`, `POST {id}/adjust`, `{id}/cashback`, `{id}/tx`; профиль `profile`; семья: `members`, `invite`, `invites`, `status`, `join`, `family-board`, `leave`; валидация `BankId`; статический `RecalcAccountsOf` |
@@ -85,7 +85,7 @@ SelfUpdate, Ocr, YandexOAuth, FrontUrl), `backend/appsettings.Development.json` 
 | `TransfersController.cs` | `/api/transfers` | Переводы между счетами: `GET`, `GET {id}`, `POST`, `DELETE {id}` — всё через `TransferService`; `Project` отдаёт владельцев счетов (`fromOwnerId/fromOwnerName/toOwnerId/toOwnerName`, 0.3/N3) |
 | `InterestController.cs` | `/api/interest` | Вклады и накопительные счета: `forecast/{accountId}`, `accruals`, `accrue/{accountId}`, `payout/{accountId}` (сумма = `Net` неоплаченных, транзакция, защита от повторной выплаты) |
 | `InvestmentsController.cs` | `/api/investments` | Портфели и позиции: CRUD, `summary`, `{id}/holdings` (GET/POST/PUT/DELETE) |
-| `BanksController.cs` | `/api/banks` | Справочник банков (0.3/N5): системные (~25 банков РФ с брендовыми цветами) + пользовательские; `GET ?search=`, `POST`, `PUT/DELETE {id}` (только свои; удаление — если нет привязанных счетов/портфелей); идемпотентный `SeedBanks.Seed` |
+| `BanksController.cs` | `/api/banks` | Справочник банков (0.3/N5): системные + пользовательские; `GET ?search=` (возвращает `inUse`), `POST`, `PUT {id}`, `DELETE {id}` (только свои, если не используются), `DELETE /unused` (массовое удаление неиспользуемых своих); в UI — фильтр «Скрыть неиспользуемые»; идемпотентный `SeedBanks.Seed` |
 | `ImportController.cs` | `/api/import` | `receipt` (фото/скриншот через OCR), `receipt/text` (разбор вставленного текста); проверка Content-Type **и** расширения, rate limit |
 | `ExportController.cs` | `/api/export` | `GET profile` — полный JSON-профиль для ИИ-анализа |
 | `VersionController.cs` | `/api/version` | `GET` — текущая версия/коммит; `check` — проверка обновлений; `POST apply` — запуск автообновления (только админ из `SelfUpdate:AdminEmails`); `apply/status`, `apply/log` |

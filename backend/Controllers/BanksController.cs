@@ -19,7 +19,7 @@ public class BanksController : ControllerBase
     private int Uid => UserAccess.UidOf(User);
 
     public record BankDto(int Id, string Name, string Code, string Country, bool IsSystem,
-        string? ShortName = null, string? BrandColor = null, string? LogoUrl = null);
+        string? ShortName = null, string? BrandColor = null, string? LogoUrl = null, bool InUse = false);
 
     /// <summary>Системный справочник + собственные банки пользователя.</summary>
     [HttpGet]
@@ -36,11 +36,26 @@ public class BanksController : ControllerBase
                 || (b.ShortName != null && b.ShortName.ToLower().Contains(s)));
         }
 
-        var list = await query
+        var banks = await query
             .OrderBy(b => b.IsSystem ? 0 : 1).ThenBy(b => b.Name)
-            .Select(b => new BankDto(b.Id, b.Name, b.Code, b.Country, b.IsSystem,
-                b.ShortName, b.BrandColor, b.LogoUrl))
             .ToListAsync();
+
+        var bankIds = banks.Select(b => b.Id).ToList();
+        var usedByAccounts = await _db.Accounts
+            .Where(a => bankIds.Contains(a.BankId ?? 0) && a.UserId == Uid)
+            .Select(a => a.BankId!.Value)
+            .Distinct()
+            .ToListAsync();
+        var usedByPortfolios = await _db.InvestmentPortfolios
+            .Where(p => bankIds.Contains(p.BankId) && p.UserId == Uid)
+            .Select(p => p.BankId)
+            .Distinct()
+            .ToListAsync();
+        var used = usedByAccounts.Concat(usedByPortfolios).ToHashSet();
+
+        var list = banks.Select(b => new BankDto(b.Id, b.Name, b.Code, b.Country, b.IsSystem,
+                b.ShortName, b.BrandColor, b.LogoUrl, used.Contains(b.Id)))
+            .ToList();
         return Ok(list);
     }
 
@@ -71,7 +86,7 @@ public class BanksController : ControllerBase
         _db.Banks.Add(bank);
         await _db.SaveChangesAsync();
         return Ok(new BankDto(bank.Id, bank.Name, bank.Code, bank.Country, bank.IsSystem,
-            bank.ShortName, bank.BrandColor, bank.LogoUrl));
+            bank.ShortName, bank.BrandColor, bank.LogoUrl, false));
     }
 
     /// <summary>Изменить свой банк (системные банки неизменяемы).</summary>
@@ -91,13 +106,41 @@ public class BanksController : ControllerBase
         bank.ShortName = string.IsNullOrWhiteSpace(dto.ShortName) ? null : dto.ShortName.Trim();
         bank.BrandColor = NormalizeColor(dto.BrandColor);
         bank.LogoUrl = string.IsNullOrWhiteSpace(dto.LogoUrl) ? null : dto.LogoUrl.Trim();
+        var inUse = await _db.Accounts.AnyAsync(a => a.BankId == id && a.UserId == Uid)
+            || await _db.InvestmentPortfolios.AnyAsync(p => p.BankId == id && p.UserId == Uid);
         await _db.SaveChangesAsync();
         return Ok(new BankDto(bank.Id, bank.Name, bank.Code, bank.Country, bank.IsSystem,
-            bank.ShortName, bank.BrandColor, bank.LogoUrl));
+            bank.ShortName, bank.BrandColor, bank.LogoUrl, inUse));
+    }
+
+    /// <summary>Удалить все свои неиспользуемые банки.</summary>
+    [HttpDelete("unused")]
+    public async Task<IActionResult> DeleteUnused()
+    {
+        if (Uid < 0) return Unauthorized(new { error = "Требуется вход" });
+
+        var ownBanks = await _db.Banks.Where(b => b.UserId == Uid && !b.IsSystem).ToListAsync();
+        if (ownBanks.Count == 0) return Ok(new { removed = 0 });
+
+        var ids = ownBanks.Select(b => b.Id).ToList();
+        var usedByAccounts = await _db.Accounts
+            .Where(a => ids.Contains(a.BankId ?? 0) && a.UserId == Uid)
+            .Select(a => a.BankId!.Value).Distinct().ToListAsync();
+        var usedByPortfolios = await _db.InvestmentPortfolios
+            .Where(p => ids.Contains(p.BankId) && p.UserId == Uid)
+            .Select(p => p.BankId).Distinct().ToListAsync();
+        var used = usedByAccounts.Concat(usedByPortfolios).ToHashSet();
+
+        var toRemove = ownBanks.Where(b => !used.Contains(b.Id)).ToList();
+        if (toRemove.Count == 0) return Ok(new { removed = 0 });
+
+        _db.Banks.RemoveRange(toRemove);
+        await _db.SaveChangesAsync();
+        return Ok(new { removed = toRemove.Count });
     }
 
     /// <summary>Удалить свой банк, если на него не ссылаются счета и портфели.</summary>
-    [HttpDelete("{id}")]
+    [HttpDelete("{id:int}")]
     public async Task<IActionResult> Delete(int id)
     {
         if (Uid < 0) return Unauthorized(new { error = "Требуется вход" });

@@ -157,6 +157,7 @@ export interface FamilyAccountRow {
 export interface BankInfo {
   id: number; name: string; code: string; country: string; isSystem: boolean;
   shortName?: string | null; brandColor?: string | null; logoUrl?: string | null;
+  inUse?: boolean;
 }
 export interface HoldingSummary {
   id: number; name: string; ticker: string; type: number; quantity: number;
