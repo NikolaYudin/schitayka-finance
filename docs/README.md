@@ -1,131 +1,80 @@
-# СчитайКа — документация проекта
+# Документация проекта «СчитайКа»
 
-Точка входа для разработчика и для ИИ-модели, которая подключается к проекту
-без истории переписки. Здесь — что читать, в каком порядке и где что лежит.
+Точка входа для разработчика и ИИ-модели: что читать, где искать информацию и как поддерживать документацию в актуальном состоянии.
 
----
-
-## 1. Что это за проект
+## 1. О проекте
 
 **СчитайКа** — веб-приложение для личного и семейного учёта финансов.
-Backend: ASP.NET Core 8 (контроллеры) + SQLite через EF Core + JWT.
-Frontend: React 18 + TypeScript + Vite (SPA с hash-роутингом), собирается в `backend/wwwroot`.
-Разворачивается на Synology / Xpenology в Docker (Container Manager).
+
+- **Backend:** ASP.NET Core 8, EF Core, SQLite, JWT
+- **Frontend:** React 18, TypeScript, Vite (SPA, hash-routing), сборка в `backend/wwwroot`
+- **Деплой:** Docker / Container Manager (Synology, Xpenology)
 
 | Параметр | Значение |
 |---|---|
-| Текущая версия | **0.3.2** (файл `VERSION`) |
+| Текущая версия | **0.3.2** (`VERSION`) |
 | Последний релиз | https://github.com/NikolaYudin/schitayka-finance/releases/tag/v0.3.2 |
-| Тесты | 77 (xUnit), все зелёные |
-| Сборка | 0 ошибок (есть 1 предупреждение в тестах) |
-| CI | GitHub Actions: `dotnet build/test` + `tsc --noEmit` + `npm run build` |
-| Ветка релизов | `release-0.3.0` |
+| Ветка релизной линии | `release-0.3.0` |
+| Тесты | 77/77 (`dotnet test`) |
+| Сборка | успешно (`dotnet build -c Release`, есть предупреждение `CS8602` в тестах) |
+| CI | GitHub Actions: `dotnet build/test`, `tsc --noEmit`, `npm run build` |
 
----
+## 2. Порядок чтения
 
-## 2. Порядок чтения (для модели — начните здесь)
+1. **[README.md](README.md)** (этот файл) — навигация по документации.
+2. **[STATUS.md](STATUS.md)** — текущее состояние, история версий, известные ограничения, договорённости.
+3. **[CHECKLIST.md](CHECKLIST.md)** — рабочий чек-лист: выполнено по плану, новые задачи, бэклог.
+4. **[../PLAN.md](../PLAN.md)** — актуальный план, реализованные этапы и оставшиеся задачи.
+5. **[PROJECT-MAP.md](PROJECT-MAP.md)** — карта файлов, API, сервисов и потоков данных.
+6. Инструкции по установке/сборке/релизу — см. раздел «Инструкции».
 
-1. **Этот файл** — общая картина и ссылки.
-2. **[`STATUS.md`](STATUS.md)** — что сделано, что не сделано, известные дефекты и договорённости.
-   Читать обязательно: там зафиксированы решения, которые уже приняты, и то, что трогать не нужно.
-3. **[`PROJECT-MAP.md`](PROJECT-MAP.md)** — карта: за какой файл что отвечает, где искать функционал.
-4. **[`CHECKLIST.md`](CHECKLIST.md)** — рабочий чек-лист задач (что сделано / что добавить / бэклог).
-5. **[`../PLAN.md`](../PLAN.md)** — полный план работ, критерии готовности, бэклог, журнал исправлений.
-6. Дальше — по задаче: инструкции по установке и упаковке (раздел 4).
+## 3. Инструкции
 
-Не нужно перечитывать весь репозиторий: `STATUS.md` + `PROJECT-MAP.md` дают достаточный контекст,
-а `PLAN.md` — историю решений.
+| Документ | Назначение |
+|---|---|
+| [`../README.md`](../README.md) | Возможности, локальный запуск, краткий API |
+| [`../deploy/xpenology/INSTALL.md`](../deploy/xpenology/INSTALL.md) | Установка на DSM 7.2 / Xpenology (Container Manager) |
+| [`../deploy/xpenology/README.md`](../deploy/xpenology/README.md) | Работа с git-клоном, обновление, бэкап, диагностика |
+| [`../deploy/xpenology/release/PACKAGING.md`](../deploy/xpenology/release/PACKAGING.md) | Сборка и проверка релизных артефактов |
+| [`../deploy/xpenology/release/README.md`](../deploy/xpenology/release/README.md) | Инструкция пользователя внутри `schitayka-<версия>-docker.zip` |
+| [`../schitayka-design-prompt.md`](../schitayka-design-prompt.md) | Дизайн-бриф / визуальные ориентиры |
 
-Новые задачи (0.3): см. раздел «Задачи 0.3» в [`../PLAN.md`](../PLAN.md) и
-[`STATUS.md`, §8](STATUS.md#8-предложения-пользователя-16112026-задачи-03) — обновление на ту же
-версию, макеты по Т-Банку, переводы между счетами семьи, охват дашборда, банки РФ, стилистика карточки.
+## 4. Правила поддержки документации
 
----
-
-## 3. Правила работы с проектом
-
-1. **Данные пользователя неприкосновенны.** Рабочая база — `data/app.db` (в `.gitignore`).
-   Не изменять, не пересоздавать, не запускать `EnsureDeleted()` на ней.
-   Проверять миграции — только на копии в temp, после проверки копию удалять.
-2. **Схема БД меняется только миграциями EF Core** (`dotnet ef migrations add <Name> --project backend`).
-   Старые базы получают baseline-миграцию без потери данных.
-3. **Баланс считается в одном месте** — `backend/Services/AccountBalanceService.cs`.
-   Новые формулы остатка не дублировать.
-4. **Признак `IsTransfer` ставит только сервер** (`TransferService`), значение из клиента игнорируется.
-5. **Демо-данные** создаются только в Development или при `SCHITAYKA_SEED_DEMO=true`.
-6. **Версия** меняется в `VERSION` + отдельный коммит `chore(release): version x.y.z`;
-   пользовательские изменения — отдельным осмысленным коммитом до него.
-7. **Секреты в архив не кладутся**: релизный `docker.zip` собирается с `-NoEnv`,
-   ключ `JWT_KEY` создаёт `scripts/init-env.sh` на NAS.
-8. Комментарии и документация — на русском, идентификаторы в коде — на английском.
-
----
-
-## 4. Где какая инструкция
-
-| Документ | Для кого | О чём |
-|---|---|---|
-| [`STATUS.md`](STATUS.md) | разработчик, ИИ | история версий, текущее состояние, известные дефекты, что дальше |
-| [`CHECKLIST.md`](CHECKLIST.md) | разработчик, ИИ, пользователь | чек-лист задач: выполнено по плану, новые задачи, бэклог |
-| [`PROJECT-MAP.md`](PROJECT-MAP.md) | разработчик, ИИ | структура репозитория, ответственность файлов, потоки данных |
-| [`../PLAN.md`](../PLAN.md) | разработчик, ИИ | этапы A и 0.1–0.3, задачи 1–9, бэклог, критерии готовности |
-| [`../README.md`](../README.md) | пользователь, разработчик | возможности, локальный запуск (VS / VS Code / CLI), краткий API |
-| [`../deploy/xpenology/INSTALL.md`](../deploy/xpenology/INSTALL.md) | администратор NAS | установка с нуля на DSM 7.2 / Xpenology, п. 7.5 — автообновление |
-| [`../deploy/xpenology/README.md`](../deploy/xpenology/README.md) | администратор NAS | сборка из git-клона, обновление, бэкап, диагностика |
-| [`../deploy/xpenology/release/PACKAGING.md`](../deploy/xpenology/release/PACKAGING.md) | разработчик | как собрать и проверить zip-дистрибутив, порядок выпуска |
-| [`../deploy/xpenology/release/README.md`](../deploy/xpenology/release/README.md) | пользователь архива | инструкция, которая лежит внутри `schitayka-<версия>-docker.zip` |
-| [`../schitayka-design-prompt.md`](../schitayka-design-prompt.md) | дизайнер, разработчик | бриф дизайн-системы (стекло, типографика, цвета Apple) |
-| [`STATUS.md`, раздел 3](STATUS.md#3-история-версий) | все | хронология релизов 0.1.0 → 0.2.4 |
-
----
+1. **Меняется поведение, API, схема БД или структура файлов** — обновить `STATUS.md`, при необходимости `PLAN.md`, `CHECKLIST.md`, `PROJECT-MAP.md` и `../README.md`.
+2. **Выпущен релиз** — обновить версию/ссылки/историю в `STATUS.md`, `CHECKLIST.md`, `../PLAN.md` и этом файле.
+3. **Новая задача** — добавлять в `CHECKLIST.md` (раздел «Новые задачи»), а при планировании — в `PLAN.md`.
+4. **Рабочая база данных** (`data/app.db`, тома NAS) не изменяется и не пересоздаётся в рамках документационных/обычных задач.
+5. Документация — на русском языке, в кодировке UTF-8.
 
 ## 5. Быстрые команды
 
 ```powershell
-# сборка (заодно собирает фронтенд в backend/wwwroot)
-dotnet build SchitayKa.sln
+# Сборка (включая frontend -> backend/wwwroot)
+dotnet build SchitayKa.sln -c Release
 
-# тесты
-dotnet test SchitayKa.sln --no-build
+# Тесты
+dotnet test SchitayKa.sln -c Release --no-build
 
-# локальный запуск (http://localhost:5023)
+# Локальный запуск backend (http://localhost:5023)
 cd backend; dotnet run
 
-# только фронтенд в dev-режиме (Vite проксирует /api на :5023)
+# Frontend dev (Vite, прокси /api -> :5023)
 cd frontend; npm run dev
 
-# новая миграция
-dotnet ef migrations add <Name> --project backend
-
-# релиз: артефакты в dist/ (docker.zip + app.zip + .sha256)
-pwsh -File deploy/xpenology/release/build-release.ps1 -NoEnv
+# Сборка релизных артефактов (dist/)
+pwsh -NoProfile -File deploy/xpenology/release/build-release.ps1
 ```
 
-Проверка миграций на копии рабочей базы (безопасно):
+## 6. Куда смотреть по типу задачи
 
-```powershell
-$tmp = "$env:TEMP\sk-check"; New-Item -ItemType Directory -Force $tmp | Out-Null
-Copy-Item data/app.db "$tmp\app.db"
-$env:ASPNETCORE_ENVIRONMENT='Development'; $env:ASPNETCORE_URLS='http://127.0.0.1:5601'
-$env:SCHITAYKA_SEED_DEMO='false'; $env:SCHITAYKA_AUTOBUILD_FRONTEND='false'
-$env:ConnectionStrings__Default="Data Source=$tmp\app.db"
-dotnet backend/bin/Debug/net8.0/SchitayKa.Api.dll   # смотреть лог, затем остановить
-```
-
-> Запускать именно из отдельного каталога (`workdir = $tmp`), иначе `Program.cs`
-> найдёт `data/app.db` рядом с контентом и «гармонизирует» его.
-
----
-
-## 6. Что делать в первую очередь, если пришла задача
-
-| Задача | Куда смотреть |
+| Задача | Где искать |
 |---|---|
-| «не работает эндпоинт / 500» | `PROJECT-MAP.md` → таблица маршрутов → контроллер; затем `PLAN.md` бэклог B18 |
-| «поправить расчёт баланса/сводки» | `backend/Services/AccountBalanceService.cs`, `backend/Controllers/BudgetController.cs` |
-| «поправить UI» | `PROJECT-MAP.md` §5: `App.tsx` (каркас и роутинг), `components.tsx` (дашборд), страницы-вкладки |
-| «обновление/автообновление» | `backend/Services/SelfUpdateService.cs`, `VersionController.cs`, `PLAN.md` B21 |
-| «установка на NAS» | `deploy/xpenology/INSTALL.md` |
-| «выпустить релиз» | `PROJECT-MAP.md` §6 и §9, `deploy/xpenology/release/PACKAGING.md` |
-
-История и договорённости — в [`STATUS.md`](STATUS.md).
+| Состояние продукта, что сделано/не сделано | `STATUS.md`, `CHECKLIST.md`, `../PLAN.md` |
+| Карта API/контроллеров/сервисов/файлов | `PROJECT-MAP.md` |
+| UI (дашборд, страницы, роутинг) | `frontend/src/App.tsx`, `frontend/src/components.tsx`, `frontend/src/*Page.tsx` |
+| Баланс/сводка/правила расчётов | `backend/Services/AccountBalanceService.cs`, `backend/Controllers/BudgetController.cs` |
+| Авторизация | `backend/Controllers/AuthController.cs`, `frontend/src/LoginPage.tsx`, `frontend/src/auth.ts` |
+| Банки и привязка к счетам | `backend/Controllers/BanksController.cs`, `frontend/src/App.tsx`, `frontend/src/AccountsPage.tsx` |
+| Обновления приложения | `backend/Services/UpdateChecker.cs`, `backend/Services/SelfUpdateService.cs`, `backend/Controllers/VersionController.cs` |
+| NAS/установка/релизные артефакты | `../deploy/xpenology/*`, `../deploy/xpenology/release/*` |

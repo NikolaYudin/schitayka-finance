@@ -77,7 +77,7 @@ SelfUpdate, Ocr, YandexOAuth, FrontUrl), `backend/appsettings.Development.json` 
 
 | Файл | Базовый маршрут | Ответственность |
 |---|---|---|
-| `AuthController.cs` | `/api/auth` | `login` (PBKDF2 + JWT), `me`, `demo-status`, `yandex/start`, `yandex/callback` (выключен флагом); публичная регистрация отключена |
+| `AuthController.cs` | `/api/auth` | `login` (PBKDF2 + JWT), `me`, `demo-status`, `yandex/start`, `yandex/callback` (выключен флагом); **публичная регистрация отключена** (0.3.2) |
 | `DataControllers.cs` | `/api/categories`, `/api/transactions`, `/api/goals`, `/api/limits` | 4 контроллера в одном файле: справочник категорий, операции (фильтр по месяцу/году), цели (`POST {id}/deposit`), месячные лимиты (upsert) |
 | `BudgetController.cs` | `/api/budget` | `GET summary` — сводка, анализ, рекомендации, счета семьи; охват агрегатов `scope=me|family|ids&ids=…` (0.3/N4: дашборд семьи, объединение одноимённых категорий, личные инструменты всегда свои); `POST start-balance`; `POST tx-for` — быстрая операция из сводки (пересчёт счетов в транзакции) |
 | `AccountsController.cs` | `/api/accounts` | Счета: `GET`, `POST`, `PUT {id}`, `DELETE {id}`, `POST {id}/adjust`, `{id}/cashback`, `{id}/tx`; профиль `profile`; семья: `members`, `invite`, `invites`, `status`, `join`, `family-board`, `leave`; валидация `BankId`; статический `RecalcAccountsOf` |
