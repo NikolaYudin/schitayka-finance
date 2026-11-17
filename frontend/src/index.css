@@ -1034,6 +1034,20 @@ a:hover { text-decoration: none; }
 .wallet--deposit { background: linear-gradient(138deg, #af52de 0%, #7d5ce6 60%, #5e5ce6 100%); }
 .wallet--other { background: linear-gradient(138deg, #8e8e93 0%, #636366 58%, #3a3a3c 100%); }
 
+/* Фирменный стиль карточки по банку (0.3/N6): градиент задаётся инлайном
+   из Banks.BrandColor; здесь — только монограмма и читаемость текста. */
+.wallet--bank { color: #fff; }
+.wallet--bank .wallet-type { color: rgba(255, 255, 255, 0.88); }
+.wallet--bank .wallet-name { color: rgba(255, 255, 255, 0.92); }
+.wallet--bank .wallet-foot-item { color: rgba(255, 255, 255, 0.8); }
+.wallet--bank .btn.small { background: rgba(255, 255, 255, 0.16); color: #fff; }
+.wallet-monogram {
+  width: 30px; height: 30px; border-radius: 9px; flex: 0 0 30px;
+  display: inline-flex; align-items: center; justify-content: center;
+  background: rgba(255, 255, 255, 0.2);
+  color: #fff; font-size: 13px; font-weight: 700; letter-spacing: 0.2px;
+}
+
 .wallet-top { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
 .wallet-type {
   display: inline-flex;

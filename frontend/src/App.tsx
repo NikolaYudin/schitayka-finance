@@ -11,6 +11,7 @@ import { useTheme, type ThemeController, type ThemeMode } from './theme';
 import { ToastProvider } from './toasts';
 import { Icon, type IconName } from './icons';
 import { plural } from './plural';
+import { getBankCardStyle, setBankCardStyle, type BankCardStyle } from './bankstyle';
 
 type Route = '' | 'journal' | 'budget' | 'goals' | 'accounts' | 'investments' | 'settings' | 'login';
 
@@ -921,6 +922,7 @@ function BanksCard() {
   const [color, setColor] = useState('#0a84ff');
   const [err, setErr] = useState('');
   const [busy, setBusy] = useState(false);
+  const [cardStyle, setCardStyle] = useState<BankCardStyle>(() => getBankCardStyle());
 
   const load = () => {
     api.get<BankInfo[]>('/api/banks').then(b => setBanks(b)).catch(e => setErr(e.message));
@@ -1020,6 +1022,31 @@ function BanksCard() {
         {own.length > 0 && rows(own)}
         {system.length > 0 && rows(system)}
         {visible.length === 0 && <div className="muted">Ничего не найдено.</div>}
+      </div>
+
+      {/* 0.3/N6: переключатель фирменного стиля карточек счёта */}
+      <div className="form-row" style={{ alignItems: 'center', gap: 10, marginBottom: 14 }}>
+        <label style={{ flex: 1, marginBottom: 0 }}>
+          Стиль карточек счёта
+          <span style={{ display: 'block', fontWeight: 400, fontSize: 12, color: 'var(--muted)', marginTop: 2 }}>
+            «Фирменный» — цвет и монограмма банка на карточке счёта (дашборд и вкладка «Счета»)
+          </span>
+        </label>
+        <div className="segmented" role="group" aria-label="Стиль карточек счёта">
+          {([
+            ['neutral', 'Нейтральный'],
+            ['brand', 'Фирменный'],
+          ] as const).map(([mode, label]) => (
+            <button
+              key={mode}
+              type="button"
+              className={`segment ${cardStyle === mode ? 'active' : ''}`}
+              onClick={() => { setCardStyle(mode); setBankCardStyle(mode); }}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
       </div>
 
       <form onSubmit={add} className="account-form">

@@ -4,12 +4,16 @@ using SchitayKa.Api.Data;
 namespace SchitayKa.Api.Services;
 
 /// <summary>
-/// Переводы между своими счетами (Задача 7).
+/// Переводы между своими и семейными счетами (Задача 7 + 0.3/N3).
 ///
 /// Перевод — одна бизнес-сущность с двумя операциями:
 ///   расход на счёте-отправителе + доход на счёте-получателе, обе с IsTransfer = true,
 ///   поэтому перевод не искажает доходы/расходы и не попадает в аналитику.
-/// Отмена перевода удаляет обе операции и пересчитывает остатки обоих счетов.
+///
+/// Принадлежность (решение пользователя, 17.11.2026): перевод делается ОТ ВЛАДЕЛЬЦА
+/// СЧЁТА-ОТПРАВИТЕЛЯ — запись Transfer и расходная половина принадлежат ему, доходная
+/// половина — владельцу счёта-получателя. При этом перевод виден ВСЕМ членам семьи
+/// (журнал переводов общий, с указанием владельцев счетов и кнопкой отмены).
 /// </summary>
 public sealed class TransferService
 {
@@ -47,13 +51,15 @@ public sealed class TransferService
         if (to.Type == AccountType.CreditCard && amount > to.Balance)
             return new(false, "Сумма перевода превышает долг по кредитной карте", null);
 
-        // Категории перевода: системные, создаются при первом использовании.
-        var outCategory = await EnsureCategoryAsync(userId, TxType.Expense);
-        var inCategory = await EnsureCategoryAsync(userId, TxType.Income);
+        // Перевод принадлежит владельцу счёта-отправителя (N3): и запись Transfer,
+        // и расходная половина. Доходная половина — владельцу счёта-получателя,
+        // чтобы каждая операция была у хозяина своего счёта.
+        var outCategory = await EnsureCategoryAsync(from.UserId, TxType.Expense);
+        var inCategory = await EnsureCategoryAsync(to.UserId, TxType.Income);
 
         var transfer = new Transfer
         {
-            UserId = userId,
+            UserId = from.UserId,
             FromAccountId = from.Id,
             ToAccountId = to.Id,
             Amount = amount,
@@ -64,7 +70,7 @@ public sealed class TransferService
 
         var outTx = new Transaction
         {
-            UserId = userId,
+            UserId = from.UserId,
             CategoryId = outCategory.Id,
             Type = TxType.Expense,
             Amount = amount,
@@ -75,7 +81,7 @@ public sealed class TransferService
         };
         var inTx = new Transaction
         {
-            UserId = userId,
+            UserId = to.UserId,
             CategoryId = inCategory.Id,
             Type = TxType.Income,
             Amount = amount,
@@ -101,24 +107,27 @@ public sealed class TransferService
     }
 
     /// <summary>Отменяет перевод: удаляет обе операции и запись, пересчитывает остатки.</summary>
+    /// Отменить может инициатор/владелец перевода или любой член семьи (N3).
     public async Task<(bool Ok, string? Error)> CancelAsync(int userId, int transferId)
     {
         var transfer = await _db.Transfers
-            .Include(t => t.FromAccount)
-            .Include(t => t.ToAccount)
-            .FirstOrDefaultAsync(t => t.Id == transferId && t.UserId == userId);
+            .Include(t => t.FromAccount).ThenInclude(a => a.User)
+            .Include(t => t.ToAccount).ThenInclude(a => a.User)
+            .FirstOrDefaultAsync(t => t.Id == transferId);
         if (transfer is null) return (false, "Перевод не найден");
+        if (!await CanManageTransferAsync(userId, transfer.UserId)) return (false, "Перевод не найден");
 
         await using var transaction = await _db.Database.BeginTransactionAsync();
 
+        // Половины принадлежат владельцам счетов (N3), поэтому ищем по id, а не по userId.
         if (transfer.FromTxId is int fromTxId)
         {
-            var tx = await _db.Transactions.FirstOrDefaultAsync(t => t.Id == fromTxId && t.UserId == userId);
+            var tx = await _db.Transactions.FirstOrDefaultAsync(t => t.Id == fromTxId);
             if (tx is not null) _db.Transactions.Remove(tx);
         }
         if (transfer.ToTxId is int toTxId)
         {
-            var tx = await _db.Transactions.FirstOrDefaultAsync(t => t.Id == toTxId && t.UserId == userId);
+            var tx = await _db.Transactions.FirstOrDefaultAsync(t => t.Id == toTxId);
             if (tx is not null) _db.Transactions.Remove(tx);
         }
         _db.Transfers.Remove(transfer);
@@ -132,25 +141,39 @@ public sealed class TransferService
     /// <summary>
     /// Если операция входит в перевод — отменяем весь перевод целиком
     /// (иначе останется «половина» перевода и суммы разойдутся).
+    /// Доступ: инициатор/владелец перевода или член семьи (N3).
     /// </summary>
     public async Task<int?> CancelByTransactionAsync(int userId, int transactionId)
     {
         var transfer = await _db.Transfers
-            .FirstOrDefaultAsync(t => t.UserId == userId
-                && (t.FromTxId == transactionId || t.ToTxId == transactionId));
+            .FirstOrDefaultAsync(t => t.FromTxId == transactionId || t.ToTxId == transactionId);
         if (transfer is null) return null;
+        if (!await CanManageTransferAsync(userId, transfer.UserId)) return null;
 
         await CancelAsync(userId, transfer.Id);
         return transfer.Id;
     }
 
-    /// <summary>Список переводов пользователя (по месяцу/году и/или счёту).</summary>
+    /// <summary>Инициатор/владелец перевода или любой член семьи может видеть и отменять перевод.</summary>
+    private async Task<bool> CanManageTransferAsync(int userId, int transferUserId)
+    {
+        if (userId == transferUserId) return true;
+        var manageable = await FamilyAccess.ManageableUserIdsAsync(_db, userId);
+        return manageable.Contains(transferUserId);
+    }
+
+    /// <summary>
+    /// Переводы, видимые пользователю: свои + переводы семьи (N3) — общий журнал семьи.
+    /// Половины семейного перевода принадлежат владельцам счетов, поэтому ищем
+    /// по идентификатору владельца перевода.
+    /// </summary>
     public async Task<List<Transfer>> ListAsync(int userId, int? month = null, int? year = null, int? accountId = null)
     {
+        var manageable = await FamilyAccess.ManageableUserIdsAsync(_db, userId);
         var q = _db.Transfers
-            .Include(t => t.FromAccount)
-            .Include(t => t.ToAccount)
-            .Where(t => t.UserId == userId);
+            .Include(t => t.FromAccount).ThenInclude(a => a.User)
+            .Include(t => t.ToAccount).ThenInclude(a => a.User)
+            .Where(t => manageable.Contains(t.UserId));
 
         if (year is int y) q = q.Where(t => t.Date.Year == y);
         if (month is int m) q = q.Where(t => t.Date.Month == m);
@@ -160,19 +183,28 @@ public sealed class TransferService
         return await q.OrderByDescending(t => t.Date).ThenByDescending(t => t.Id).ToListAsync();
     }
 
-    /// <summary>Один перевод пользователя (без загрузки всего списка).</summary>
-    public Task<Transfer?> GetAsync(int userId, int transferId) =>
-        _db.Transfers
-            .Include(t => t.FromAccount)
-            .Include(t => t.ToAccount)
-            .FirstOrDefaultAsync(t => t.Id == transferId && t.UserId == userId);
+    /// <summary>Один перевод по идентификатору (с проверкой видимости семьи).</summary>
+    public async Task<Transfer?> GetAsync(int userId, int transferId)
+    {
+        var transfer = await _db.Transfers
+            .Include(t => t.FromAccount).ThenInclude(a => a.User)
+            .Include(t => t.ToAccount).ThenInclude(a => a.User)
+            .FirstOrDefaultAsync(t => t.Id == transferId);
+        if (transfer is null) return null;
+        return await CanManageTransferAsync(userId, transfer.UserId) ? transfer : null;
+    }
 
-    /// <summary>Идентификаторы операций, входящих в переводы (для исключения из журнала операций).</summary>
+    /// <summary>
+    /// Идентификаторы операций, входящих в переводы, ВИДИМЫЕ пользователю
+    /// (для исключения из журнала операций): половины семейных переводов
+    /// скрываются и у членов семьи (N3).
+    /// </summary>
     public async Task<HashSet<int>> TransferTransactionIdsAsync(int userId)
     {
         var ids = new HashSet<int>();
+        var manageable = await FamilyAccess.ManageableUserIdsAsync(_db, userId);
         var rows = await _db.Transfers
-            .Where(t => t.UserId == userId && (t.FromTxId != null || t.ToTxId != null))
+            .Where(t => manageable.Contains(t.UserId) && (t.FromTxId != null || t.ToTxId != null))
             .Select(t => new { t.FromTxId, t.ToTxId })
             .ToListAsync();
         foreach (var r in rows)

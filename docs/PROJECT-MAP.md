@@ -82,7 +82,7 @@ SelfUpdate, Ocr, YandexOAuth, FrontUrl), `backend/appsettings.Development.json` 
 | `BudgetController.cs` | `/api/budget` | `GET summary` — сводка, анализ, рекомендации, счета семьи; охват агрегатов `scope=me|family|ids&ids=…` (0.3/N4: дашборд семьи, объединение одноимённых категорий, личные инструменты всегда свои); `POST start-balance`; `POST tx-for` — быстрая операция из сводки (пересчёт счетов в транзакции) |
 | `AccountsController.cs` | `/api/accounts` | Счета: `GET`, `POST`, `PUT {id}`, `DELETE {id}`, `POST {id}/adjust`, `{id}/cashback`, `{id}/tx`; профиль `profile`; семья: `members`, `invite`, `invites`, `status`, `join`, `family-board`, `leave`; валидация `BankId`; статический `RecalcAccountsOf` |
 | `AccountRulesController.cs` | `/api/account-rules` | Правила распределения по счетам: CRUD, `test`, `apply`, `{id}/dismiss`, `{id}/return` |
-| `TransfersController.cs` | `/api/transfers` | Переводы между счетами: `GET`, `GET {id}`, `POST`, `DELETE {id}` — всё через `TransferService` |
+| `TransfersController.cs` | `/api/transfers` | Переводы между счетами: `GET`, `GET {id}`, `POST`, `DELETE {id}` — всё через `TransferService`; `Project` отдаёт владельцев счетов (`fromOwnerId/fromOwnerName/toOwnerId/toOwnerName`, 0.3/N3) |
 | `InterestController.cs` | `/api/interest` | Вклады и накопительные счета: `forecast/{accountId}`, `accruals`, `accrue/{accountId}`, `payout/{accountId}` (сумма = `Net` неоплаченных, транзакция, защита от повторной выплаты) |
 | `InvestmentsController.cs` | `/api/investments` | Портфели и позиции: CRUD, `summary`, `{id}/holdings` (GET/POST/PUT/DELETE) |
 | `BanksController.cs` | `/api/banks` | Справочник банков (0.3/N5): системные (~25 банков РФ с брендовыми цветами) + пользовательские; `GET ?search=`, `POST`, `PUT/DELETE {id}` (только свои; удаление — если нет привязанных счетов/портфелей); идемпотентный `SeedBanks.Seed` |
@@ -96,7 +96,7 @@ SelfUpdate, Ocr, YandexOAuth, FrontUrl), `backend/appsettings.Development.json` 
 |---|---|
 | `AccountBalanceService.cs` | **Единственное место** расчёта остатка счёта: стартовый баланс + операции + проценты, без N+1. Используется контроллерами, `TransferService`, `AccountRulesController` |
 | `AccountRulesService.cs` | Правила распределения: `MatchAssignmentAsync`, `EvaluateAllAsync`, алерты, резервные займы (`TakeReserveLoanAsync`, `ReturnReserveLoanAsync`) |
-| `TransferService.cs` | Создание перевода (запись `Transfer` + две операции с `IsTransfer=true`), отмена обеих половин, `GetAsync` без загрузки всех переводов |
+| `TransferService.cs` | Переводы между своими и семейными счетами (Задача 7 + 0.3/N3): запись `Transfer` принадлежит владельцу счёта-отправителя, расходная половина — ему, доходная — владельцу счёта-получателя; видимость, детали и отмена — всей семьёй (`CanManageTransferAsync` через `FamilyAccess`); `TransferTransactionIdsAsync` скрывает половины из журнала у всех членов семьи |
 | `InterestCalculator.cs` | Проценты по вкладам: Act/365, капитализация, режимы выплаты, НДФЛ, прогноз за месяц/год |
 | `InvestmentCalculator.cs` | Стоимость и доходность портфелей, налоговый ориентир, сравнение с накопительным счётом |
 | `FamilyAccess.cs` | Проверки доступа к семейным данным: `ManageableUserIdsAsync`, `CanManageAccountAsync`, `IsFamilyAccountAsync` |
@@ -149,7 +149,7 @@ SelfUpdate, Ocr, YandexOAuth, FrontUrl), `backend/appsettings.Development.json` 
 
 ---
 
-## 4. Тесты (`backend.Tests/`, xUnit, 72 теста)
+## 4. Тесты (`backend.Tests/`, xUnit, 77 тестов)
 
 | Файл | Что проверяет |
 |---|---|
@@ -157,6 +157,7 @@ SelfUpdate, Ocr, YandexOAuth, FrontUrl), `backend/appsettings.Development.json` 
 | `Task0Tests.cs` | Задача 0: лимиты, цели, категории, базовая сводка |
 | `TransferTests.cs` | Переводы: создание двух половин, отмена, влияние на баланс |
 | `Task03N4N5Tests.cs` | Задачи 0.3: охват дашборда (`me`/`family`/`ids`, чужие id отбрасываются, объединение категорий по названию, личные рекомендации только при «только я»); банки: идемпотентный сид, дозаполнение брендовых полей, свой банк (создание/дубликат/цвет), защита системных, запрет удаления при привязанных счетах |
+| `Task03N3FamilyTransferTests.cs` | Задача 0.3/N3: принадлежность перевода владельцу счёта-отправителя (половины по владельцам счетов), видимость семье, отмена членом семьи, недоступность чужому пользователю, скрытие половин из журнала |
 | `InterestCalculatorTests.cs` | Формулы процентов, режимы выплаты, НДФЛ, прогнозы |
 | `InvestmentCalculatorTests.cs` | Стоимость, доходность, сравнение с накопительным счётом |
 | `ReceiptParserTests.cs` | Разбор сумм, дат, продавцов, типов операций |
@@ -174,9 +175,9 @@ SelfUpdate, Ocr, YandexOAuth, FrontUrl), `backend/appsettings.Development.json` 
 | Файл | Ответственность |
 |---|---|
 | `main.tsx` | Точка входа React, монтирование `App` |
-| `App.tsx` | Каркас SPA: sidebar/topbar, hash-роутинг (`#/accounts`, `#/journal`, `#/goals`, `#/budget`, `#/investments`), настройки (в т.ч. карточка «Банки», 0.3/N5: поиск, плитки с монограммой и брендовым цветом, свой банк), блок обновления/версии, профиль, тема |
-| `components.tsx` | Крупные блоки дашборда: `Dashboard` (в т.ч. переключатель охвата «Я / члены / вся семья», 0.3/N4, хранение в `localStorage('sk_scope')`), `TxRow`, `QuickTxModal` (быстрая операция + OCR), `Journal` (журнал по месяцам) |
-| `AccountsPage.tsx` | Вкладка «Счета»: карточки счетов, редактирование, банк, вклад (ставка/режим), семейный доступ, `FamilyCard` |
+| `App.tsx` | Каркас SPA: sidebar/topbar, hash-роутинг (`#/accounts`, `#/journal`, `#/goals`, `#/budget`, `#/investments`), настройки (в т.ч. карточка «Банки», 0.3/N5: поиск, плитки с монограммой и брендовым цветом, свой банк; 0.3/N6: переключатель «Нейтральный/Фирменный» стиль карточек), блок обновления/версии, профиль, тема |
+| `components.tsx` | Крупные блоки дашборда: `Dashboard` (в т.ч. переключатель охвата «Я / члены / вся семья», 0.3/N4, хранение в `localStorage('sk_scope')`), карточки `WalletCard`/`FamilyWalletCard` (0.3/N6: брендовый градиент + монограмма банка), `TxRow`, `QuickTxModal` (быстрая операция + OCR), `Journal` (журнал по месяцам; 0.3/N3: владельцы счетов в переводах) |
+| `AccountsPage.tsx` | Вкладка «Счета»: карточки счетов (0.3/N6: брендовый аватар/монограмма по банку), редактирование, банк, вклад (ставка/режим), семейный доступ, `FamilyCard`, переводы (0.3/N3: владелец контрагента) |
 | `GoalsPage.tsx` | Цели и месячные лимиты (вкладка задаётся `initialTab`: `goals` или `limits`), прогресс, пополнения |
 | `InvestmentsPage.tsx` | Портфели, позиции, сводка и сравнение с накопительным счётом |
 | `AccountRulesCard.tsx` | Правила счетов: список, тест, применение, отмена, резервные займы |
@@ -184,6 +185,7 @@ SelfUpdate, Ocr, YandexOAuth, FrontUrl), `backend/appsettings.Development.json` 
 | `api.ts` | Все запросы к API + типы DTO (в т.ч. `apply` — статус автообновления) |
 | `auth.ts` | Хранение JWT и пользователя в `localStorage`, разбор токена |
 | `theme.ts` | Светлая/тёмная/системная тема, запоминание выбора |
+| `bankstyle.ts` | 0.3/N6: фирменный стиль карточек счёта по банку — `getBankCardStyle`/`setBankCardStyle` (`localStorage('sk_bankstyle')`, по умолчанию `neutral`), `bankOf`, `darken`, `bankMonogram` (монограмма из `ShortName`, без внешних логотипов) |
 | `toasts.tsx` | Всплывающие уведомления (частичная замена `alert`) |
 | `icons.tsx` | SVG-иконки в духе lucide |
 | `plural.ts` | Склонение русских существительных после чисел |

@@ -8,6 +8,7 @@ import {
 import { useToast } from './toasts';
 import { Icon, type IconName } from './icons';
 import { plural } from './plural';
+import { bankOf, bankMonogram, darken } from './bankstyle';
 
 // ============================================================================
 // Вспомогательные функции
@@ -677,14 +678,20 @@ export function Dashboard({ onAdd, onFamilyTx }: { onAdd?: () => void; onFamilyT
 // Карточка счёта члена семьи: та же стилистика, но с владельцем и быстрым действием.
 function FamilyWalletCard({ account, onTx }: { account: FamilyAccountRow; onTx?: () => void }) {
   const tone = ACCOUNT_TONE[account.type] ?? 'other';
+  const bank = bankOf(account);
+  const style = bank
+    ? { background: `linear-gradient(138deg, ${bank.color} 0%, ${darken(bank.color)} 100%)`, boxShadow: '0 14px 30px rgba(18, 24, 48, 0.18)' }
+    : undefined;
   return (
-    <div className={`wallet wallet--${tone} wallet--family`}>
+    <div className={`wallet wallet--${tone} wallet--family ${bank ? 'wallet--bank' : ''}`} style={style}>
       <div className="wallet-top">
         <span className="wallet-type">
           <Icon name="user" size={13} />
           {account.ownerName || 'Семья'}
         </span>
-        <span className="wallet-chip" aria-hidden="true" />
+        {bank
+          ? <span className="wallet-monogram" title={account.name}>{bankMonogram(bank.short, account.name)}</span>
+          : <span className="wallet-chip" aria-hidden="true" />}
       </div>
       <div>
         <div className="wallet-name">{account.name}</div>
@@ -707,14 +714,20 @@ function FamilyWalletCard({ account, onTx }: { account: FamilyAccountRow; onTx?:
 // ============================================================================
 function WalletCard({ account }: { account: AccountSummaryRow }) {
   const tone = ACCOUNT_TONE[account.type] ?? 'other';
+  const bank = bankOf(account);
+  const style = bank
+    ? { background: `linear-gradient(138deg, ${bank.color} 0%, ${darken(bank.color)} 100%)`, boxShadow: '0 14px 30px rgba(18, 24, 48, 0.18)' }
+    : undefined;
   return (
-    <div className={`wallet wallet--${tone}`}>
+    <div className={`wallet wallet--${tone} ${bank ? 'wallet--bank' : ''}`} style={style}>
       <div className="wallet-top">
         <span className="wallet-type">
           <Icon name={account.type === 3 ? 'trending-up' : 'credit-card'} size={13} />
           {account.typeName}
         </span>
-        <span className="wallet-chip" aria-hidden="true" />
+        {bank
+          ? <span className="wallet-monogram" title={account.name}>{bankMonogram(bank.short, account.name)}</span>
+          : <span className="wallet-chip" aria-hidden="true" />}
       </div>
       <div>
         <div className="wallet-name">{account.name}</div>
@@ -1181,6 +1194,7 @@ export function Journal() {
   const [transfers, setTransfers] = useState<Transfer[] | null>(null);
   const [err, setErr] = useState('');
   const [q, setQ] = useState('');
+  const auth = useAuth();
 
   const load = () => {
     const [y, m] = ym.split('-').map(Number);
@@ -1270,7 +1284,11 @@ export function Journal() {
                 <div className="transfer-row" key={tr.id}>
                   <div className="transfer-main">
                     <div className="transfer-title">
-                      {tr.fromAccountName} <Icon name="arrow-up-right" size={13} /> {tr.toAccountName}
+                      {tr.fromAccountName}
+                      {tr.fromOwnerName && tr.fromOwnerId !== auth.user?.id && <span className="transfer-owner"> ({tr.fromOwnerName})</span>}
+                      {' '}
+                      <Icon name="arrow-up-right" size={13} /> {tr.toAccountName}
+                      {tr.toOwnerName && tr.toOwnerId !== auth.user?.id && <span className="transfer-owner"> ({tr.toOwnerName})</span>}
                     </div>
                     <div className="transfer-sub">
                       {new Date(tr.date + 'T00:00:00').toLocaleDateString('ru-RU')}

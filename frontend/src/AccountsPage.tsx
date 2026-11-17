@@ -4,6 +4,7 @@ import {
   api, fmt, Transfer,
 } from './api';
 import { Icon } from './icons';
+import { bankOf, bankMonogram, darken } from './bankstyle';
 
 const TYPE_HINT: Record<AccountType, string> = {
   0: 'Дебетовая карта',
@@ -182,15 +183,20 @@ export function AccountsPage({ onChanged }: { onChanged?: () => void }) {
         </div>
       ) : (
         <div className="accounts-grid">
-          {list.map(a => (
+          {list.map(a => {
+            const bank = bankOf(a);
+            return (
             <div className={`account-card ${a.isArchived ? 'is-archived' : ''}`} key={a.id} style={{ '--acc': a.color } as CSSProperties}>
               <div className="account-head">
                 <div style={{ display: 'flex', alignItems: 'center', gap: 10, minWidth: 0 }}>
                   <span
                     className="member-avatar"
-                    style={{ background: tint(a.color), color: a.color, borderRadius: 13, width: 38, height: 38, flex: '0 0 38px' }}
+                    style={bank
+                      ? { background: `linear-gradient(135deg, ${bank.color}, ${darken(bank.color)})`, color: '#fff', borderRadius: 13, width: 38, height: 38, flex: '0 0 38px' }
+                      : { background: tint(a.color), color: a.color, borderRadius: 13, width: 38, height: 38, flex: '0 0 38px' }}
+                    title={bank ? a.bankName ?? undefined : undefined}
                   >
-                    {accountInitial(a.name)}
+                    {bank ? bankMonogram(bank.short, a.bankName || a.name) : accountInitial(a.name)}
                   </span>
                   <div style={{ minWidth: 0 }}>
                     <div className="account-name">{a.name}</div>
@@ -280,6 +286,12 @@ export function AccountsPage({ onChanged }: { onChanged?: () => void }) {
                   <div className="tx-main">
                     <div className="tx-title" style={{ fontSize: 12.5 }}>
                       {t.fromAccountId === a.id ? '→ ' + t.toAccountName : '← ' + t.fromAccountName}
+                      {/* N3: семейный перевод — показываем, чей счёт на другой стороне */}
+                      {(() => {
+                        const otherOwner = t.fromAccountId === a.id ? t.toOwnerId : t.fromOwnerId;
+                        const otherName = t.fromAccountId === a.id ? t.toOwnerName : t.fromOwnerName;
+                        return otherName && otherOwner !== a.ownerId ? ` (${otherName})` : '';
+                      })()}
                       {' '}· {fmt(t.amount)}
                     </div>
                     <div className="tx-sub">
@@ -317,7 +329,8 @@ export function AccountsPage({ onChanged }: { onChanged?: () => void }) {
                 </button>
               </div>
             </div>
-          ))}
+            );
+          })}
         </div>
       )}
 

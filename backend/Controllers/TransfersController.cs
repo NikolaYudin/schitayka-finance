@@ -29,6 +29,11 @@ public class TransfersController : ControllerBase
         fromAccountName = t.FromAccount.Name,
         t.ToAccountId,
         toAccountName = t.ToAccount.Name,
+        // N3: перевод виден всей семье — показываем, чьи это счета
+        fromOwnerId = t.FromAccount.UserId,
+        toOwnerId = t.ToAccount.UserId,
+        fromOwnerName = t.FromAccount.User?.Name,
+        toOwnerName = t.ToAccount.User?.Name,
         t.Amount,
         date = t.Date,
         t.Comment,

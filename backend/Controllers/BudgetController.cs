@@ -128,6 +128,8 @@ public class BudgetController : ControllerBase
                 a.Balance, a.CreditLimit, a.CashbackRate, a.CashbackAccrued, a.Color,
                 ownerId = a.UserId,
                 ownerName = _db.Users.Where(u => u.Id == a.UserId).Select(u => u.Name).FirstOrDefault(),
+                bankShortName = _db.Banks.Where(b => b.Id == a.BankId).Select(b => b.ShortName).FirstOrDefault(),
+                bankColor = _db.Banks.Where(b => b.Id == a.BankId).Select(b => b.BrandColor).FirstOrDefault(),
             })
             .ToListAsync();
 
@@ -301,6 +303,12 @@ public class BudgetController : ControllerBase
             {
                 a.Id, a.Name, a.Type, typeName = AccountTypeNames.Ru(a.Type),
                 a.Balance, a.CreditLimit, a.CashbackRate, a.CashbackAccrued, a.Color,
+                bankShortName = a.BankId is int bid
+                    ? _db.Banks.Where(b => b.Id == bid).Select(b => b.ShortName).FirstOrDefault()
+                    : null,
+                bankColor = a.BankId is int bid2
+                    ? _db.Banks.Where(b => b.Id == bid2).Select(b => b.BrandColor).FirstOrDefault()
+                    : null,
             }),
             familyAccounts,
             familyTotalBalance = familyAccounts.Sum(a => a.Balance),

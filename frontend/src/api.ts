@@ -138,6 +138,9 @@ export interface AccountInfo {
   isFamily?: boolean;
   bankId?: number | null;
   bankName?: string | null;
+  /** Брендовые данные банка (0.3/N6) для фирменного стиля карточки. */
+  bankShortName?: string | null;
+  bankColor?: string | null;
   interest?: InterestInfo | null;
 }
 
@@ -146,6 +149,7 @@ export interface FamilyAccountRow {
   id: number; name: string; type: AccountType; typeName: string; balance: number;
   creditLimit: number; cashbackRate: number; cashbackAccrued: number; color: string;
   ownerId: number; ownerName: string | null;
+  bankShortName?: string | null; bankColor?: string | null;
 }
 
 /** Мониторинг инвестиций (Задача 6). */
@@ -256,11 +260,14 @@ export interface UpdateCheck {
   commitIsNewer?: boolean;
 }
 
-/** Перевод между своими счетами (Задача 7). */
+/** Перевод между своими и семейными счетами (Задача 7 + 0.3/N3). */
 export interface Transfer {
   id: number;
   fromAccountId: number; fromAccountName: string;
   toAccountId: number; toAccountName: string;
+  /** Владельцы счетов (N3): перевод виден всей семье — показываем, чьи счета. */
+  fromOwnerId?: number; fromOwnerName?: string | null;
+  toOwnerId?: number; toOwnerName?: string | null;
   amount: number; date: string; comment: string; createdAt: string;
   fromTxId: number | null; toTxId: number | null;
 }
@@ -337,6 +344,8 @@ export interface AccountSummaryRow {
   cashbackRate: number;
   cashbackAccrued: number;
   color: string;
+  bankShortName?: string | null;
+  bankColor?: string | null;
 }
 
 export const fmt = (n: number) => new Intl.NumberFormat('ru-RU', { maximumFractionDigits: 0 }).format(n) + ' ₽';
