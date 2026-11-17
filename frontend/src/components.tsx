@@ -3,16 +3,41 @@ import { useAuth } from './auth';
 import {
   Summary, Category, Tx, TxType, AccountInfo, api, fmt, MONTHS_RU,
   ReserveInfo, ShareRow, AccountSummaryRow, FamilyAccountRow, MonthRow, ReceiptParseResult,
-  Transfer,
+  Transfer, DashboardScope, ScopeUser,
 } from './api';
 import { useToast } from './toasts';
 import { Icon, type IconName } from './icons';
 import { plural } from './plural';
+import { bankOf, bankMonogram, darken } from './bankstyle';
 
 // ============================================================================
 // Вспомогательные функции
 // ============================================================================
 const pad2 = (n: number) => String(n).padStart(2, '0');
+
+/** Охват дашборда (0.3/N4): хранится локально, применяется к /api/budget/summary. */
+const SCOPE_KEY = 'sk_scope';
+type ScopeState = { mode: DashboardScope; ids: number[] };
+
+function loadScope(): ScopeState {
+  try {
+    const raw = localStorage.getItem(SCOPE_KEY);
+    if (raw) {
+      const v = JSON.parse(raw);
+      if (v && ['me', 'family', 'ids'].includes(v.mode)) {
+        return {
+          mode: v.mode,
+          ids: Array.isArray(v.ids) ? v.ids.filter((n: unknown) => typeof n === 'number') : [],
+        };
+      }
+    }
+  } catch { /* ignore */ }
+  return { mode: 'me', ids: [] };
+}
+
+function saveScope(s: ScopeState) {
+  try { localStorage.setItem(SCOPE_KEY, JSON.stringify(s)); } catch { /* ignore */ }
+}
 
 function greeting(): string {
   const h = new Date().getHours();
@@ -45,32 +70,39 @@ export function Dashboard({ onAdd, onFamilyTx }: { onAdd?: () => void; onFamilyT
   const [sum, setSum] = useState<Summary | null>(null);
   const [recent, setRecent] = useState<Tx[]>([]);
   const [err, setErr] = useState('');
-  const [scope, setScope] = useState<'me' | 'family'>(() => (localStorage.getItem('sk_dash_scope') as 'me' | 'family') || 'me');
-  const [familyMembers, setFamilyMembers] = useState<{ id: number; name: string }[]>([]);
+  const [scope, setScope] = useState<ScopeState>(loadScope);
   const auth = useAuth();
   const toast = useToast();
   const seenAlerts = useRef<Set<number>>(new Set());
 
-  useEffect(() => {
-    api.get<{ familyCode: string | null; members: { id: number; name: string }[] }>('/api/family/members')
-      .then(r => setFamilyMembers(r.familyCode ? r.members : []))
-      .catch(() => setFamilyMembers([]));
-  }, []);
+  const scopeQuery = useMemo(() => {
+    const p = new URLSearchParams();
+    if (scope.mode !== 'me') {
+      p.set('scope', scope.mode);
+      if (scope.mode === 'ids' && scope.ids.length > 0) p.set('ids', scope.ids.join(','));
+    }
+    const q = p.toString();
+    return q ? `?${q}` : '';
+  }, [scope]);
 
   const reload = () => {
     const now = new Date();
-    const qs = scope === 'family' ? '?scope=family' : '';
     Promise.all([
-      api.get<Summary>(`/api/budget/summary${qs}`),
+      api.get<Summary>(`/api/budget/summary${scopeQuery}`),
       api.get<Tx[]>(`/api/transactions?month=${now.getMonth() + 1}&year=${now.getFullYear()}&take=8`),
     ]).then(([s, t]) => { setSum(s); setRecent(t); }).catch(e => setErr(e.message));
   };
-  useEffect(reload, [scope]);
+  useEffect(() => { reload(); }, [scopeQuery]);
 
-  const changeScope = (s: 'me' | 'family') => {
-    setScope(s);
-    try { localStorage.setItem('sk_dash_scope', s); } catch {}
+  /** Смена охвата: сохраняем локально и перезагружаем сводку. */
+  const applyScope = (next: ScopeState) => {
+    setScope(next);
+    saveScope(next);
   };
+
+  // Список членов семьи (для переключателя); если семьи нет — переключатель не показываем.
+  const scopeUsers = sum?.scopeUsers ?? [];
+  const isFamilyMember = scopeUsers.length > 0;
 
   // Мягко подсвечиваем новые активные уведомления.
   useEffect(() => {
@@ -142,6 +174,24 @@ export function Dashboard({ onAdd, onFamilyTx }: { onAdd?: () => void; onFamilyT
   const monthName = MONTHS_RU[sum.month - 1];
   const balanceTone = sum.balance >= 0 ? 'pos' : 'neg';
 
+  // ---------- Переключатель охвата (0.3/N4) ----------
+  const meId = scopeUsers.find(m => m.isMe)?.id ?? 0;
+  const activeIds = useMemo(() => new Set(
+    sum?.scope === 'family' ? scopeUsers.map(m => m.id)
+      : sum?.scope === 'ids' ? (sum.scopeIds ?? [])
+      : [meId],
+  ), [sum, meId, scopeUsers]);
+
+  const toggleMember = (id: number) => {
+    const base = [...activeIds];
+    const next = base.includes(id) ? base.filter(x => x !== id) : [...base, id];
+    const all = scopeUsers.map(m => m.id);
+    const set = new Set(next);
+    if (set.size === 0 || (set.size === 1 && set.has(meId))) applyScope({ mode: 'me', ids: [] });
+    else if (all.length > 0 && all.every(x => set.has(x))) applyScope({ mode: 'family', ids: [] });
+    else applyScope({ mode: 'ids', ids: [...set] });
+  };
+
   // Геометрия кольца сбережений
   const ringR = 52;
   const ringC = 2 * Math.PI * ringR;
@@ -155,20 +205,17 @@ export function Dashboard({ onAdd, onFamilyTx }: { onAdd?: () => void; onFamilyT
 
   return (
     <>
-      {familyMembers.length > 1 && (
-        <div className="scope-switch" style={{ display: 'flex', gap: 8, marginBottom: 12, flexWrap: 'wrap' }}>
-          <button type="button" className={`btn small ${scope === 'me' ? 'primary' : ''}`} onClick={() => changeScope('me')}>Только я</button>
-          <button type="button" className={`btn small ${scope === 'family' ? 'primary' : ''}`} onClick={() => changeScope('family')}>Вся семья</button>
-          {scope === 'family' && <span className="muted" style={{ alignSelf: 'center' }}>Охват: {sum.scopeLabel ?? 'Вся семья'}</span>}
-        </div>
-      )}
       {/* ---------- Hero ---------- */}
       <section className="hero">
         <div className="hero-main">
           <span className="hero-eyebrow">
             <Icon name="sparkles" size={14} /> {greeting()}, {firstName}
           </span>
-          <div className="hero-label">Общий баланс</div>
+          <div className="hero-label">
+            {sum.scope === 'family' ? 'Общий баланс семьи'
+              : sum.scope === 'ids' ? 'Баланс выбранных'
+              : 'Общий баланс'}
+          </div>
           <div className="hero-amount">{fmt(sum.totalBalance)}</div>
           <div className="hero-meta">
             <span className="hero-pill">
@@ -207,6 +254,42 @@ export function Dashboard({ onAdd, onFamilyTx }: { onAdd?: () => void; onFamilyT
           </a>
         </div>
       </section>
+
+      {/* ---------- Переключатель охвата (0.3/N4) ---------- */}
+      {isFamilyMember && (
+        <div className="card" style={{ padding: '12px 16px', marginBottom: 16 }}>
+          <div style={{ display: 'flex', gap: 12, alignItems: 'center', flexWrap: 'wrap' }}>
+            <span className="muted" style={{ fontSize: 13, display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+              <Icon name="user" size={14} /> Обзор:
+            </span>
+            <div className="segmented" role="group" aria-label="Охват дашборда">
+              {scopeUsers.map(m => (
+                <button
+                  key={m.id}
+                  type="button"
+                  className={`segment ${activeIds.has(m.id) ? 'active' : ''}`}
+                  onClick={() => toggleMember(m.id)}
+                  title={m.isMe ? 'Только мои данные' : `Данные: ${m.name}`}
+                >
+                  {m.isMe ? 'Я' : m.name}
+                </button>
+              ))}
+              <button
+                type="button"
+                className={`segment ${sum.scope === 'family' ? 'active' : ''}`}
+                onClick={() => applyScope({ mode: 'family', ids: [] })}
+              >
+                Вся семья
+              </button>
+            </div>
+            {sum.scope !== 'me' && (
+              <span className="muted" style={{ fontSize: 12 }}>
+                цифры выше — по выбранному охвату; лимиты, цели и уведомления всегда личные
+              </span>
+            )}
+          </div>
+        </div>
+      )}
 
       {/* ---------- KPI ---------- */}
       <div className="kpi-grid">
@@ -595,14 +678,20 @@ export function Dashboard({ onAdd, onFamilyTx }: { onAdd?: () => void; onFamilyT
 // Карточка счёта члена семьи: та же стилистика, но с владельцем и быстрым действием.
 function FamilyWalletCard({ account, onTx }: { account: FamilyAccountRow; onTx?: () => void }) {
   const tone = ACCOUNT_TONE[account.type] ?? 'other';
+  const bank = bankOf(account);
+  const style = bank
+    ? { background: `linear-gradient(138deg, ${bank.color} 0%, ${darken(bank.color)} 100%)`, boxShadow: '0 14px 30px rgba(18, 24, 48, 0.18)' }
+    : undefined;
   return (
-    <div className={`wallet wallet--${tone} wallet--family`}>
+    <div className={`wallet wallet--${tone} wallet--family ${bank ? 'wallet--bank' : ''}`} style={style}>
       <div className="wallet-top">
         <span className="wallet-type">
           <Icon name="user" size={13} />
           {account.ownerName || 'Семья'}
         </span>
-        <span className="wallet-chip" aria-hidden="true" />
+        {bank
+          ? <span className="wallet-monogram" title={account.name}>{bankMonogram(bank.short, account.name)}</span>
+          : <span className="wallet-chip" aria-hidden="true" />}
       </div>
       <div>
         <div className="wallet-name">{account.name}</div>
@@ -625,14 +714,20 @@ function FamilyWalletCard({ account, onTx }: { account: FamilyAccountRow; onTx?:
 // ============================================================================
 function WalletCard({ account }: { account: AccountSummaryRow }) {
   const tone = ACCOUNT_TONE[account.type] ?? 'other';
+  const bank = bankOf(account);
+  const style = bank
+    ? { background: `linear-gradient(138deg, ${bank.color} 0%, ${darken(bank.color)} 100%)`, boxShadow: '0 14px 30px rgba(18, 24, 48, 0.18)' }
+    : undefined;
   return (
-    <div className={`wallet wallet--${tone}`}>
+    <div className={`wallet wallet--${tone} ${bank ? 'wallet--bank' : ''}`} style={style}>
       <div className="wallet-top">
         <span className="wallet-type">
           <Icon name={account.type === 3 ? 'trending-up' : 'credit-card'} size={13} />
           {account.typeName}
         </span>
-        <span className="wallet-chip" aria-hidden="true" />
+        {bank
+          ? <span className="wallet-monogram" title={account.name}>{bankMonogram(bank.short, account.name)}</span>
+          : <span className="wallet-chip" aria-hidden="true" />}
       </div>
       <div>
         <div className="wallet-name">{account.name}</div>
@@ -1099,6 +1194,7 @@ export function Journal() {
   const [transfers, setTransfers] = useState<Transfer[] | null>(null);
   const [err, setErr] = useState('');
   const [q, setQ] = useState('');
+  const auth = useAuth();
 
   const load = () => {
     const [y, m] = ym.split('-').map(Number);
@@ -1188,11 +1284,14 @@ export function Journal() {
                 <div className="transfer-row" key={tr.id}>
                   <div className="transfer-main">
                     <div className="transfer-title">
-                      {tr.fromAccountName} <Icon name="arrow-up-right" size={13} /> {tr.toAccountName}
+                      {tr.fromAccountName}
+                      {tr.fromOwnerName && tr.fromOwnerId !== auth.user?.id && <span className="transfer-owner"> ({tr.fromOwnerName})</span>}
+                      {' '}
+                      <Icon name="arrow-up-right" size={13} /> {tr.toAccountName}
+                      {tr.toOwnerName && tr.toOwnerId !== auth.user?.id && <span className="transfer-owner"> ({tr.toOwnerName})</span>}
                     </div>
                     <div className="transfer-sub">
                       {new Date(tr.date + 'T00:00:00').toLocaleDateString('ru-RU')}
-                      {tr.initiatorName ? ` · ${tr.initiatorName}` : ''}
                       {tr.comment ? ` · ${tr.comment}` : ''}
                     </div>
                   </div>

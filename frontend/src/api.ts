@@ -138,6 +138,9 @@ export interface AccountInfo {
   isFamily?: boolean;
   bankId?: number | null;
   bankName?: string | null;
+  /** Брендовые данные банка (0.3/N6) для фирменного стиля карточки. */
+  bankShortName?: string | null;
+  bankColor?: string | null;
   interest?: InterestInfo | null;
 }
 
@@ -146,10 +149,15 @@ export interface FamilyAccountRow {
   id: number; name: string; type: AccountType; typeName: string; balance: number;
   creditLimit: number; cashbackRate: number; cashbackAccrued: number; color: string;
   ownerId: number; ownerName: string | null;
+  bankShortName?: string | null; bankColor?: string | null;
 }
 
 /** Мониторинг инвестиций (Задача 6). */
-export interface BankInfo { id: number; name: string; code: string; country: string; isSystem: boolean; }
+/** Банк справочника (Задача 6 + 0.3/N5): брендовые поля для карточек (N6). */
+export interface BankInfo {
+  id: number; name: string; code: string; country: string; isSystem: boolean;
+  shortName?: string | null; brandColor?: string | null; logoUrl?: string | null;
+}
 export interface HoldingSummary {
   id: number; name: string; ticker: string; type: number; quantity: number;
   avgPrice: number; currentPrice: number; invested: number; value: number; pnl: number; pnlPct: number;
@@ -252,15 +260,18 @@ export interface UpdateCheck {
   commitIsNewer?: boolean;
 }
 
-/** Перевод между своими счетами / в семье (Задачи 7, N3). */
+/** Перевод между своими и семейными счетами (Задача 7 + 0.3/N3). */
 export interface Transfer {
   id: number;
   fromAccountId: number; fromAccountName: string;
   toAccountId: number; toAccountName: string;
+  /** Владельцы счетов (N3): перевод виден всей семье — показываем, чьи счета. */
+  fromOwnerId?: number; fromOwnerName?: string | null;
+  toOwnerId?: number; toOwnerName?: string | null;
+  /** N3, совместимость с вариантом «б»: инициатор/владелец записи перевода. */
+  initiatorUserId?: number; initiatorName?: string;
   amount: number; date: string; comment: string; createdAt: string;
   fromTxId: number | null; toTxId: number | null;
-  initiatorUserId?: number;
-  initiatorName?: string;
 }
 
 /** Состояние автоматического обновления (Задача 9). */
@@ -294,10 +305,17 @@ export interface ReceiptParseResult {
   lines: string[];
   rawText: string;
 }
+export interface ScopeUser { id: number; name: string; isMe: boolean; }
+export type DashboardScope = 'me' | 'family' | 'ids';
+
 export interface Summary {
   year: number;
   month: number;
-  scope?: 'me' | 'family' | 'ids';
+  /** Охват агрегатов (0.3/N4): me | family | ids. */
+  scope?: DashboardScope;
+  scopeIds?: number[];
+  scopeUsers?: ScopeUser[] | null;
+  /** N4, совместимость с обоими вариантами API. */
   scopeLabel?: string;
   scopeUserIds?: number[];
   startingBalance: number;
@@ -331,6 +349,8 @@ export interface AccountSummaryRow {
   cashbackRate: number;
   cashbackAccrued: number;
   color: string;
+  bankShortName?: string | null;
+  bankColor?: string | null;
 }
 
 export const fmt = (n: number) => new Intl.NumberFormat('ru-RU', { maximumFractionDigits: 0 }).format(n) + ' ₽';

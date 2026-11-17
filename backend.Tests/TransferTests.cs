@@ -279,7 +279,10 @@ public class TransferTests
         var memberList = await service.ListAsync(member.Id);
         Assert.Equal(2, myList.Count);
         Assert.Equal(2, memberList.Count);
-        Assert.All(myList, t => Assert.Equal(user.Id, t.UserId));
+
+        // Первый перевод отправлен с моего счёта, второй — со счёта участника семьи.
+        Assert.Contains(myList, t => t.Id == toMember.Transfer!.Id && t.UserId == user.Id);
+        Assert.Contains(myList, t => t.Id == toMe.Transfer!.Id && t.UserId == member.Id);
 
         var tr = await service.GetAsync(member.Id, toMember.Transfer!.Id);
         Assert.NotNull(tr);

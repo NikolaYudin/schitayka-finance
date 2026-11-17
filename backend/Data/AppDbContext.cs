@@ -407,6 +407,11 @@ public class Bank
     public string Code { get; set; } = "";            // короткий код, например "tbank"
     public string Country { get; set; } = "RU";
     public bool IsSystem { get; set; } = true;
+
+    // Задача 0.3 (N5): брендовые поля для карточек счетов (N6).
+    public string? ShortName { get; set; }            // «Сбер», «Т-Банк» — для монограммы и плиток
+    public string? BrandColor { get; set; }           // брендовый цвет, например "#21A038"
+    public string? LogoUrl { get; set; }              // ссылка на логотип; null — рисуем монограмму
 }
 
 // Портфель инвестиций: счёт в конкретном банке.

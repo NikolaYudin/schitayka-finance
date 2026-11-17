@@ -210,6 +210,9 @@ namespace SchitayKa.Api.Migrations
                         .ValueGeneratedOnAdd()
                         .HasColumnType("INTEGER");
 
+                    b.Property<string>("BrandColor")
+                        .HasColumnType("TEXT");
+
                     b.Property<string>("Code")
                         .IsRequired()
                         .HasColumnType("TEXT");
@@ -221,8 +224,14 @@ namespace SchitayKa.Api.Migrations
                     b.Property<bool>("IsSystem")
                         .HasColumnType("INTEGER");
 
+                    b.Property<string>("LogoUrl")
+                        .HasColumnType("TEXT");
+
                     b.Property<string>("Name")
                         .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("ShortName")
                         .HasColumnType("TEXT");
 
                     b.Property<int?>("UserId")

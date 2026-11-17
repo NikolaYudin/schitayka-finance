@@ -106,6 +106,11 @@ public class AccountsController : ControllerBase
     {
         var owner = await _db.Users.Where(u => u.Id == a.UserId)
             .Select(u => new { u.Id, u.Name }).FirstOrDefaultAsync();
+        // N6: брендовые данные банка для оформления карточки
+        var bank = a.BankId is int bankId
+            ? await _db.Banks.Where(b => b.Id == bankId)
+                .Select(b => new { b.Name, b.ShortName, b.BrandColor }).FirstOrDefaultAsync()
+            : null;
         return new
         {
             a.Id, a.Name, a.Type, typeName = AccountTypeNames.Ru(a.Type),
@@ -113,7 +118,9 @@ public class AccountsController : ControllerBase
             ownerId = a.UserId, ownerName = owner?.Name ?? "",
             isFamily = a.UserId != Uid,
             bankId = a.BankId,
-            bankName = await _db.Banks.Where(b => b.Id == a.BankId).Select(b => b.Name).FirstOrDefaultAsync(),
+            bankName = bank?.Name,
+            bankShortName = bank?.ShortName,
+            bankColor = bank?.BrandColor,
             interest = InterestProjection(a),
             // полезная информация для карточки счёта
             available = a.Type == AccountType.CreditCard && a.CreditLimit > 0

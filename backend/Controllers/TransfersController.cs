@@ -6,8 +6,8 @@ using SchitayKa.Api.Services;
 namespace SchitayKa.Api.Controllers;
 
 /// <summary>
-/// Переводы между своими счетами (Задача 7):
-/// одно действие вместо двух операций, журнал переводов и отмена.
+/// Переводы между своими и семейными счетами (Задача 7 + 0.3/N3):
+/// одно действие вместо двух операций, общий журнал переводов семьи и отмена.
 /// </summary>
 [ApiController]
 [Route("api/transfers")]
@@ -29,17 +29,23 @@ public class TransfersController : ControllerBase
         fromAccountName = t.FromAccount.Name,
         t.ToAccountId,
         toAccountName = t.ToAccount.Name,
+        // N3: перевод виден всей семье — показываем, чьи это счета
+        fromOwnerId = t.FromAccount.UserId,
+        toOwnerId = t.ToAccount.UserId,
+        fromOwnerName = t.FromAccount.User?.Name,
+        toOwnerName = t.ToAccount.User?.Name,
         t.Amount,
         date = t.Date,
         t.Comment,
         t.CreatedAt,
         t.FromTxId,
         t.ToTxId,
+        // N3, совместимость с вариантом «б»: инициатор/владелец записи перевода.
         initiatorUserId = t.UserId,
         initiatorName = t.User?.Name ?? "",
     };
 
-    /// <summary>Переводы пользователя (по месяцу/году и/или счёту).</summary>
+    /// <summary>Переводы, видимые пользователю (свои + семейные, N3).</summary>
     [HttpGet]
     public async Task<IActionResult> List([FromQuery] int? month = null, [FromQuery] int? year = null,
                                           [FromQuery] int? accountId = null)
