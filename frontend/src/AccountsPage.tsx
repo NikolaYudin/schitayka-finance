@@ -185,20 +185,28 @@ export function AccountsPage({ onChanged }: { onChanged?: () => void }) {
         <div className="accounts-grid">
           {list.map(a => {
             const bank = bankOf(a);
+            const isDepositCard = a.type === 3;
             return (
-            <div className={`account-card ${a.isArchived ? 'is-archived' : ''}`} key={a.id} style={{ '--acc': a.color } as CSSProperties}>
+            <div
+              className={`account-card ${a.isArchived ? 'is-archived' : ''} ${isDepositCard && !bank ? 'deposit-style' : ''}`}
+              key={a.id}
+              style={{ '--acc': isDepositCard && !bank ? '#f5c400' : a.color } as CSSProperties}
+            >
               <div className="account-head">
                 <div style={{ display: 'flex', alignItems: 'center', gap: 10, minWidth: 0 }}>
                   <span
                     className="member-avatar"
                     style={bank
                       ? { background: `linear-gradient(135deg, ${bank.color}, ${darken(bank.color)})`, color: '#fff', borderRadius: 13, width: 38, height: 38, flex: '0 0 38px' }
-                      : { background: tint(a.color), color: a.color, borderRadius: 13, width: 38, height: 38, flex: '0 0 38px' }}
+                      : isDepositCard
+                        ? { background: 'rgba(245,196,0,.18)', color: '#f5c400', borderRadius: 13, width: 38, height: 38, flex: '0 0 38px' }
+                        : { background: tint(a.color), color: a.color, borderRadius: 13, width: 38, height: 38, flex: '0 0 38px' }}
                     title={bank ? a.bankName ?? undefined : undefined}
                   >
-                    {bank ? bankMonogram(bank.short, a.bankName || a.name) : accountInitial(a.name)}
+                    {bank ? bankMonogram(bank.short, a.bankName || a.name) : isDepositCard ? '₽' : accountInitial(a.name)}
                   </span>
                   <div style={{ minWidth: 0 }}>
+                    {isDepositCard && <span className="deposit-tag">Вклад</span>}
                     <div className="account-name">{a.name}</div>
                     <div className="account-type">{a.typeName || TYPE_HINT[a.type]}{a.isArchived ? ' · архив' : ''}</div>
                     {a.bankName && <div className="account-type">{a.bankName}</div>}
@@ -231,19 +239,22 @@ export function AccountsPage({ onChanged }: { onChanged?: () => void }) {
               )}
 
               {a.type === 3 && a.interest && a.interest.interestRate > 0 && (
-                <div className="account-meta" style={{ display: 'block' }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
-                    <Icon name="sparkles" size={12} />
-                    <strong>{a.interest.interestRate}% годовых</strong>
-                    <span>· {a.interest.interestModeName}</span>
+                <div className={`account-meta ${isDepositCard ? 'deposit-meta' : ''}`} style={{ display: 'block' }}>
+                  <div className="deposit-rate-row">
+                    <span className="deposit-rate">{a.interest.interestRate}%</span>
+                    <span className="deposit-rate-label">годовых</span>
+                    {a.interest.daysToMaturity != null && a.interest.daysToMaturity >= 0 && (
+                      <span className="deposit-term">до {a.interest.daysToMaturity} дн.</span>
+                    )}
                   </div>
                   <div className="tx-sub" style={{ marginTop: 4 }}>
-                    ≈ {fmt(a.interest.interestMonthly)} ₽/мес · {fmt(a.interest.interestYearly)} ₽/год (до налога)
+                    {a.interest.interestModeName}
+                  </div>
+                  <div className="tx-sub" style={{ marginTop: 4 }}>
+                    ≈ {fmt(a.interest.interestMonthly)} ₽/мес · {fmt(a.interest.interestYearly)} ₽/год
                   </div>
                   <div className="tx-sub">
-                    после налога {a.interest.interestTaxRate}%: {fmt(a.interest.interestYearlyNet)} ₽/год
-                    {a.interest.daysToMaturity != null && a.interest.daysToMaturity >= 0
-                      ? ` · до погашения ${a.interest.daysToMaturity} дн.` : ''}
+                    начислено после налога {a.interest.interestTaxRate}%: {fmt(a.interest.interestYearlyNet)} ₽/год
                   </div>
                 </div>
               )}
@@ -296,6 +307,7 @@ export function AccountsPage({ onChanged }: { onChanged?: () => void }) {
                     </div>
                     <div className="tx-sub">
                       {new Date(t.date + 'T00:00:00').toLocaleDateString('ru-RU')}
+                      {t.initiatorName ? ` · ${t.initiatorName}` : ''}
                       {t.comment ? ` · ${t.comment}` : ''}
                     </div>
                   </div>

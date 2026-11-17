@@ -266,12 +266,26 @@ public class TransferTests
 
         var service = new TransferService(db);
 
-        // Я → член семьи (со своей карты на его копилку/карту).
+        // Я → член семьи (со своей карты на его счёт).
         var toMember = await service.CreateAsync(user.Id, from.Id, memberAccount.Id, 1000m, new DateOnly(2026, 11, 13), null);
         Assert.True(toMember.Ok);
 
         // Член семьи → я (со счёта члена на мой счёт).
         var toMe = await service.CreateAsync(user.Id, memberAccount.Id, to.Id, 200m, new DateOnly(2026, 11, 13), null);
         Assert.True(toMe.Ok);
+
+        // N3 (вариант б): перевод общий для семьи — виден обоим, с указанием инициатора.
+        var myList = await service.ListAsync(user.Id);
+        var memberList = await service.ListAsync(member.Id);
+        Assert.Equal(2, myList.Count);
+        Assert.Equal(2, memberList.Count);
+
+        // Первый перевод отправлен с моего счёта, второй — со счёта участника семьи.
+        Assert.Contains(myList, t => t.Id == toMember.Transfer!.Id && t.UserId == user.Id);
+        Assert.Contains(myList, t => t.Id == toMe.Transfer!.Id && t.UserId == member.Id);
+
+        var tr = await service.GetAsync(member.Id, toMember.Transfer!.Id);
+        Assert.NotNull(tr);
+        Assert.Equal("Тест", tr!.User?.Name ?? "");
     }
 }

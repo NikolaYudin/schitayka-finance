@@ -268,6 +268,8 @@ export interface Transfer {
   /** Владельцы счетов (N3): перевод виден всей семье — показываем, чьи счета. */
   fromOwnerId?: number; fromOwnerName?: string | null;
   toOwnerId?: number; toOwnerName?: string | null;
+  /** N3, совместимость с вариантом «б»: инициатор/владелец записи перевода. */
+  initiatorUserId?: number; initiatorName?: string;
   amount: number; date: string; comment: string; createdAt: string;
   fromTxId: number | null; toTxId: number | null;
 }
@@ -313,6 +315,9 @@ export interface Summary {
   scope?: DashboardScope;
   scopeIds?: number[];
   scopeUsers?: ScopeUser[] | null;
+  /** N4, совместимость с обоими вариантами API. */
+  scopeLabel?: string;
+  scopeUserIds?: number[];
   startingBalance: number;
   balance: number;
   monthIncome: number;

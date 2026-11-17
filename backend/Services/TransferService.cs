@@ -111,6 +111,7 @@ public sealed class TransferService
     public async Task<(bool Ok, string? Error)> CancelAsync(int userId, int transferId)
     {
         var transfer = await _db.Transfers
+            .Include(t => t.User)
             .Include(t => t.FromAccount).ThenInclude(a => a.User)
             .Include(t => t.ToAccount).ThenInclude(a => a.User)
             .FirstOrDefaultAsync(t => t.Id == transferId);
@@ -171,6 +172,7 @@ public sealed class TransferService
     {
         var manageable = await FamilyAccess.ManageableUserIdsAsync(_db, userId);
         var q = _db.Transfers
+            .Include(t => t.User)
             .Include(t => t.FromAccount).ThenInclude(a => a.User)
             .Include(t => t.ToAccount).ThenInclude(a => a.User)
             .Where(t => manageable.Contains(t.UserId));
@@ -187,6 +189,7 @@ public sealed class TransferService
     public async Task<Transfer?> GetAsync(int userId, int transferId)
     {
         var transfer = await _db.Transfers
+            .Include(t => t.User)
             .Include(t => t.FromAccount).ThenInclude(a => a.User)
             .Include(t => t.ToAccount).ThenInclude(a => a.User)
             .FirstOrDefaultAsync(t => t.Id == transferId);

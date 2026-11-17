@@ -196,7 +196,7 @@ public class TransactionsController : ControllerBase
         var tx = await _db.Transactions.FirstOrDefaultAsync(t => t.Id == id && t.UserId == Uid);
         if (tx is null) return NotFound();
         var cat = await _db.Categories.FirstOrDefaultAsync(c => c.Id == dto.CategoryId && c.UserId == Uid);
-        if (await _db.Transfers.AnyAsync(t => t.UserId == Uid && (t.FromTxId == id || t.ToTxId == id)))
+        if (await _db.Transfers.AnyAsync(t => t.FromTxId == id || t.ToTxId == id))
             return BadRequest(new { error = "Стороны перевода нельзя изменять отдельно. Отмените перевод и создайте его заново." });
         if (cat is null) return BadRequest(new { error = "Категория не найдена" });
         if (dto.Amount <= 0) return BadRequest(new { error = "Сумма должна быть больше нуля" });

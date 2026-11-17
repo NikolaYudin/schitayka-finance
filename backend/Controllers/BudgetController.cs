@@ -282,6 +282,10 @@ public class BudgetController : ControllerBase
             // Охват агрегатов (N4): me | family | ids + список членов семьи для переключателя
             scope = effectiveScope,
             scopeIds = scopeUserIds,
+            // N4, совместимость с обоими вариантами API (я/семья/выбранные).
+            scopeLabel = effectiveScope == "me" ? "Только я"
+                : effectiveScope == "family" ? "Вся семья" : "Выбранные",
+            scopeUserIds = scopeUserIds,
             scopeUsers = familyIds.Count > 1
                 ? await _db.Users
                     .Where(u => familyIds.Contains(u.Id))
