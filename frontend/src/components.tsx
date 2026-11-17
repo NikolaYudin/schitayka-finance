@@ -151,6 +151,16 @@ export function Dashboard({ onAdd, onFamilyTx }: { onAdd?: () => void; onFamilyT
     return out;
   }, [sum]);
 
+  // ---------- Переключатель охвата (0.3/N4) ----------
+  const firstName = auth.user?.name?.trim().split(/\s+/)[0] ?? 'друг';
+
+  const meId = scopeUsers.find(m => m.isMe)?.id ?? 0;
+  const activeIds = useMemo(() => {
+    if (!sum) return new Set<number>([meId]);
+    if (sum.scope === 'family') return new Set(scopeUsers.map(m => m.id));
+    if (sum.scope === 'ids') return new Set(sum.scopeIds ?? []);
+    return new Set<number>([meId]);
+  }, [sum, meId, scopeUsers]);
   if (err) {
     return <div className="card"><div className="alert alert-danger">{err}</div></div>;
   }
@@ -165,22 +175,14 @@ export function Dashboard({ onAdd, onFamilyTx }: { onAdd?: () => void; onFamilyT
     );
   }
 
-  const maxVal = Math.max(1, ...months.flatMap(m => [m.income, m.expense]));
-  const totalExpense = topShares.reduce((s, x) => s + x.total, 0);
-  const firstName = auth.user?.name?.trim().split(/\s+/)[0] ?? 'друг';
   const savings = Math.max(0, Math.min(100, sum.savingsRate));
   const accounts = sum.accounts ?? [];
   const familyAccounts = sum.familyAccounts ?? [];
   const monthName = MONTHS_RU[sum.month - 1];
   const balanceTone = sum.balance >= 0 ? 'pos' : 'neg';
 
-  // ---------- Переключатель охвата (0.3/N4) ----------
-  const meId = scopeUsers.find(m => m.isMe)?.id ?? 0;
-  const activeIds = useMemo(() => new Set(
-    sum?.scope === 'family' ? scopeUsers.map(m => m.id)
-      : sum?.scope === 'ids' ? (sum.scopeIds ?? [])
-      : [meId],
-  ), [sum, meId, scopeUsers]);
+  const maxVal = Math.max(1, ...months.flatMap(m => [m.income, m.expense]));
+  const totalExpense = topShares.reduce((s, x) => s + x.total, 0);
 
   const toggleMember = (id: number) => {
     const base = [...activeIds];

@@ -380,6 +380,10 @@ function AccountForm({ account, onClose, onSaved }: {
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState('');
 
+  useEffect(() => {
+    api.get<BankInfo[]>('/api/banks').then(setBanks).catch(() => {});
+  }, []);
+
   const isCredit = type === 1;
   const isDeposit = type === 3;
 
