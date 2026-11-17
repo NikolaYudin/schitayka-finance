@@ -914,7 +914,7 @@ function CategoriesCard({ categories, onChanged }: { categories: Category[]; onC
   );
 }
 
-/** Банки (0.3/N5): справочник основных банков РФ + свои банки; выбор банка — в форме счёта. */
+/** Банки (0.3/N5): справочник основных банков РФ + свои банки; выбор банка — в форме счета. */
 function BanksCard() {
   const [banks, setBanks] = useState<BankInfo[]>([]);
   const [search, setSearch] = useState('');
@@ -923,6 +923,7 @@ function BanksCard() {
   const [err, setErr] = useState('');
   const [busy, setBusy] = useState(false);
   const [cardStyle, setCardStyle] = useState<BankCardStyle>(() => getBankCardStyle());
+  const [hideUnused, setHideUnused] = useState(false);
 
   const load = () => {
     api.get<BankInfo[]>('/api/banks').then(b => setBanks(b)).catch(e => setErr(e.message));
@@ -942,12 +943,28 @@ function BanksCard() {
     try { await api.del(`/api/banks/${b.id}`); load(); }
     catch (ex: any) { alert(ex.message); }
   };
+  const removeUnusedOwn = async () => {
+    const count = banks.filter(b => !b.isSystem && !b.inUse).length;
+    if (count === 0) { alert('Нет неиспользуемых своих банков для удаления.'); return; }
+    if (!confirm(`Удалить ${count} ${plural(count, 'неиспользуемый свой банк', 'неиспользуемых своих банка', 'неиспользуемых своих банков')}?`)) return;
+    setErr(''); setBusy(true);
+    try {
+      const r = await api.del<{ removed: number }>('/api/banks/unused');
+      load();
+      alert(`Удалено банков: ${r.removed}`);
+    } catch (ex: any) { setErr(ex.message); alert(ex.message); }
+    finally { setBusy(false); }
+  };
 
   const q = search.trim().toLowerCase();
-  const visible = banks.filter(b =>
-    !q || b.name.toLowerCase().includes(q) || (b.shortName ?? '').toLowerCase().includes(q));
+  const visible = banks.filter(b => {
+    if (hideUnused && !b.inUse) return false;
+    if (!q) return true;
+    return b.name.toLowerCase().includes(q) || (b.shortName ?? '').toLowerCase().includes(q);
+  });
   const system = visible.filter(b => b.isSystem);
   const own = visible.filter(b => !b.isSystem);
+  const unusedOwnCount = banks.filter(b => !b.isSystem && !b.inUse).length;
 
   const monogram = (b: BankInfo) => {
     const src = b.shortName?.trim() || b.name.trim();
@@ -955,12 +972,12 @@ function BanksCard() {
   };
 
   const rows = (list: BankInfo[]) => (
-    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))', gap: 8 }}>
+    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))', gap: 8 }}>
       {list.map(b => (
         <div
           key={b.id}
           className="cat-row"
-          style={{ background: 'var(--fill)', borderRadius: 12, padding: '8px 10px', margin: 0 }}
+          style={{ background: 'var(--fill)', borderRadius: 12, padding: '8px 10px', margin: 0, opacity: b.inUse ? 1 : 0.9 }}
         >
           <span
             aria-hidden
@@ -973,20 +990,25 @@ function BanksCard() {
           >
             {monogram(b)}
           </span>
-          <span className="cat-name" style={{ fontSize: 13 }}>
-            {b.name}
-            {!b.isSystem && <span className="badge badge-muted" style={{ marginLeft: 6, fontSize: 11 }}>мой</span>}
+          <span className="cat-name" style={{ fontSize: 13, minWidth: 0, flex: 1 }}>
+            <span style={{ display: 'block', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{b.name}</span>
+            <span style={{ display: 'inline-flex', gap: 6, flexWrap: 'wrap', marginTop: 2 }}>
+              {!b.isSystem && <span className="badge badge-muted" style={{ fontSize: 11 }}>свой</span>}
+              <span className={`badge ${b.inUse ? 'badge-success' : 'badge-muted'}`} style={{ fontSize: 11 }}>
+                {b.inUse ? 'используется' : 'не используется'}
+              </span>
+            </span>
           </span>
-          {!b.isSystem && (
+          {!b.isSystem && !b.inUse && (
             <button
               type="button"
               className="btn icon danger"
-              style={{ width: 30, height: 30, marginLeft: 'auto' }}
+              style={{ width: 30, height: 30, marginLeft: 'auto', flex: '0 0 30px' }}
               onClick={() => del(b)}
-              title="Удалить мой банк"
+              title="Удалить неиспользуемый банк"
               aria-label={`Удалить банк ${b.name}`}
             >
-              <Icon name="x" size={14} />
+              <Icon name="trash" size={14} />
             </button>
           )}
         </div>
@@ -996,43 +1018,56 @@ function BanksCard() {
 
   return (
     <div className="card">
-      <div className="card-head">
+      <div className="card-head" style={{ alignItems: 'flex-start', gap: 12, flexWrap: 'wrap' }}>
         <div>
           <h3>Банки</h3>
           <p className="card-sub">
             {banks.length} {plural(banks.length, 'банк', 'банка', 'банков')} ·
-            привязка к счёту — в форме счёта во вкладке «Счета»
+            привязка к счетам — в форме счёта на вкладке «Счета»
           </p>
         </div>
-        <div style={{ position: 'relative' }}>
-          <input
-            value={search}
-            onChange={e => setSearch(e.target.value)}
-            placeholder="Поиск банка…"
-            style={{ paddingLeft: 30, minWidth: 190 }}
-            aria-label="Поиск банка"
-          />
-          <span style={{ position: 'absolute', left: 9, top: 8, color: 'var(--muted)' }}>
-            <Icon name="search" size={15} />
-          </span>
+        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center', marginLeft: 'auto' }}>
+          <label style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 13, cursor: 'pointer', userSelect: 'none' }}>
+            <input type="checkbox" checked={hideUnused} onChange={e => setHideUnused(e.target.checked)} />
+            Скрыть неиспользуемые
+          </label>
+          <div style={{ position: 'relative' }}>
+            <input
+              value={search}
+              onChange={e => setSearch(e.target.value)}
+              placeholder="Поиск банка…"
+              style={{ paddingLeft: 30, minWidth: 190 }}
+              aria-label="Поиск банка"
+            />
+            <span style={{ position: 'absolute', left: 9, top: 8, color: 'var(--muted)' }}>
+              <Icon name="search" size={15} />
+            </span>
+          </div>
         </div>
       </div>
 
-      <div style={{ maxHeight: 300, overflowY: 'auto', marginBottom: 6 }}>
-        {own.length > 0 && rows(own)}
-        {system.length > 0 && rows(system)}
+      <div style={{ maxHeight: 320, overflowY: 'auto', marginBottom: 10 }}>
+        {own.length > 0 && <div style={{ marginBottom: 10 }}><div className="muted" style={{ marginBottom: 6 }}>Свои банки</div>{rows(own)}</div>}
+        {system.length > 0 && <div><div className="muted" style={{ marginBottom: 6 }}>Справочник банков</div>{rows(system)}</div>}
         {visible.length === 0 && <div className="muted">Ничего не найдено.</div>}
       </div>
 
-      {/* 0.3/N6: переключатель фирменного стиля карточек счёта */}
+      <div className="action-row" style={{ marginBottom: 14, flexWrap: 'wrap', alignItems: 'center' }}>
+        <button type="button" className="btn secondary" onClick={removeUnusedOwn} disabled={unusedOwnCount === 0 || busy}>
+          <Icon name="trash" size={14} /> Удалить неиспользуемые свои банки{unusedOwnCount > 0 ? ` (${unusedOwnCount})` : ''}
+        </button>
+        <span className="muted" style={{ fontSize: 12 }}>Системные банки нельзя удалить; неиспользуемые можно скрыть из списка фильтром.</span>
+      </div>
+
+      {/* 0.3/N6: переключатель фирменного стиля карточек банков */}
       <div className="form-row" style={{ alignItems: 'center', gap: 10, marginBottom: 14 }}>
         <label style={{ flex: 1, marginBottom: 0 }}>
-          Стиль карточек счёта
+          Стиль карточек банков
           <span style={{ display: 'block', fontWeight: 400, fontSize: 12, color: 'var(--muted)', marginTop: 2 }}>
-            «Фирменный» — цвет и монограмма банка на карточке счёта (дашборд и вкладка «Счета»)
+            «Фирменный» — цвет и монограмма банка на карточке счёта (Дашборд и вкладка «Счета»)
           </span>
         </label>
-        <div className="segmented" role="group" aria-label="Стиль карточек счёта">
+        <div className="segmented" role="group" aria-label="Стиль карточек банков">
           {([
             ['neutral', 'Нейтральный'],
             ['brand', 'Фирменный'],
@@ -1054,7 +1089,7 @@ function BanksCard() {
         <div className="form-row">
           <label style={{ flex: 3 }}>
             Название
-            <input value={name} onChange={e => setName(e.target.value)} required placeholder="Напр.: Мой местный банк" />
+            <input value={name} onChange={e => setName(e.target.value)} required placeholder="Напр.: Мой банк" />
           </label>
           <label style={{ flex: '0 0 80px' }}>
             Цвет
