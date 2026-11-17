@@ -3,7 +3,7 @@ import { useAuth } from './auth';
 import {
   Summary, Category, Tx, TxType, AccountInfo, api, fmt, MONTHS_RU,
   ReserveInfo, ShareRow, AccountSummaryRow, FamilyAccountRow, MonthRow, ReceiptParseResult,
-  Transfer,
+  Transfer, DashboardScope, ScopeUser,
 } from './api';
 import { useToast } from './toasts';
 import { Icon, type IconName } from './icons';
@@ -13,6 +13,30 @@ import { plural } from './plural';
 // Вспомогательные функции
 // ============================================================================
 const pad2 = (n: number) => String(n).padStart(2, '0');
+
+/** Охват дашборда (0.3/N4): хранится локально, применяется к /api/budget/summary. */
+const SCOPE_KEY = 'sk_scope';
+type ScopeState = { mode: DashboardScope; ids: number[] };
+
+function loadScope(): ScopeState {
+  try {
+    const raw = localStorage.getItem(SCOPE_KEY);
+    if (raw) {
+      const v = JSON.parse(raw);
+      if (v && ['me', 'family', 'ids'].includes(v.mode)) {
+        return {
+          mode: v.mode,
+          ids: Array.isArray(v.ids) ? v.ids.filter((n: unknown) => typeof n === 'number') : [],
+        };
+      }
+    }
+  } catch { /* ignore */ }
+  return { mode: 'me', ids: [] };
+}
+
+function saveScope(s: ScopeState) {
+  try { localStorage.setItem(SCOPE_KEY, JSON.stringify(s)); } catch { /* ignore */ }
+}
 
 function greeting(): string {
   const h = new Date().getHours();
@@ -45,18 +69,39 @@ export function Dashboard({ onAdd, onFamilyTx }: { onAdd?: () => void; onFamilyT
   const [sum, setSum] = useState<Summary | null>(null);
   const [recent, setRecent] = useState<Tx[]>([]);
   const [err, setErr] = useState('');
+  const [scope, setScope] = useState<ScopeState>(loadScope);
   const auth = useAuth();
   const toast = useToast();
   const seenAlerts = useRef<Set<number>>(new Set());
 
+  const scopeQuery = useMemo(() => {
+    const p = new URLSearchParams();
+    if (scope.mode !== 'me') {
+      p.set('scope', scope.mode);
+      if (scope.mode === 'ids' && scope.ids.length > 0) p.set('ids', scope.ids.join(','));
+    }
+    const q = p.toString();
+    return q ? `?${q}` : '';
+  }, [scope]);
+
   const reload = () => {
     const now = new Date();
     Promise.all([
-      api.get<Summary>('/api/budget/summary'),
+      api.get<Summary>(`/api/budget/summary${scopeQuery}`),
       api.get<Tx[]>(`/api/transactions?month=${now.getMonth() + 1}&year=${now.getFullYear()}&take=8`),
     ]).then(([s, t]) => { setSum(s); setRecent(t); }).catch(e => setErr(e.message));
   };
-  useEffect(reload, []);
+  useEffect(() => { reload(); }, [scopeQuery]);
+
+  /** Смена охвата: сохраняем локально и перезагружаем сводку. */
+  const applyScope = (next: ScopeState) => {
+    setScope(next);
+    saveScope(next);
+  };
+
+  // Список членов семьи (для переключателя); если семьи нет — переключатель не показываем.
+  const scopeUsers = sum?.scopeUsers ?? [];
+  const isFamilyMember = scopeUsers.length > 0;
 
   // Мягко подсвечиваем новые активные уведомления.
   useEffect(() => {
@@ -128,6 +173,24 @@ export function Dashboard({ onAdd, onFamilyTx }: { onAdd?: () => void; onFamilyT
   const monthName = MONTHS_RU[sum.month - 1];
   const balanceTone = sum.balance >= 0 ? 'pos' : 'neg';
 
+  // ---------- Переключатель охвата (0.3/N4) ----------
+  const meId = scopeUsers.find(m => m.isMe)?.id ?? 0;
+  const activeIds = useMemo(() => new Set(
+    sum?.scope === 'family' ? scopeUsers.map(m => m.id)
+      : sum?.scope === 'ids' ? (sum.scopeIds ?? [])
+      : [meId],
+  ), [sum, meId, scopeUsers]);
+
+  const toggleMember = (id: number) => {
+    const base = [...activeIds];
+    const next = base.includes(id) ? base.filter(x => x !== id) : [...base, id];
+    const all = scopeUsers.map(m => m.id);
+    const set = new Set(next);
+    if (set.size === 0 || (set.size === 1 && set.has(meId))) applyScope({ mode: 'me', ids: [] });
+    else if (all.length > 0 && all.every(x => set.has(x))) applyScope({ mode: 'family', ids: [] });
+    else applyScope({ mode: 'ids', ids: [...set] });
+  };
+
   // Геометрия кольца сбережений
   const ringR = 52;
   const ringC = 2 * Math.PI * ringR;
@@ -147,7 +210,11 @@ export function Dashboard({ onAdd, onFamilyTx }: { onAdd?: () => void; onFamilyT
           <span className="hero-eyebrow">
             <Icon name="sparkles" size={14} /> {greeting()}, {firstName}
           </span>
-          <div className="hero-label">Общий баланс</div>
+          <div className="hero-label">
+            {sum.scope === 'family' ? 'Общий баланс семьи'
+              : sum.scope === 'ids' ? 'Баланс выбранных'
+              : 'Общий баланс'}
+          </div>
           <div className="hero-amount">{fmt(sum.totalBalance)}</div>
           <div className="hero-meta">
             <span className="hero-pill">
@@ -186,6 +253,42 @@ export function Dashboard({ onAdd, onFamilyTx }: { onAdd?: () => void; onFamilyT
           </a>
         </div>
       </section>
+
+      {/* ---------- Переключатель охвата (0.3/N4) ---------- */}
+      {isFamilyMember && (
+        <div className="card" style={{ padding: '12px 16px', marginBottom: 16 }}>
+          <div style={{ display: 'flex', gap: 12, alignItems: 'center', flexWrap: 'wrap' }}>
+            <span className="muted" style={{ fontSize: 13, display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+              <Icon name="user" size={14} /> Обзор:
+            </span>
+            <div className="segmented" role="group" aria-label="Охват дашборда">
+              {scopeUsers.map(m => (
+                <button
+                  key={m.id}
+                  type="button"
+                  className={`segment ${activeIds.has(m.id) ? 'active' : ''}`}
+                  onClick={() => toggleMember(m.id)}
+                  title={m.isMe ? 'Только мои данные' : `Данные: ${m.name}`}
+                >
+                  {m.isMe ? 'Я' : m.name}
+                </button>
+              ))}
+              <button
+                type="button"
+                className={`segment ${sum.scope === 'family' ? 'active' : ''}`}
+                onClick={() => applyScope({ mode: 'family', ids: [] })}
+              >
+                Вся семья
+              </button>
+            </div>
+            {sum.scope !== 'me' && (
+              <span className="muted" style={{ fontSize: 12 }}>
+                цифры выше — по выбранному охвату; лимиты, цели и уведомления всегда личные
+              </span>
+            )}
+          </div>
+        </div>
+      )}
 
       {/* ---------- KPI ---------- */}
       <div className="kpi-grid">

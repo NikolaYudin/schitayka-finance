@@ -89,9 +89,14 @@ public class BudgetController : ControllerBase
         return Ok(new { user.StartingBalance });
     }
 
-    // Сводка личного бюджета + персональные рекомендации
+    // Сводка личного бюджета + персональные рекомендации.
+    // 0.3/N4: параметр охвата — me (по умолчанию, свои данные), family (все члены семьи)
+    // или ids (выбранные члены через параметр ids=1,2,3; проверяются по FamilyAccess).
+    // Личные инструменты (лимиты, цели, уведомления, резервы) всегда считаются по текущему
+    // пользователю — у семьи они свои у каждого.
     [HttpGet("summary")]
-    public async Task<IActionResult> Summary([FromQuery] int year = 0, [FromQuery] int month = 0)
+    public async Task<IActionResult> Summary([FromQuery] int year = 0, [FromQuery] int month = 0,
+        [FromQuery] string? scope = null, [FromQuery] string? ids = null)
     {
         var uid = CurrentUserId;
         if (uid < 0) return Unauthorized(new { error = "Требуется вход" });
@@ -102,14 +107,18 @@ public class BudgetController : ControllerBase
         await _rules.EvaluateAllAsync(uid);
 
         var user = await _db.Users.FindAsync(uid);
-        var txs = await _db.Transactions.Where(t => t.UserId == uid).ToListAsync();
-        var cats = await _db.Categories.Where(c => c.UserId == uid).ToListAsync();
+
+        // ---------- Охват агрегатов (N4) ----------
+        var familyIds = await SchitayKa.Api.Services.FamilyAccess.ManageableUserIdsAsync(_db, uid);
+        var (effectiveScope, scopeUserIds) = ResolveScope(scope, ids, uid, familyIds);
+
+        var txs = await _db.Transactions.Where(t => scopeUserIds.Contains(t.UserId)).ToListAsync();
+        var cats = await _db.Categories.Where(c => scopeUserIds.Contains(c.UserId)).ToListAsync();
         var limits = await _db.BudgetLimits.Where(l => l.UserId == uid && l.Year == year && l.Month == month).ToListAsync();
         var accounts = await _db.Accounts.Where(a => a.UserId == uid && !a.IsArchived).ToListAsync();
 
         // Счета семьи: видны всем членам группы, но не влияют на личный бюджет
         // (доходы/расходы считаются только по собственным операциям).
-        var familyIds = await SchitayKa.Api.Services.FamilyAccess.ManageableUserIdsAsync(_db, uid);
         var familyAccounts = await _db.Accounts
             .Where(a => familyIds.Contains(a.UserId) && a.UserId != uid && !a.IsArchived)
             .OrderBy(a => a.UserId).ThenBy(a => a.Name)
@@ -175,11 +184,23 @@ public class BudgetController : ControllerBase
         // Итог по счетам: активные счета минус долги по кредиткам.
         // Если счетов нет — считаем по старому механизму (стартовый баланс + все операции).
         // Переводы между своими счетами не доход и не расход: они влияют только на балансы.
+        // При охвате family/ids (N4) считаем по счетам всех выбранных пользователей;
+        // у кого счетов нет — берём стартовый баланс + все его операции.
         var analytics = txs.Where(t => !t.IsTransfer).ToList();
-        decimal totalBalance = accounts.Count > 0
-            ? accounts.Sum(a => a.Type == AccountType.CreditCard ? -a.Balance : a.Balance)
-            : (user?.StartingBalance ?? 0) + analytics.Sum(t => t.Type == TxType.Income ? t.Amount : -t.Amount);
-        var cashbackTotal = accounts.Sum(a => a.CashbackAccrued);
+        var scopeAccounts = await _db.Accounts
+            .Where(a => scopeUserIds.Contains(a.UserId) && !a.IsArchived).ToListAsync();
+        var noAccountUserIds = scopeUserIds
+            .Where(id => !scopeAccounts.Any(a => a.UserId == id)).ToList();
+        decimal totalBalance = scopeAccounts.Sum(a => a.Type == AccountType.CreditCard ? -a.Balance : a.Balance);
+        foreach (var id in noAccountUserIds)
+        {
+            var start = id == uid ? user?.StartingBalance ?? 0
+                : await _db.Users.Where(u => u.Id == id).Select(u => (decimal?)u.StartingBalance).FirstOrDefaultAsync() ?? 0;
+            totalBalance += start + analytics
+                .Where(t => t.UserId == id)
+                .Sum(t => t.Type == TxType.Income ? t.Amount : -t.Amount);
+        }
+        var cashbackTotal = scopeAccounts.Sum(a => a.CashbackAccrued);
 
         var nowMonth = analytics.Where(t => t.Date.Year == year && t.Date.Month == month).ToList();
         var income = nowMonth.Where(t => t.Type == TxType.Income).Sum(t => t.Amount);
@@ -194,15 +215,23 @@ public class BudgetController : ControllerBase
                 expense = g.Where(t => t.Type == TxType.Expense).Sum(t => t.Amount),
             }).ToList();
 
-        // Структура расходов за выбранный месяц (по категориям)
+        // Структура расходов за выбранный месяц (по категориям).
+        // Группируем по НАЗВАНИЮ (без учёта регистра): идентификаторы категорий у каждого
+        // пользователя свои, и один и тот же id — это разные категории, поэтому при охвате
+        // family/ids одноимённые категории («Продукты» у мужа и жены) объединяются.
+        Category? CatOf(Transaction t) => cats.FirstOrDefault(c => c.UserId == t.UserId && c.Id == t.CategoryId);
         var expenseShare = nowMonth.Where(t => t.Type == TxType.Expense)
-            .GroupBy(t => t.CategoryId)
-            .Select(g => new
+            .GroupBy(t => CatOf(t)?.Name ?? "—", StringComparer.OrdinalIgnoreCase)
+            .Select(g =>
             {
-                categoryId = g.Key,
-                name = cats.FirstOrDefault(c => c.Id == g.Key)?.Name ?? "—",
-                color = cats.FirstOrDefault(c => c.Id == g.Key)?.Color ?? "#718096",
-                total = g.Sum(t => t.Amount),
+                var cat = CatOf(g.First());
+                return new
+                {
+                    categoryId = g.First().CategoryId,
+                    name = cat?.Name ?? g.Key,
+                    color = cat?.Color ?? "#718096",
+                    total = g.Sum(t => t.Amount),
+                };
             })
             .OrderByDescending(x => x.total)
             .ToList();
@@ -236,7 +265,9 @@ public class BudgetController : ControllerBase
         }).ToList();
 
         // ---------- Персонализированные рекомендации ----------
-        var recommendations = BuildRecommendations(year, month, txs, cats, limits, nowMonth, income, expense, goals);
+        // При охвате family/ids показываем только общие советы: лимиты, цели и подушка — личные.
+        var recommendations = BuildRecommendations(year, month, txs, cats, limits, nowMonth, income, expense, goals,
+            scopeUserIds.Count == 1);
 
         // Рекомендация по кэшбэку (если есть счета со ставкой)
         if (cashbackTotal > 0)
@@ -246,6 +277,16 @@ public class BudgetController : ControllerBase
         return Ok(new
         {
             year, month,
+            // Охват агрегатов (N4): me | family | ids + список членов семьи для переключателя
+            scope = effectiveScope,
+            scopeIds = scopeUserIds,
+            scopeUsers = familyIds.Count > 1
+                ? await _db.Users
+                    .Where(u => familyIds.Contains(u.Id))
+                    .OrderBy(u => u.Id)
+                    .Select(u => new { id = u.Id, name = u.Name, isMe = u.Id == uid })
+                    .ToListAsync()
+                : null,
             startingBalance = user?.StartingBalance ?? 0,
             balance = income - expense,
             monthIncome = income,
@@ -272,9 +313,38 @@ public class BudgetController : ControllerBase
         });
     }
 
+    /// <summary>
+    /// Разбор параметра охвата (0.3/N4). Возвращает эффективный охват и идентификаторы
+    /// пользователей, по которым агрегировать. Чужие id отбрасываются — агрегировать можно
+    /// только себя и членов своей семьи (правило единственное место — FamilyAccess).
+    /// </summary>
+    private static (string Scope, List<int> UserIds) ResolveScope(string? scope, string? ids, int uid, List<int> familyIds)
+    {
+        switch ((scope ?? "me").Trim().ToLowerInvariant())
+        {
+            case "family" when familyIds.Count > 1:
+                return ("family", familyIds);
+            case "ids":
+            {
+                var parsed = (ids ?? "")
+                    .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+                    .Select(s => int.TryParse(s, out var n) ? n : -1)
+                    .Where(n => n > 0 && familyIds.Contains(n))
+                    .Distinct()
+                    .ToList();
+                if (parsed.Count > 1 || (parsed.Count == 1 && parsed[0] != uid))
+                    return ("ids", parsed);
+                return ("me", [uid]); // нет валидных выбранных — работаем как «только я»
+            }
+            default:
+                return ("me", [uid]);
+        }
+    }
+
     private static List<dynamic> BuildRecommendations(
         int year, int month, List<Transaction> txs, List<Category> cats, List<BudgetLimit> limits,
-        List<Transaction> nowMonth, decimal income, decimal expense, List<SavingsGoal> goals)
+        List<Transaction> nowMonth, decimal income, decimal expense, List<SavingsGoal> goals,
+        bool personal = true)
     {
         var recs = new List<dynamic>();
 
@@ -285,31 +355,35 @@ public class BudgetController : ControllerBase
             Add("danger", "⚠️",
                 $"В этом месяце расходы превышают доходы на {expense - income:0} ₽. Отложите необязательные траты и разберите категории «Развлечения» и «Одежда».");
 
-        // 2. Превышение лимитов категорий
-        foreach (var l in limits)
-        {
-            var spent = nowMonth.Where(t => t.CategoryId == l.CategoryId && t.Type == TxType.Expense).Sum(t => t.Amount);
-            if (spent > l.Limit)
+        // 2. Превышение лимитов категорий (лимиты личные — только при охвате «только я»)
+        if (personal)
+            foreach (var l in limits)
             {
-                var cname = cats.FirstOrDefault(c => c.Id == l.CategoryId)?.Name ?? "категория";
-                Add("danger", "📊",
-                    $"Лимит по категории «{cname}» превышен на {spent - l.Limit:0} ₽. Поднимите лимит или урежьте траты до конца месяца.");
+                var spent = nowMonth.Where(t => t.CategoryId == l.CategoryId && t.Type == TxType.Expense).Sum(t => t.Amount);
+                if (spent > l.Limit)
+                {
+                    var cname = cats.FirstOrDefault(c => c.Id == l.CategoryId)?.Name ?? "категория";
+                    Add("danger", "📊",
+                        $"Лимит по категории «{cname}» превышен на {spent - l.Limit:0} ₽. Поднимите лимит или урежьте траты до конца месяца.");
+                }
             }
-        }
 
-        // 3. Нет лимита на крупную категорию расходов
-        var bigNoLimit = nowMonth.Where(t => t.Type == TxType.Expense)
-            .GroupBy(t => t.CategoryId)
-            .Where(g => !limits.Any(l => l.CategoryId == g.Key))
-            .OrderByDescending(g => g.Sum(t => t.Amount))
-            .FirstOrDefault();
-        if (bigNoLimit is not null && income > 0)
+        // 3. Нет лимита на крупную категорию расходов (личная рекомендация)
+        if (personal)
         {
-            var cname = cats.FirstOrDefault(c => c.Id == bigNoLimit.Key)?.Name ?? "категория";
-            var share = bigNoLimit.Sum(t => t.Amount) / income * 100;
-            if (share > 25)
-                Add("warn", "💡",
-                    $"На «{cname}» уходит {share:0}% дохода, а лимита нет. Задайте лимит — это самая частая «дыра» в бюджете.");
+            var bigNoLimit = nowMonth.Where(t => t.Type == TxType.Expense)
+                .GroupBy(t => t.CategoryId)
+                .Where(g => !limits.Any(l => l.CategoryId == g.Key))
+                .OrderByDescending(g => g.Sum(t => t.Amount))
+                .FirstOrDefault();
+            if (bigNoLimit is not null && income > 0)
+            {
+                var cname = cats.FirstOrDefault(c => c.Id == bigNoLimit.Key)?.Name ?? "категория";
+                var share = bigNoLimit.Sum(t => t.Amount) / income * 100;
+                if (share > 25)
+                    Add("warn", "💡",
+                        $"На «{cname}» уходит {share:0}% дохода, а лимита нет. Задайте лимит — это самая частая «дыра» в бюджете.");
+            }
         }
 
         // 4. Норма сбережений
@@ -324,20 +398,23 @@ public class BudgetController : ControllerBase
                     $"Отлично: вы сохраняете {rate:0}% дохода. Так держать — направьте излишек в цели с сроком.");
         }
 
-        // 5. Подушка безопасности
-        var avgExpense = txs.Where(t => !t.IsTransfer && t.Type == TxType.Expense)
-            .GroupBy(t => new { t.Date.Year, t.Date.Month })
-            .Select(g => g.Sum(t => t.Amount)).DefaultIfEmpty(0).Average();
-        var cushionMonths = avgExpense > 0 ? Math.Round(((decimal?)goals.Sum(g => g.CurrentAmount) ?? 0) / avgExpense, 1) : 0;
-        if (avgExpense > 0 && cushionMonths < 3)
-            Add("warn", "🛟",
-                $"Ваших копилок хватает на {cushionMonths} мес. расходов. Целься в подушку на 3–6 месяцев — создайте цель «Резерв».");
+        // 5. Подушка безопасности (личная рекомендация)
+        if (personal)
+        {
+            var avgExpense = txs.Where(t => !t.IsTransfer && t.Type == TxType.Expense)
+                .GroupBy(t => new { t.Date.Year, t.Date.Month })
+                .Select(g => g.Sum(t => t.Amount)).DefaultIfEmpty(0).Average();
+            var cushionMonths = avgExpense > 0 ? Math.Round(((decimal?)goals.Sum(g => g.CurrentAmount) ?? 0) / avgExpense, 1) : 0;
+            if (avgExpense > 0 && cushionMonths < 3)
+                Add("warn", "🛟",
+                    $"Ваших копилок хватает на {cushionMonths} мес. расходов. Целься в подушку на 3–6 месяцев — создайте цель «Резерв».");
 
-        // 6. Цели без срока
-        var noDeadline = goals.Where(g => g.Deadline is null).ToList();
-        if (noDeadline.Count > 0)
-            Add("info", "📅",
-                $"У {noDeadline.Count} целей нет срока. Добавьте дату — так проще рассчитать, сколько откладывать в месяц.");
+            // 6. Цели без срока (личная рекомендация)
+            var noDeadline = goals.Where(g => g.Deadline is null).ToList();
+            if (noDeadline.Count > 0)
+                Add("info", "📅",
+                    $"У {noDeadline.Count} целей нет срока. Добавьте дату — так проще рассчитать, сколько откладывать в месяц.");
+        }
 
         // 7. Регулярность ведения учёта
         var lastTx = txs.OrderByDescending(t => t.Date).FirstOrDefault();

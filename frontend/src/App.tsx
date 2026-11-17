@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { useAuth } from './auth';
-import { api, Category, AccountInfo, UpdateCheck, SelfUpdateStatus } from './api';
+import { api, Category, AccountInfo, UpdateCheck, SelfUpdateStatus, BankInfo } from './api';
 import LoginPage from './LoginPage';
 import { Dashboard, Journal, QuickTxModal } from './components';
 import { GoalsPage } from './GoalsPage';
@@ -448,6 +448,7 @@ function Settings({ auth, categories, theme, onReload, update, updateBusy, updat
           <CategoriesCard categories={categories} onChanged={() => { onReload(); auth.refresh(); }} />
         </div>
       </div>
+      <BanksCard />
       <ExportCard />
       <AccountRulesCard />
     </>
@@ -906,6 +907,136 @@ function CategoriesCard({ categories, onChanged }: { categories: Category[]; onC
         {err && <div className="alert alert-danger">{err}</div>}
         <button className="btn primary" type="submit">
           <Icon name="plus" size={16} /> Добавить
+        </button>
+      </form>
+    </div>
+  );
+}
+
+/** Банки (0.3/N5): справочник основных банков РФ + свои банки; выбор банка — в форме счёта. */
+function BanksCard() {
+  const [banks, setBanks] = useState<BankInfo[]>([]);
+  const [search, setSearch] = useState('');
+  const [name, setName] = useState('');
+  const [color, setColor] = useState('#0a84ff');
+  const [err, setErr] = useState('');
+  const [busy, setBusy] = useState(false);
+
+  const load = () => {
+    api.get<BankInfo[]>('/api/banks').then(b => setBanks(b)).catch(e => setErr(e.message));
+  };
+  useEffect(load, []);
+
+  const add = async (e: React.FormEvent) => {
+    e.preventDefault(); setErr(''); setBusy(true);
+    try {
+      await api.post('/api/banks', { name, brandColor: color });
+      setName(''); load();
+    } catch (ex: any) { setErr(ex.message); }
+    finally { setBusy(false); }
+  };
+  const del = async (b: BankInfo) => {
+    if (!confirm(`Удалить банк «${b.name}» из списка?`)) return;
+    try { await api.del(`/api/banks/${b.id}`); load(); }
+    catch (ex: any) { alert(ex.message); }
+  };
+
+  const q = search.trim().toLowerCase();
+  const visible = banks.filter(b =>
+    !q || b.name.toLowerCase().includes(q) || (b.shortName ?? '').toLowerCase().includes(q));
+  const system = visible.filter(b => b.isSystem);
+  const own = visible.filter(b => !b.isSystem);
+
+  const monogram = (b: BankInfo) => {
+    const src = b.shortName?.trim() || b.name.trim();
+    return (src[0] ?? '?').toUpperCase();
+  };
+
+  const rows = (list: BankInfo[]) => (
+    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))', gap: 8 }}>
+      {list.map(b => (
+        <div
+          key={b.id}
+          className="cat-row"
+          style={{ background: 'var(--fill)', borderRadius: 12, padding: '8px 10px', margin: 0 }}
+        >
+          <span
+            aria-hidden
+            style={{
+              width: 28, height: 28, borderRadius: 8, flex: '0 0 28px',
+              display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+              background: b.brandColor ?? 'var(--muted)',
+              color: '#fff', fontSize: 13, fontWeight: 700,
+            }}
+          >
+            {monogram(b)}
+          </span>
+          <span className="cat-name" style={{ fontSize: 13 }}>
+            {b.name}
+            {!b.isSystem && <span className="badge badge-muted" style={{ marginLeft: 6, fontSize: 11 }}>мой</span>}
+          </span>
+          {!b.isSystem && (
+            <button
+              type="button"
+              className="btn icon danger"
+              style={{ width: 30, height: 30, marginLeft: 'auto' }}
+              onClick={() => del(b)}
+              title="Удалить мой банк"
+              aria-label={`Удалить банк ${b.name}`}
+            >
+              <Icon name="x" size={14} />
+            </button>
+          )}
+        </div>
+      ))}
+    </div>
+  );
+
+  return (
+    <div className="card">
+      <div className="card-head">
+        <div>
+          <h3>Банки</h3>
+          <p className="card-sub">
+            {banks.length} {plural(banks.length, 'банк', 'банка', 'банков')} ·
+            привязка к счёту — в форме счёта во вкладке «Счета»
+          </p>
+        </div>
+        <div style={{ position: 'relative' }}>
+          <input
+            value={search}
+            onChange={e => setSearch(e.target.value)}
+            placeholder="Поиск банка…"
+            style={{ paddingLeft: 30, minWidth: 190 }}
+            aria-label="Поиск банка"
+          />
+          <span style={{ position: 'absolute', left: 9, top: 8, color: 'var(--muted)' }}>
+            <Icon name="search" size={15} />
+          </span>
+        </div>
+      </div>
+
+      <div style={{ maxHeight: 300, overflowY: 'auto', marginBottom: 6 }}>
+        {own.length > 0 && rows(own)}
+        {system.length > 0 && rows(system)}
+        {visible.length === 0 && <div className="muted">Ничего не найдено.</div>}
+      </div>
+
+      <form onSubmit={add} className="account-form">
+        <h4>Свой банк</h4>
+        <div className="form-row">
+          <label style={{ flex: 3 }}>
+            Название
+            <input value={name} onChange={e => setName(e.target.value)} required placeholder="Напр.: Мой местный банк" />
+          </label>
+          <label style={{ flex: '0 0 80px' }}>
+            Цвет
+            <input type="color" value={color} onChange={e => setColor(e.target.value)} />
+          </label>
+        </div>
+        {err && <div className="alert alert-danger">{err}</div>}
+        <button className="btn primary" type="submit" disabled={busy}>
+          <Icon name="plus" size={16} /> Добавить банк
         </button>
       </form>
     </div>

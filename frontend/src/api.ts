@@ -149,7 +149,11 @@ export interface FamilyAccountRow {
 }
 
 /** Мониторинг инвестиций (Задача 6). */
-export interface BankInfo { id: number; name: string; code: string; country: string; isSystem: boolean; }
+/** Банк справочника (Задача 6 + 0.3/N5): брендовые поля для карточек (N6). */
+export interface BankInfo {
+  id: number; name: string; code: string; country: string; isSystem: boolean;
+  shortName?: string | null; brandColor?: string | null; logoUrl?: string | null;
+}
 export interface HoldingSummary {
   id: number; name: string; ticker: string; type: number; quantity: number;
   avgPrice: number; currentPrice: number; invested: number; value: number; pnl: number; pnlPct: number;
@@ -292,9 +296,16 @@ export interface ReceiptParseResult {
   lines: string[];
   rawText: string;
 }
+export interface ScopeUser { id: number; name: string; isMe: boolean; }
+export type DashboardScope = 'me' | 'family' | 'ids';
+
 export interface Summary {
   year: number;
   month: number;
+  /** Охват агрегатов (0.3/N4): me | family | ids. */
+  scope?: DashboardScope;
+  scopeIds?: number[];
+  scopeUsers?: ScopeUser[] | null;
   startingBalance: number;
   balance: number;
   monthIncome: number;

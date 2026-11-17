@@ -17,7 +17,7 @@ schitayka-finance/
 │   ├── Controllers/          # HTTP-концы: 12 файлов / 15 контроллеров (§3.1)
 │   ├── Services/             # бизнес-логика и интеграции: 11 файлов (§3.2)
 │   ├── Data/                 # EF-контекст (15 сущностей) и design-time фабрика (§3.3)
-│   ├── Migrations/           # 8 миграций EF Core + snapshot (§3.4)
+│   ├── Migrations/           # 9 миграций EF Core + snapshot (§3.4)
 │   ├── wwwroot/              # артефакт сборки фронтенда (в git лежит последняя сборка)
 │   ├── appsettings*.json     # JWT, строка подключения, SelfUpdate, OCR, Yandex
 │   └── SchitayKa.Api.csproj  # проект + MSBuild-таргет автосборки фронтенда
@@ -79,13 +79,13 @@ SelfUpdate, Ocr, YandexOAuth, FrontUrl), `backend/appsettings.Development.json` 
 |---|---|---|
 | `AuthController.cs` | `/api/auth` | `register`, `login` (PBKDF2 + JWT), `me`, `demo-status`, `yandex/start`, `yandex/callback` (выключен флагом) |
 | `DataControllers.cs` | `/api/categories`, `/api/transactions`, `/api/goals`, `/api/limits` | 4 контроллера в одном файле: справочник категорий, операции (фильтр по месяцу/году), цели (`POST {id}/deposit`), месячные лимиты (upsert) |
-| `BudgetController.cs` | `/api/budget` | `GET summary` — сводка, анализ, рекомендации, счета семьи; `POST start-balance`; `POST tx-for` — быстрая операция из сводки (пересчёт счетов в транзакции) |
+| `BudgetController.cs` | `/api/budget` | `GET summary` — сводка, анализ, рекомендации, счета семьи; охват агрегатов `scope=me|family|ids&ids=…` (0.3/N4: дашборд семьи, объединение одноимённых категорий, личные инструменты всегда свои); `POST start-balance`; `POST tx-for` — быстрая операция из сводки (пересчёт счетов в транзакции) |
 | `AccountsController.cs` | `/api/accounts` | Счета: `GET`, `POST`, `PUT {id}`, `DELETE {id}`, `POST {id}/adjust`, `{id}/cashback`, `{id}/tx`; профиль `profile`; семья: `members`, `invite`, `invites`, `status`, `join`, `family-board`, `leave`; валидация `BankId`; статический `RecalcAccountsOf` |
 | `AccountRulesController.cs` | `/api/account-rules` | Правила распределения по счетам: CRUD, `test`, `apply`, `{id}/dismiss`, `{id}/return` |
 | `TransfersController.cs` | `/api/transfers` | Переводы между счетами: `GET`, `GET {id}`, `POST`, `DELETE {id}` — всё через `TransferService` |
 | `InterestController.cs` | `/api/interest` | Вклады и накопительные счета: `forecast/{accountId}`, `accruals`, `accrue/{accountId}`, `payout/{accountId}` (сумма = `Net` неоплаченных, транзакция, защита от повторной выплаты) |
 | `InvestmentsController.cs` | `/api/investments` | Портфели и позиции: CRUD, `summary`, `{id}/holdings` (GET/POST/PUT/DELETE) |
-| `BanksController.cs` | `/api/banks` | Справочник банков: системные + пользовательские, `GET`/`POST` |
+| `BanksController.cs` | `/api/banks` | Справочник банков (0.3/N5): системные (~25 банков РФ с брендовыми цветами) + пользовательские; `GET ?search=`, `POST`, `PUT/DELETE {id}` (только свои; удаление — если нет привязанных счетов/портфелей); идемпотентный `SeedBanks.Seed` |
 | `ImportController.cs` | `/api/import` | `receipt` (фото/скриншот через OCR), `receipt/text` (разбор вставленного текста); проверка Content-Type **и** расширения, rate limit |
 | `ExportController.cs` | `/api/export` | `GET profile` — полный JSON-профиль для ИИ-анализа |
 | `VersionController.cs` | `/api/version` | `GET` — текущая версия/коммит; `check` — проверка обновлений; `POST apply` — запуск автообновления (только админ из `SelfUpdate:AdminEmails`); `apply/status`, `apply/log` |
@@ -143,23 +143,25 @@ SelfUpdate, Ocr, YandexOAuth, FrontUrl), `backend/appsettings.Development.json` 
 | `20261113114933_AddAccountBank` | Банки (`Banks`) и `Accounts.BankId` — **создана с пустыми `Up`/`Down`**, поэтому нужна следующая |
 | `20261113125249_AddAccountBankColumn` | Реально добавляет `Accounts.BankId`, индекс и внешний ключ |
 | `20261116095454_AddInterestAccrualIndex` | Индекс `IX_InterestAccruals_UserId_AccountId_From` (был только в комментарии) |
+| `20261117071500_BanksDirectory` | Брендовые поля `Banks.ShortName/BrandColor/LogoUrl` (0.3/N5) |
 
 `AppDbContextModelSnapshot.cs` — снимок модели, обновляется автоматически.
 
 ---
 
-## 4. Тесты (`backend.Tests/`, xUnit, 56 тестов)
+## 4. Тесты (`backend.Tests/`, xUnit, 72 теста)
 
 | Файл | Что проверяет |
 |---|---|
 | `StageATests.cs` | Этап A: счета, семья, архив, `IsTransfer` (в т.ч. игнорирование клиентского флага) |
 | `Task0Tests.cs` | Задача 0: лимиты, цели, категории, базовая сводка |
 | `TransferTests.cs` | Переводы: создание двух половин, отмена, влияние на баланс |
+| `Task03N4N5Tests.cs` | Задачи 0.3: охват дашборда (`me`/`family`/`ids`, чужие id отбрасываются, объединение категорий по названию, личные рекомендации только при «только я»); банки: идемпотентный сид, дозаполнение брендовых полей, свой банк (создание/дубликат/цвет), защита системных, запрет удаления при привязанных счетах |
 | `InterestCalculatorTests.cs` | Формулы процентов, режимы выплаты, НДФЛ, прогнозы |
 | `InvestmentCalculatorTests.cs` | Стоимость, доходность, сравнение с накопительным счётом |
 | `ReceiptParserTests.cs` | Разбор сумм, дат, продавцов, типов операций |
-| `SelfUpdateTests.cs` | Версия, asset-имя, проверка контрольной суммы, отказ при 404 |
-| `UpdateCheckerTests.cs` | Определение доступного обновления по GitHub |
+| `SelfUpdateTests.cs` | Версия, asset-имя, проверка контрольной суммы, отказ при 404, та же версия не запускает обновление |
+| `UpdateCheckerTests.cs` | Определение доступного обновления по релизам GitHub (N1) |
 | `EndpointFixesTests.cs` | P0 аудита 16.11.2026: `tx-for` (200 + пересчёт), выплата процентов (сумма `Net`, защита от повтора) |
 
 Тесты используют SQLite in-memory и вызывают контроллеры напрямую; HTTP-интеграционных
@@ -172,8 +174,8 @@ SelfUpdate, Ocr, YandexOAuth, FrontUrl), `backend/appsettings.Development.json` 
 | Файл | Ответственность |
 |---|---|
 | `main.tsx` | Точка входа React, монтирование `App` |
-| `App.tsx` | Каркас SPA: sidebar/topbar, hash-роутинг (`#/accounts`, `#/journal`, `#/goals`, `#/budget`, `#/investments`), настройки, блок обновления/версии, профиль, тема |
-| `components.tsx` | Крупные блоки дашборда: `Dashboard`, `TxRow`, `QuickTxModal` (быстрая операция + OCR), `Journal` (журнал по месяцам) |
+| `App.tsx` | Каркас SPA: sidebar/topbar, hash-роутинг (`#/accounts`, `#/journal`, `#/goals`, `#/budget`, `#/investments`), настройки (в т.ч. карточка «Банки», 0.3/N5: поиск, плитки с монограммой и брендовым цветом, свой банк), блок обновления/версии, профиль, тема |
+| `components.tsx` | Крупные блоки дашборда: `Dashboard` (в т.ч. переключатель охвата «Я / члены / вся семья», 0.3/N4, хранение в `localStorage('sk_scope')`), `TxRow`, `QuickTxModal` (быстрая операция + OCR), `Journal` (журнал по месяцам) |
 | `AccountsPage.tsx` | Вкладка «Счета»: карточки счетов, редактирование, банк, вклад (ставка/режим), семейный доступ, `FamilyCard` |
 | `GoalsPage.tsx` | Цели и месячные лимиты (вкладка задаётся `initialTab`: `goals` или `limits`), прогресс, пополнения |
 | `InvestmentsPage.tsx` | Портфели, позиции, сводка и сравнение с накопительным счётом |
