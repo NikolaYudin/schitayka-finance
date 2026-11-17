@@ -4,7 +4,7 @@
 Связанные документы: [`docs/STATUS.md`](docs/STATUS.md), [`docs/CHECKLIST.md`](docs/CHECKLIST.md), [`docs/PROJECT-MAP.md`](docs/PROJECT-MAP.md).
 
 > **Актуально на 17.11.2026**
-> - Опубликованная версия: **0.3.2** (https://github.com/NikolaYudin/schitayka-finance/releases/tag/v0.3.2)
+> - Опубликованная версия: **0.3.5** (https://github.com/NikolaYudin/schitayka-finance/releases/tag/v0.3.5)
 > - Ветка релизной линии: `release-0.3.0`
 > - Сборка: `dotnet build Schitayka.sln -c Release` — успешно (0 ошибок, 1 предупреждение в тестах)
 > - Тесты: `dotnet test` — **77/77**

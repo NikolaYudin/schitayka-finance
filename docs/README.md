@@ -12,8 +12,8 @@
 
 | Параметр | Значение |
 |---|---|
-| Текущая версия | **0.3.2** (`VERSION`) |
-| Последний релиз | https://github.com/NikolaYudin/schitayka-finance/releases/tag/v0.3.2 |
+| Текущая версия | **0.3.5** (`VERSION`) |
+| Последний релиз | https://github.com/NikolaYudin/schitayka-finance/releases/tag/v0.3.5 |
 | Ветка релизной линии | `release-0.3.0` |
 | Тесты | 77/77 (`dotnet test`) |
 | Сборка | успешно (`dotnet build -c Release`, есть предупреждение `CS8602` в тестах) |
