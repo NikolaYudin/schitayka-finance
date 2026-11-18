@@ -6,16 +6,20 @@ import { Dashboard, Journal, QuickTxModal } from './components';
 import { GoalsPage } from './GoalsPage';
 import { AccountsPage, FamilyCard } from './AccountsPage';
 import { InvestmentsPage } from './InvestmentsPage';
+import { DebtsPage } from './DebtsPage';
+import { ObligationsPage } from './ObligationsPage';
+import { CalendarPage } from './CalendarPage';
 import { AccountRulesCard } from './AccountRulesCard';
 import { useTheme, type ThemeController, type ThemeMode } from './theme';
 import { ToastProvider } from './toasts';
 import { Icon, type IconName } from './icons';
 import { plural } from './plural';
 import { getBankCardStyle, setBankCardStyle, type BankCardStyle } from './bankstyle';
+import { loadWidgets, saveWidgets, type DashboardWidgets } from './widgets';
 
-type Route = '' | 'journal' | 'budget' | 'goals' | 'accounts' | 'investments' | 'settings' | 'login';
+type Route = '' | 'journal' | 'budget' | 'goals' | 'accounts' | 'debts' | 'obligations' | 'calendar' | 'investments' | 'settings' | 'login';
 
-const ROUTES: Route[] = ['', 'journal', 'budget', 'goals', 'accounts', 'investments', 'settings'];
+const ROUTES: Route[] = ['', 'journal', 'budget', 'goals', 'accounts', 'debts', 'obligations', 'calendar', 'investments', 'settings'];
 
 function useHashRoute(): [Route, (r: Route) => void] {
   const parse = (): Route => {
@@ -41,6 +45,9 @@ const NAV: NavItem[] = [
   { to: 'budget', label: 'Бюджет и лимиты', icon: 'budget' },
   { to: 'goals', label: 'Цели', icon: 'target' },
   { to: 'accounts', label: 'Счета', icon: 'wallet' },
+  { to: 'debts', label: 'Долги', icon: 'credit-card' },
+  { to: 'obligations', label: 'Платежи', icon: 'calendar' },
+  { to: 'calendar', label: 'Календарь', icon: 'calendar-clock' },
   { to: 'investments', label: 'Инвестиции', icon: 'trending-up' },
   { to: 'settings', label: 'Настройки', icon: 'settings' },
 ];
@@ -51,6 +58,9 @@ const PAGE_SUBTITLE: Record<Route, string> = {
   budget: 'Месячные лимиты и контроль трат',
   goals: 'Копилки, сроки и ежемесячные отчисления',
   accounts: 'Карты, наличные и вклады',
+  debts: 'Кому должны вы и кто должен вам',
+  obligations: 'Регулярные траты и сроки оплаты',
+  calendar: 'Все важные даты и напоминания',
   investments: 'Портфели, доходность и сравнение с копилкой',
   settings: 'Профиль, оформление и правила',
   login: 'Вход в приложение',
@@ -178,7 +188,10 @@ function TopBar({ route, theme, onAdd, onMenu, user, hasUpdate, onLogout, onGoSe
     : route === 'journal' ? 'Операции'
       : route === 'goals' ? 'Цели'
         : route === 'accounts' ? 'Счета'
-          : route === 'investments' ? 'Инвестиции'
+          : route === 'debts' ? 'Долги'
+            : route === 'obligations' ? 'Обязательные платежи'
+            : route === 'calendar' ? 'Календарь событий'
+            : route === 'investments' ? 'Инвестиции'
             : route === 'settings' ? 'Настройки'
               : 'Дашборд';
   const subtitle = route === '' ? today() : PAGE_SUBTITLE[route];
@@ -347,7 +360,10 @@ export default function App() {
 
   const page = route === 'journal' ? <Journal key={tick} />
     : route === 'accounts' ? <AccountsPage key={tick} onChanged={() => setTick(t => t + 1)} />
-    : route === 'investments' ? <InvestmentsPage key={tick} />
+      : route === 'debts' ? <DebtsPage key={tick} />
+        : route === 'obligations' ? <ObligationsPage key={tick} />
+        : route === 'calendar' ? <CalendarPage key={tick} />
+        : route === 'investments' ? <InvestmentsPage key={tick} />
       : route === 'goals' ? <GoalsPage key={route} initialTab="goals" />
         : route === 'budget' ? <GoalsPage key={route} initialTab="limits" />
           : route === 'settings' ? (
@@ -446,6 +462,7 @@ function Settings({ auth, categories, theme, onReload, update, updateBusy, updat
         </div>
         <div className="settings-col">
           <AppearanceCard theme={theme} />
+          <WidgetsCard />
           <CategoriesCard categories={categories} onChanged={() => { onReload(); auth.refresh(); }} />
         </div>
       </div>
@@ -834,6 +851,70 @@ function AppearanceCard({ theme }: { theme: ThemeController }) {
           </button>
         ))}
       </div>
+    </div>
+  );
+}
+
+function WidgetsCard() {
+  const [widgets, setWidgets] = useState<DashboardWidgets>(loadWidgets);
+
+  const toggle = (key: keyof DashboardWidgets) => {
+    const next = { ...widgets, [key]: !widgets[key] };
+    setWidgets(next);
+    saveWidgets(next);
+  };
+
+  return (
+    <div className="card">
+      <div className="card-head">
+        <div>
+          <h3>Виджеты дашборда</h3>
+          <p className="card-sub">Какие блоки показывать на главной странице</p>
+        </div>
+      </div>
+      <div className="cat-row">
+        <span className="cat-name">Инвестиции</span>
+        <button
+          type="button"
+          className={`switch ${widgets.investments ? 'on' : ''}`}
+          onClick={() => toggle('investments')}
+          title={widgets.investments ? 'Скрыть блок' : 'Показать блок'}
+          aria-label="Показывать блок «Инвестиции» на дашборде"
+        />
+      </div>
+      <div className="cat-row">
+        <span className="cat-name">Долги</span>
+        <button
+          type="button"
+          className={`switch ${widgets.debts ? 'on' : ''}`}
+          onClick={() => toggle('debts')}
+          title={widgets.debts ? 'Скрыть блок' : 'Показать блок'}
+          aria-label="Показывать блок «Долги» на дашборде"
+        />
+      </div>
+      <div className="cat-row">
+        <span className="cat-name">Обязательные платежи</span>
+        <button
+          type="button"
+          className={`switch ${widgets.obligations ? 'on' : ''}`}
+          onClick={() => toggle('obligations')}
+          title={widgets.obligations ? 'Скрыть блок' : 'Показать блок'}
+          aria-label="Показывать блок «Обязательные платежи» на дашборде"
+        />
+      </div>
+      <div className="cat-row">
+        <span className="cat-name">Ближайшие события</span>
+        <button
+          type="button"
+          className={`switch ${widgets.calendar ? 'on' : ''}`}
+          onClick={() => toggle('calendar')}
+          title={widgets.calendar ? 'Скрыть блок' : 'Показать блок'}
+          aria-label="Показывать блок «Календарь событий» на дашборде"
+        />
+      </div>
+      <p className="muted" style={{ marginTop: 8, fontSize: 12 }}>
+        Блоки появляются, когда есть данные: портфели, активные долги, платежи и события.
+      </p>
     </div>
   );
 }

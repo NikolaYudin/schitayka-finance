@@ -13,7 +13,17 @@ namespace SchitayKa.Api.Services;
 public static class AccountBalanceService
 {
     /// <summary>Операция в компактном виде — чтобы не загружать сущности целиком.</summary>
-    public readonly record struct BalanceTx(TxType Type, decimal Amount, bool IsTransfer);
+    /// <param name="NoCashback">
+    /// Операция не участвует в начислении кэшбэка (возврат долга — не покупка).
+    /// </param>
+    public readonly record struct BalanceTx(TxType Type, decimal Amount, bool IsTransfer, bool NoCashback = false);
+
+    /// <summary>
+    /// Категории, по которым кэшбэк не начисляется: возврат долга — движение денег,
+    /// а не покупка (Задача 2, решение 18.11.2026). Иначе возврат 3000 ₽ уменьшал бы
+    /// счёт только на 2850 ₽ при ставке кэшбэка 5%.
+    /// </summary>
+    private static readonly string[] NoCashbackCategories = { DebtService.CategoryName };
 
     /// <summary>Пересчитывает остатки счетов из переданного запроса и сохраняет изменения.</summary>
     public static async Task RecalcAsync(
@@ -35,13 +45,17 @@ public static class AccountBalanceService
 
         var rows = await db.Transactions
             .Where(t => t.AccountId != null && ids.Contains(t.AccountId.Value))
-            .Select(t => new { AccountId = t.AccountId!.Value, t.Type, t.Amount, t.IsTransfer })
+            .Select(t => new
+            {
+                AccountId = t.AccountId!.Value, t.Type, t.Amount, t.IsTransfer,
+                NoCashback = NoCashbackCategories.Contains(t.Category.Name),
+            })
             .ToListAsync(ct);
 
         var byAccount = rows
             .GroupBy(t => t.AccountId)
             .ToDictionary(g => g.Key, g => (IReadOnlyList<BalanceTx>)g
-                .Select(t => new BalanceTx(t.Type, t.Amount, t.IsTransfer)).ToList());
+                .Select(t => new BalanceTx(t.Type, t.Amount, t.IsTransfer, t.NoCashback)).ToList());
 
         foreach (var acc in accounts)
         {
@@ -71,7 +85,7 @@ public static class AccountBalanceService
 
         var cashback = account.CashbackRate > 0
             ? Math.Round(
-                transactions.Where(t => t.Type == TxType.Expense && !t.IsTransfer)
+                transactions.Where(t => t.Type == TxType.Expense && !t.IsTransfer && !t.NoCashback)
                     .Sum(t => t.Amount) * account.CashbackRate / 100m,
                 2)
             : 0m;

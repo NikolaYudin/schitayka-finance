@@ -77,14 +77,15 @@ public class Task03N3FamilyTransferTests
         var service = new TransferService(db);
         var created = await service.CreateAsync(me.Id, myAcc.Id, spouseAcc.Id, 2500m, new DateOnly(2026, 11, 14), null);
         Assert.True(created.Ok);
+        Assert.NotNull(created.Transfer);
 
         // Супруг видит перевод, хотя запись принадлежит мне
         var forSpouse = await service.ListAsync(spouse.Id, month: 11, year: 2026);
         Assert.Single(forSpouse);
-        Assert.Equal(created.Transfer.Id, forSpouse[0].Id);
+        Assert.Equal(created.Transfer!.Id, forSpouse[0].Id);
 
         // И детали тоже видны
-        var details = await service.GetAsync(spouse.Id, created.Transfer.Id);
+        var details = await service.GetAsync(spouse.Id, created.Transfer!.Id);
         Assert.NotNull(details);
     }
 

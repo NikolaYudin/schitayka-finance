@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import {
-  api, fmt, BankInfo, PortfolioInfo, HoldingInfo, InvestmentsSummary,
+  api, fmt, parseServerDate, BankInfo, PortfolioInfo, HoldingSummary, InvestmentsSummary, QuoteRefreshResult,
 } from './api';
 import { Icon } from './icons';
 
@@ -29,18 +29,34 @@ const ASSET_TYPES = [
 
 const productName = (v: number) => PRODUCTS.find(p => p.v === v)?.label ?? 'Прочее';
 const assetTypeName = (v: number) => ASSET_TYPES.find(a => a.v === v)?.label ?? 'Прочее';
+/** Подпись источника цены по коду QuoteSource (0 — вручную, 1 — MOEX ISS). */
+const quoteSourceLabel = (v?: number | null) =>
+  v === 1 ? 'MOEX ISS' : v === 0 ? 'вручную' : 'цена не обновлялась';
+
+const fmtPrice = (n: number) =>
+  new Intl.NumberFormat('ru-RU', { maximumFractionDigits: 4 }).format(n);
+
+const fmtTime = (iso: string | null | undefined) => iso
+  ? parseServerDate(iso).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' })
+  : null;
+
+const num = (s: string) => Number(s.replace(',', '.')) || 0;
 
 /**
- * Мониторинг инвестиций и Инвесткопилки (Задача 6).
+ * Мониторинг инвестиций и Инвесткопилки (Задача 6, пункты 1.0–1.3 плана).
  * Портфели привязаны к банку; по каждому считается стоимость, доходность
  * и сравнение с накопительным счётом (6 % / 8 % с подпиской Pro).
+ * Котировки обновляются по тикерам через MOEX ISS; при недоступности
+ * источника остаётся ручная цена, а в карточке видна ошибка.
  */
 export function InvestmentsPage() {
   const [banks, setBanks] = useState<BankInfo[]>([]);
   const [portfolios, setPortfolios] = useState<PortfolioInfo[]>([]);
   const [summary, setSummary] = useState<InvestmentsSummary | null>(null);
+  const [quotes, setQuotes] = useState<QuoteRefreshResult | null>(null);
   const [err, setErr] = useState('');
   const [busy, setBusy] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
 
   const [showNew, setShowNew] = useState(false);
   const [name, setName] = useState('');
@@ -49,6 +65,7 @@ export function InvestmentsPage() {
   const [strategy, setStrategy] = useState(0);
 
   const [addTo, setAddTo] = useState<number | null>(null);
+  const [editing, setEditing] = useState<HoldingSummary | null>(null);
   const [hName, setHName] = useState('');
   const [hTicker, setHTicker] = useState('');
   const [hType, setHType] = useState(1);
@@ -70,7 +87,40 @@ export function InvestmentsPage() {
     } catch (ex: any) { setErr(ex.message); }
   };
 
+  const refreshQuotes = async (force: boolean) => {
+    setRefreshing(true);
+    setErr('');
+    try {
+      const r = await api.post<QuoteRefreshResult>(`/api/investments/refresh?force=${force}`);
+      setQuotes(r);
+      await load();
+    } catch (ex: any) {
+      setErr(ex.message);
+    } finally {
+      setRefreshing(false);
+    }
+  };
+
   useEffect(() => { load(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, []);
+
+  // При загрузке страницы: если котировки устарели (или ещё не обновлялись) — обновим в фоне.
+  useEffect(() => {
+    if (!summary || summary.portfoliosCount === 0) return;
+    const stale = !summary.quoteUpdatedAt
+      || Date.now() - parseServerDate(summary.quoteUpdatedAt).getTime() > summary.autoRefreshMinutes * 60_000;
+    if (stale) refreshQuotes(false);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [summary?.quoteUpdatedAt, summary?.portfoliosCount]);
+
+  // Фоновое автообновление каждые N минут, пока страница открыта и вкладка видима.
+  const intervalMin = summary?.autoRefreshMinutes ?? 5;
+  useEffect(() => {
+    const timer = window.setInterval(() => {
+      if (document.visibilityState === 'visible') refreshQuotes(false);
+    }, intervalMin * 60_000);
+    return () => window.clearInterval(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [intervalMin]);
 
   // первые банки подставляются автоматически
   useEffect(() => { if (banks.length && !bankId) setBankId(banks[0].id); }, [banks, bankId]);
@@ -85,33 +135,37 @@ export function InvestmentsPage() {
     } catch (ex: any) { setErr(ex.message); } finally { setBusy(false); }
   };
 
-  const addHolding = async (portfolioId: number, e: React.FormEvent) => {
-    e.preventDefault();
-    setErr(''); setBusy(true);
-    try {
-      await api.post(`/api/investments/${portfolioId}/holdings`, {
-        name: hName, ticker: hTicker, assetType: hType,
-        quantity: Number(hQty.replace(',', '.')) || 0,
-        avgPrice: Number(hAvg.replace(',', '.')) || 0,
-        currentPrice: Number(hPrice.replace(',', '.')) || 0,
-        currency: 'RUB',
-      });
-      setHName(''); setHTicker(''); setHQty(''); setHAvg(''); setHPrice('');
-      setAddTo(null);
-      await load();
-    } catch (ex: any) { setErr(ex.message); } finally { setBusy(false); }
+  const startAdd = (portfolioId: number) => {
+    setAddTo(portfolioId);
+    setEditing(null);
+    setHName(''); setHTicker(''); setHType(1); setHQty(''); setHAvg(''); setHPrice('');
   };
 
-  const updatePrice = async (portfolioId: number, h: HoldingInfo, price: string) => {
-    const value = Number(price.replace(',', '.')) || 0;
-    setErr('');
+  const startEdit = (portfolioId: number, h: HoldingSummary) => {
+    setAddTo(portfolioId);
+    setEditing(h);
+    setHName(h.name); setHTicker(h.ticker); setHType(h.type);
+    setHQty(String(h.quantity)); setHAvg(String(h.avgPrice)); setHPrice(String(h.currentPrice));
+  };
+
+  const closeForm = () => { setAddTo(null); setEditing(null); };
+
+  const submitHolding = async (portfolioId: number, e: React.FormEvent) => {
+    e.preventDefault();
+    setErr(''); setBusy(true);
+    const body = {
+      name: hName, ticker: hTicker, assetType: hType,
+      quantity: num(hQty), avgPrice: num(hAvg), currentPrice: num(hPrice), currency: 'RUB',
+    };
     try {
-      await api.put(`/api/investments/${portfolioId}/holdings/${h.id}`, {
-        name: h.name, ticker: h.ticker, assetType: h.assetType,
-        quantity: h.quantity, avgPrice: h.avgPrice, currentPrice: value, currency: h.currency,
-      });
+      if (editing) {
+        await api.put(`/api/investments/${portfolioId}/holdings/${editing.id}`, body);
+      } else {
+        await api.post(`/api/investments/${portfolioId}/holdings`, body);
+      }
+      closeForm();
       await load();
-    } catch (ex: any) { setErr(ex.message); }
+    } catch (ex: any) { setErr(ex.message); } finally { setBusy(false); }
   };
 
   const delPortfolio = async (id: number) => {
@@ -122,9 +176,11 @@ export function InvestmentsPage() {
 
   const delHolding = async (pid: number, hid: number) => {
     if (!confirm('Удалить позицию?')) return;
-    try { await api.del(`/api/investments/${pid}/holdings/${hid}`); await load(); }
+    try { await api.del(`/api/investments/${pid}/holdings/${hid}`); closeForm(); await load(); }
     catch (ex: any) { setErr(ex.message); }
   };
+
+  const quoteTime = fmtTime(quotes?.lastSuccessAt ?? summary?.quoteUpdatedAt);
 
   return (
     <div className="page">
@@ -134,8 +190,8 @@ export function InvestmentsPage() {
             <h4 style={{ margin: 0 }}>Инвестиции</h4>
             <p className="card-sub">Портфели по банкам, доходность и сравнение с накопительным счётом</p>
           </div>
-          <button className="btn primary" onClick={() => setShowNew(v => !v)}>
-            <Icon name="plus" size={15} /> Портфель
+          <button className="btn" onClick={() => refreshQuotes(true)} disabled={refreshing}>
+            <Icon name="refresh" size={15} /> {refreshing ? 'Обновляем…' : 'Обновить'}
           </button>
         </div>
 
@@ -166,6 +222,23 @@ export function InvestmentsPage() {
                 {summary.riskPremium >= 0 ? '+' : ''}{fmt(summary.riskPremium)}
               </span>
               <small>цена риска vs копилка Pro</small>
+            </div>
+          </div>
+        )}
+
+        {summary && (
+          <div className="muted" style={{ marginTop: 8, fontSize: 12 }}>
+            Котировки: {summary.quoteSourceName} · {quoteTime ? `обновлено ${quoteTime}` : 'ещё не обновлялись'}
+            {' '}· автообновление каждые {summary.autoRefreshMinutes} мин
+            {quotes && quotes.failed > 0 ? ` · не обновлено позиций: ${quotes.failed}` : ''}
+          </div>
+        )}
+
+        {summary?.quoteError && (
+          <div className="alert alert-warn" style={{ marginTop: 8 }}>
+            <div className="alert-msg">
+              Часть котировок не обновлена: {summary.quoteError}. Для таких позиций остаётся
+              ранее введённая цена.
             </div>
           </div>
         )}
@@ -274,22 +347,28 @@ export function InvestmentsPage() {
               <p className="muted">Позиций нет — добавьте фонд, акцию или сумму денег копилки.</p>
             )}
             {p.holdings.map(h => (
-              <div className="tx-item" key={h.name + h.ticker}>
+              <div className="tx-item" key={h.id}>
                 <span className="tx-ico" style={{ width: 30, height: 30, flex: '0 0 30px' }}>
                   <Icon name="sparkles" size={14} />
                 </span>
                 <div className="tx-main">
-                  <div className="tx-title" style={{ fontSize: 12.5 }}>
+                  <div className="tx-title" style={{ fontSize: 13 }}>
                     {h.name} {h.ticker ? `· ${h.ticker}` : ''}
                   </div>
                   <div className="tx-sub">
-                    {assetTypeName(h.type)} · {h.quantity} шт. · средняя {fmt(h.avgPrice)} · текущая {fmt(h.currentPrice)}
-                    {' '}· вложено {fmt(h.invested)} · стоимость {fmt(h.value)}
-                    {' '}· {h.pnl >= 0 ? '+' : ''}{fmt(h.pnl)} ({h.pnlPct}%)
+                    {assetTypeName(h.type)} · {h.quantity} шт. × {fmtPrice(h.currentPrice)}
+                    {' '}· {quoteSourceLabel(h.quoteSource)}
+                    {h.quoteError ? ` · ${h.quoteError}` : ''}
                   </div>
                 </div>
-                <button className="btn small" onClick={() => setAddTo(addTo === p.id ? null : p.id)}>
-                  {addTo === p.id ? 'Скрыть' : 'Изменить'}
+                <div className="holding-value">
+                  <b>{fmt(h.value)}</b>
+                  <span style={{ color: h.pnl >= 0 ? 'var(--green)' : 'var(--red)' }}>
+                    {h.pnl >= 0 ? '+' : ''}{fmt(h.pnl)} ({h.pnlPct}%)
+                  </span>
+                </div>
+                <button className="btn small" onClick={() => startEdit(p.id, h)}>
+                  Изменить
                 </button>
                 <button className="btn danger-ghost" title="Удалить позицию" onClick={() => delHolding(p.id, h.id)}>
                   <Icon name="trash" size={14} />
@@ -299,7 +378,7 @@ export function InvestmentsPage() {
           </div>
 
           {addTo === p.id && (
-            <form className="form-row" style={{ marginTop: 10 }} onSubmit={(e) => addHolding(p.id, e)}>
+            <form className="form-row" style={{ marginTop: 10 }} onSubmit={(e) => submitHolding(p.id, e)}>
               <label style={{ flex: '2 1 220px' }}>Название
                 <input value={hName} onChange={e => setHName(e.target.value)} required placeholder="Вечный портфель" />
               </label>
@@ -321,13 +400,14 @@ export function InvestmentsPage() {
                 <input inputMode="decimal" value={hPrice} onChange={e => setHPrice(e.target.value)} placeholder="12" />
               </label>
               <button className="btn primary" type="submit" disabled={busy}>
-                <Icon name="check" size={15} /> Добавить
+                <Icon name="check" size={15} /> {editing ? 'Сохранить' : 'Добавить'}
               </button>
+              <button type="button" className="btn secondary" onClick={closeForm}>Отмена</button>
             </form>
           )}
 
-          {!p.holdings.length && addTo !== p.id && (
-            <button className="btn" style={{ marginTop: 10 }} onClick={() => setAddTo(p.id)}>
+          {addTo !== p.id && (
+            <button className="btn" style={{ marginTop: 10 }} onClick={() => startAdd(p.id)}>
               <Icon name="plus" size={14} /> Добавить позицию
             </button>
           )}

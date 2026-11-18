@@ -1,14 +1,15 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useAuth } from './auth';
 import {
-  Summary, Category, Tx, TxType, AccountInfo, api, fmt, MONTHS_RU,
+  Summary, Category, Tx, TxType, AccountInfo, api, fmt, parseServerDate, MONTHS_RU,
   ReserveInfo, ShareRow, AccountSummaryRow, FamilyAccountRow, MonthRow, ReceiptParseResult,
-  Transfer, DashboardScope, ScopeUser,
+  Transfer, DashboardScope, ScopeUser, InvestmentsSummary, DebtsSummary, ObligationsSummary, CalendarItem,
 } from './api';
 import { useToast } from './toasts';
 import { Icon, type IconName } from './icons';
 import { plural } from './plural';
 import { bankOf, bankMonogram, darken } from './bankstyle';
+import { loadWidgets, type DashboardWidgets } from './widgets';
 
 // ============================================================================
 // Вспомогательные функции
@@ -47,6 +48,18 @@ function greeting(): string {
   return 'Добрый вечер';
 }
 
+/** Время котировок в формате ЧЧ:ММ (пункт 1.2 плана). */
+function quoteTime(iso?: string | null): string {
+  if (!iso) return '';
+  return parseServerDate(iso).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' });
+}
+
+/** Дата срока долга в формате «18 нояб.» (Задача 2). */
+function fmtDate(iso?: string | null): string {
+  if (!iso) return '—';
+  return new Date(iso + 'T00:00:00').toLocaleDateString('ru-RU', { day: 'numeric', month: 'short' });
+}
+
 /** Полупрозрачный оттенок категорийного цвета для мягких иконок. */
 function softColor(color?: string): string {
   if (!color) return 'var(--fill)';
@@ -71,6 +84,11 @@ export function Dashboard({ onAdd, onFamilyTx }: { onAdd?: () => void; onFamilyT
   const [recent, setRecent] = useState<Tx[]>([]);
   const [err, setErr] = useState('');
   const [scope, setScope] = useState<ScopeState>(loadScope);
+  const [widgets, setWidgets] = useState<DashboardWidgets>(loadWidgets);
+  const [inv, setInv] = useState<InvestmentsSummary | null>(null);
+  const [debtSum, setDebtSum] = useState<DebtsSummary | null>(null);
+  const [oblSum, setOblSum] = useState<ObligationsSummary | null>(null);
+  const [calendarItems, setCalendarItems] = useState<CalendarItem[]>([]);
   const auth = useAuth();
   const toast = useToast();
   const seenAlerts = useRef<Set<number>>(new Set());
@@ -93,6 +111,29 @@ export function Dashboard({ onAdd, onFamilyTx }: { onAdd?: () => void; onFamilyT
     ]).then(([s, t]) => { setSum(s); setRecent(t); }).catch(e => setErr(e.message));
   };
   useEffect(() => { reload(); }, [scopeQuery]);
+
+  // Виджет инвестиций (пункт 1.2 плана): грузим отдельно, чтобы сбой источника не ломал дашборд.
+  useEffect(() => {
+    api.get<InvestmentsSummary>('/api/investments/summary')
+      .then(setInv)
+      .catch(() => { /* инвестиции не критичны для главной */ });
+    api.get<DebtsSummary>('/api/debts/summary')
+      .then(setDebtSum)
+      .catch(() => { /* долги не критичны для главной */ });
+    api.get<ObligationsSummary>('/api/obligations/summary')
+      .then(setOblSum)
+      .catch(() => { /* платежи не критичны для главной */ });
+    api.get<CalendarItem[]>('/api/calendar/upcoming?take=5&days=30')
+      .then(setCalendarItems)
+      .catch(() => { /* календарь не критичен для главной */ });
+  }, []);
+
+  // Настройка видимости виджетов меняется в «Настройках» и приходит событием.
+  useEffect(() => {
+    const sync = () => setWidgets(loadWidgets());
+    window.addEventListener('sk-widgets-changed', sync);
+    return () => window.removeEventListener('sk-widgets-changed', sync);
+  }, []);
 
   /** Смена охвата: сохраняем локально и перезагружаем сводку. */
   const applyScope = (next: ScopeState) => {
@@ -564,6 +605,151 @@ export function Dashboard({ onAdd, onFamilyTx }: { onAdd?: () => void; onFamilyT
               </a>
             )}
           </div>
+        </section>
+      )}
+
+      {/* ---------- Инвестиции (пункт 1.2 плана) ---------- */}
+      {widgets.investments && inv && inv.portfoliosCount > 0 && (
+        <section className="section">
+          <div className="section-head">
+            <div>
+              <div className="section-title">Инвестиции</div>
+              <div className="section-sub">
+                {inv.quoteUpdatedAt
+                  ? `котировки обновлены ${quoteTime(inv.quoteUpdatedAt)} · ${inv.quoteSourceName}`
+                  : `котировки ещё не обновлялись · ${inv.quoteSourceName}`}
+              </div>
+            </div>
+            <a className="card-link" href="#/investments">Все инвестиции <Icon name="chevron-right" size={14} /></a>
+          </div>
+          <div className="metric-row">
+            <div className="metric"><span>{fmt(inv.value)}</span><small>стоимость</small></div>
+            <div className="metric"><span>{fmt(inv.invested)}</span><small>вложено</small></div>
+            <div className="metric">
+              <span style={{ color: inv.pnl >= 0 ? 'var(--green)' : 'var(--red)' }}>
+                {inv.pnl >= 0 ? '+' : ''}{fmt(inv.pnl)}
+              </span>
+              <small>доход ({inv.pnlPct}%)</small>
+            </div>
+            <div className="metric"><span>{fmt(inv.cashValue)}</span><small>деньги копилки</small></div>
+          </div>
+          {inv.quoteError && (
+            <div className="alert alert-warn" style={{ marginTop: 8 }}>
+              <div className="alert-msg">Часть котировок не обновлена: {inv.quoteError}</div>
+            </div>
+          )}
+        </section>
+      )}
+
+      {/* ---------- Долги (Задача 2) ---------- */}
+      {widgets.debts && debtSum && debtSum.activeCount > 0 && (
+        <section className="section">
+          <div className="section-head">
+            <div>
+              <div className="section-title">Долги</div>
+              <div className="section-sub">
+                {debtSum.activeCount} {plural(debtSum.activeCount, 'активный долг', 'активных долга', 'активных долгов')}
+                {debtSum.overdueCount > 0 ? ` · просрочено ${debtSum.overdueCount}` : ''}
+                {debtSum.nearest ? ` · ближайший срок ${fmtDate(debtSum.nearest.dueDate)}` : ''}
+              </div>
+            </div>
+            <a className="card-link" href="#/debts">Все долги <Icon name="chevron-right" size={14} /></a>
+          </div>
+          <div className="metric-row">
+            <div className="metric">
+              <span style={{ color: debtSum.iOwe > 0 ? 'var(--red)' : undefined }}>{fmt(debtSum.iOwe)}</span>
+              <small>я должен</small>
+            </div>
+            <div className="metric">
+              <span style={{ color: debtSum.owedToMe > 0 ? 'var(--green)' : undefined }}>{fmt(debtSum.owedToMe)}</span>
+              <small>мне должны</small>
+            </div>
+            <div className="metric">
+              <span style={{ color: debtSum.net >= 0 ? 'var(--green)' : 'var(--red)' }}>
+                {debtSum.net >= 0 ? '+' : ''}{fmt(debtSum.net)}
+              </span>
+              <small>сальдо</small>
+            </div>
+            <div className="metric">
+              <span style={{ color: debtSum.overdueCount > 0 ? 'var(--red)' : undefined }}>
+                {debtSum.overdueCount > 0 ? fmt(debtSum.overdueAmount) : 'нет'}
+              </span>
+              <small>просрочено</small>
+            </div>
+          </div>
+        </section>
+      )}
+
+      {/* ---------- Обязательные платежи (Задача 3) ---------- */}
+      {widgets.obligations && oblSum && oblSum.activeCount > 0 && (
+        <section className="section">
+          <div className="section-head">
+            <div>
+              <div className="section-title">Обязательные платежи</div>
+              <div className="section-sub">
+                {oblSum.activeCount} {plural(oblSum.activeCount, 'активный платёж', 'активных платежа', 'активных платежей')}
+                {oblSum.overdueCount > 0 ? ` · просрочено ${oblSum.overdueCount}` : ''}
+                {oblSum.next ? ` · ближайший ${fmtDate(oblSum.next.nextPaymentDate)}` : ''}
+              </div>
+            </div>
+            <a className="card-link" href="#/obligations">Все платежи <Icon name="chevron-right" size={14} /></a>
+          </div>
+          {oblSum.upcoming.length > 0 && (
+            <div className="metric-row">
+              {oblSum.upcoming.slice(0, 4).map(p => (
+                <div className="metric" key={p.id}>
+                  <span style={{ color: p.isOverdue ? 'var(--red)' : undefined }}>{fmt(p.amount)}</span>
+                  <small>{p.name} · {fmtDate(p.nextPaymentDate)}</small>
+                </div>
+              ))}
+            </div>
+          )}
+          <div className="metric-row" style={{ marginTop: 6 }}>
+            <div className="metric">
+              <span>{fmt(oblSum.monthPlannedAmount)}</span><small>по графику в этом месяце</small>
+            </div>
+            <div className="metric">
+              <span>{fmt(oblSum.paidThisMonthAmount)}</span><small>оплачено в этом месяце</small>
+            </div>
+            <div className="metric">
+              <span style={{ color: oblSum.overdueCount > 0 ? 'var(--red)' : undefined }}>
+                {oblSum.overdueCount > 0 ? fmt(oblSum.overdueAmount) : 'нет'}
+              </span>
+              <small>просрочено</small>
+            </div>
+          </div>
+        </section>
+      )}
+
+      {/* ---------- Ближайшие события (Задача 5) ---------- */}
+      {widgets.calendar && calendarItems.length > 0 && (
+        <section className="section">
+          <div className="section-head">
+            <div>
+              <div className="section-title">Ближайшие события</div>
+              <div className="section-sub">
+                {calendarItems.length} {plural(calendarItems.length, 'событие', 'события', 'событий')}
+                {calendarItems.some(x => x.isOverdue) ? ' · есть просроченные' : ''}
+              </div>
+            </div>
+            <a className="card-link" href="#/calendar">Календарь <Icon name="chevron-right" size={14} /></a>
+          </div>
+          {calendarItems.map(item => (
+            <div className="tx-item" key={item.key}>
+              <span className="tx-ico" style={{ width: 30, height: 30, flex: '0 0 30px' }}>
+                <Icon name="calendar-clock" size={14} />
+              </span>
+              <div className="tx-main">
+                <div className="tx-title" style={{ fontSize: 13, color: item.isOverdue ? 'var(--red)' : undefined }}>
+                  {item.title}{item.time ? ` · ${item.time}` : ''}
+                </div>
+                <div className="tx-sub">
+                  {fmtDate(item.date)} · {item.sourceName}
+                </div>
+              </div>
+              {item.amount !== null && <div className="holding-value"><b>{fmt(item.amount)}</b></div>}
+            </div>
+          ))}
         </section>
       )}
 

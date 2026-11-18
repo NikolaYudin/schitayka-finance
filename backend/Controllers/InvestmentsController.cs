@@ -16,7 +16,12 @@ namespace SchitayKa.Api.Controllers;
 public class InvestmentsController : ControllerBase
 {
     private readonly AppDbContext _db;
-    public InvestmentsController(AppDbContext db) => _db = db;
+    private readonly InvestmentQuoteService _quotes;
+    public InvestmentsController(AppDbContext db, InvestmentQuoteService quotes)
+    {
+        _db = db;
+        _quotes = quotes;
+    }
     private int Uid => UserAccess.UidOf(User);
 
     public record PortfolioDto(
@@ -47,6 +52,23 @@ public class InvestmentsController : ControllerBase
         _ => "Не выбрана",
     };
 
+    /// <summary>Подпись источника цены для карточки позиции.</summary>
+    private static string QuoteSourceName(QuoteSource? source) => source switch
+    {
+        QuoteSource.MoexIss => "MOEX ISS",
+        QuoteSource.Manual => "вручную",
+        _ => "не обновлялась",
+    };
+
+    /// <summary>Время последнего обновления цены по позициям портфеля.</summary>
+    private static DateTime? LastQuoteAt(IEnumerable<InvestmentCalculator.HoldingSummary> holdings) =>
+        holdings.Where(h => h.PriceUpdatedAt != null).Select(h => h.PriceUpdatedAt!.Value)
+               .OrderByDescending(x => x).FirstOrDefault();
+
+    /// <summary>Первая непустая ошибка котировок портфеля.</summary>
+    private static string? FirstQuoteError(IEnumerable<InvestmentCalculator.HoldingSummary> holdings) =>
+        holdings.FirstOrDefault(h => !string.IsNullOrWhiteSpace(h.QuoteError))?.QuoteError;
+
     private static object Project(InvestmentPortfolio p, InvestmentCalculator.PortfolioSummary s) => new
     {
         p.Id,
@@ -72,6 +94,8 @@ public class InvestmentsController : ControllerBase
         s.SavingsAt8,
         s.RiskPremium,
         s.TaxEstimate,
+        quoteUpdatedAt = LastQuoteAt(s.Holdings),
+        quoteError = FirstQuoteError(s.Holdings),
         holdings = s.Holdings,
     };
 
@@ -80,7 +104,8 @@ public class InvestmentsController : ControllerBase
         var holdings = await _db.InvestmentHoldings
             .Where(h => h.PortfolioId == p.Id)
             .Select(h => new InvestmentCalculator.HoldingInput(
-                h.Name, h.Ticker, h.AssetType, h.Quantity, h.AvgPrice, h.CurrentPrice, h.Currency, h.Id))
+                h.Name, h.Ticker, h.AssetType, h.Quantity, h.AvgPrice, h.CurrentPrice, h.Currency, h.Id,
+                h.QuoteSource, h.PriceUpdatedAt, h.QuoteError))
             .ToListAsync();
 
         var days = Math.Max((DateTime.Today - p.CreatedAt.Date).Days, 1);
@@ -121,7 +146,8 @@ public class InvestmentsController : ControllerBase
             all.AddRange(await _db.InvestmentHoldings
                 .Where(h => h.PortfolioId == p.Id)
                 .Select(h => new InvestmentCalculator.HoldingInput(
-                    h.Name, h.Ticker, h.AssetType, h.Quantity, h.AvgPrice, h.CurrentPrice, h.Currency, h.Id))
+                    h.Name, h.Ticker, h.AssetType, h.Quantity, h.AvgPrice, h.CurrentPrice, h.Currency, h.Id,
+                    h.QuoteSource, h.PriceUpdatedAt, h.QuoteError))
                 .ToListAsync());
         }
 
@@ -146,6 +172,10 @@ public class InvestmentsController : ControllerBase
             savingsRate = InvestmentCalculator.SavingsRate,
             savingsRatePro = InvestmentCalculator.SavingsRatePro,
             taxRate = InvestmentCalculator.TaxRate,
+            quoteUpdatedAt = LastQuoteAt(s.Holdings),
+            quoteError = FirstQuoteError(s.Holdings),
+            quoteSourceName = _quotes.ProviderName,
+            autoRefreshMinutes = (int)InvestmentQuoteService.AutoRefreshInterval.TotalMinutes,
         });
     }
 
@@ -234,6 +264,11 @@ public class InvestmentsController : ControllerBase
                 h.CurrentPrice,
                 h.Currency,
                 h.UpdatedAt,
+                quoteSource = (int?)h.QuoteSource,
+                quoteSourceName = h.QuoteSource == QuoteSource.MoexIss ? "MOEX ISS"
+                    : h.QuoteSource == QuoteSource.Manual ? "вручную" : "не обновлялась",
+                priceUpdatedAt = (DateTime?)h.PriceUpdatedAt,
+                h.QuoteError,
             })
             .ToListAsync();
         return Ok(list);
@@ -262,6 +297,8 @@ public class InvestmentsController : ControllerBase
             CurrentPrice = dto.CurrentPrice,
             Currency = string.IsNullOrWhiteSpace(dto.Currency) ? portfolio.Currency : dto.Currency.Trim().ToUpperInvariant(),
             UpdatedAt = DateTime.UtcNow,
+            QuoteSource = QuoteSource.Manual,
+            PriceUpdatedAt = DateTime.UtcNow,
         };
         _db.InvestmentHoldings.Add(holding);
         await _db.SaveChangesAsync();
@@ -277,6 +314,10 @@ public class InvestmentsController : ControllerBase
             holding.CurrentPrice,
             holding.Currency,
             holding.UpdatedAt,
+            quoteSource = (int?)holding.QuoteSource,
+            quoteSourceName = QuoteSourceName(holding.QuoteSource),
+            priceUpdatedAt = (DateTime?)holding.PriceUpdatedAt,
+            holding.QuoteError,
         });
     }
 
@@ -289,11 +330,26 @@ public class InvestmentsController : ControllerBase
         if (h is null) return NotFound(new { error = "Позиция не найдена" });
 
         h.Name = dto.Name.Trim();
-        h.Ticker = dto.Ticker?.Trim() ?? "";
+        var ticker = dto.Ticker?.Trim() ?? "";
+        if (!string.Equals(h.Ticker, ticker, StringComparison.OrdinalIgnoreCase))
+        {
+            // Код объекта изменился — прежняя котировка больше не актуальна,
+            // при следующем обновлении цена будет запрошена заново.
+            h.Ticker = ticker;
+            h.PriceUpdatedAt = null;
+            h.QuoteError = null;
+        }
         if (Enum.IsDefined((AssetType)dto.AssetType)) h.AssetType = (AssetType)dto.AssetType;
         h.Quantity = dto.Quantity;
         h.AvgPrice = dto.AvgPrice;
-        h.CurrentPrice = dto.CurrentPrice;
+        if (h.CurrentPrice != dto.CurrentPrice)
+        {
+            // Цену поправил пользователь — источник цены становится ручным.
+            h.CurrentPrice = dto.CurrentPrice;
+            h.QuoteSource = QuoteSource.Manual;
+            h.PriceUpdatedAt = DateTime.UtcNow;
+            h.QuoteError = null;
+        }
         if (!string.IsNullOrWhiteSpace(dto.Currency)) h.Currency = dto.Currency.Trim().ToUpperInvariant();
         h.UpdatedAt = DateTime.UtcNow;
 
@@ -309,6 +365,10 @@ public class InvestmentsController : ControllerBase
             h.CurrentPrice,
             h.Currency,
             h.UpdatedAt,
+            quoteSource = (int?)h.QuoteSource,
+            quoteSourceName = QuoteSourceName(h.QuoteSource),
+            priceUpdatedAt = (DateTime?)h.PriceUpdatedAt,
+            h.QuoteError,
         });
     }
 
@@ -322,5 +382,28 @@ public class InvestmentsController : ControllerBase
         _db.InvestmentHoldings.Remove(h);
         await _db.SaveChangesAsync();
         return Ok(new { deleted = hid });
+    }
+
+    /// <summary>
+    /// Обновить текущие цены позиций по тикерам (пункт 1.1 плана).
+    /// Без флага force свежие цены (моложе 5 минут) не перезапрашиваются.
+    /// </summary>
+    [HttpPost("refresh")]
+    public async Task<IActionResult> Refresh([FromQuery] bool force = false)
+    {
+        if (Uid < 0) return Unauthorized(new { error = "Требуется вход" });
+
+        var r = await _quotes.RefreshAsync(Uid, force);
+        return Ok(new
+        {
+            updated = r.Updated,
+            failed = r.Failed,
+            skipped = r.Skipped,
+            quoted = r.Quoted,
+            lastSuccessAt = r.LastSuccessAt,
+            lastError = r.LastError,
+            source = _quotes.ProviderName,
+            autoRefreshMinutes = (int)InvestmentQuoteService.AutoRefreshInterval.TotalMinutes,
+        });
     }
 }

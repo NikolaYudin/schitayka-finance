@@ -14,16 +14,16 @@
 schitayka-finance/
 ├── backend/                  # ASP.NET Core 8: API, бизнес-логика, миграции, статика SPA
 │   ├── Program.cs            # вся конфигурация и старт приложения (см. §2)
-│   ├── Controllers/          # HTTP-концы: 12 файлов / 15 контроллеров (§3.1)
-│   ├── Services/             # бизнес-логика и интеграции: 11 файлов (§3.2)
-│   ├── Data/                 # EF-контекст (15 сущностей) и design-time фабрика (§3.3)
-│   ├── Migrations/           # 9 миграций EF Core + snapshot (§3.4)
+│   ├── Controllers/          # HTTP-концы: 15 файлов / 21 контроллер (§3.1)
+│   ├── Services/             # бизнес-логика и интеграции: 17 файлов (§3.2)
+│   ├── Data/                 # EF-контекст (20 сущностей) и design-time фабрика (§3.3)
+│   ├── Migrations/           # 13 миграций EF Core + snapshot (§3.4)
 │   ├── wwwroot/              # артефакт сборки фронтенда (в git лежит последняя сборка)
 │   ├── appsettings*.json     # JWT, строка подключения, SelfUpdate, OCR, Yandex
 │   └── SchitayKa.Api.csproj  # проект + MSBuild-таргет автосборки фронтенда
-├── backend.Tests/            # xUnit: 9 файлов, 56 тестов (§4)
+├── backend.Tests/            # xUnit: 15 файлов, 133 теста (§4)
 ├── frontend/                 # React 18 + TS + Vite; собирается в backend/wwwroot
-│   └── src/                  # 15 модулей интерфейса (§5)
+│   └── src/                  # 19 модулей интерфейса (§5)
 ├── deploy/xpenology/         # Docker, compose, обновление, установка на NAS (§6)
 │   └── release/              # упаковщик zip-дистрибутива и сборка app.zip для автообновления
 ├── docs/                     # эта документация (§7)
@@ -84,7 +84,10 @@ SelfUpdate, Ocr, YandexOAuth, FrontUrl), `backend/appsettings.Development.json` 
 | `AccountRulesController.cs` | `/api/account-rules` | Правила распределения по счетам: CRUD, `test`, `apply`, `{id}/dismiss`, `{id}/return` |
 | `TransfersController.cs` | `/api/transfers` | Переводы между счетами: `GET`, `GET {id}`, `POST`, `DELETE {id}` — всё через `TransferService`; `Project` отдаёт владельцев счетов (`fromOwnerId/fromOwnerName/toOwnerId/toOwnerName`, 0.3/N3) |
 | `InterestController.cs` | `/api/interest` | Вклады и накопительные счета: `forecast/{accountId}`, `accruals`, `accrue/{accountId}`, `payout/{accountId}` (сумма = `Net` неоплаченных, транзакция, защита от повторной выплаты) |
-| `InvestmentsController.cs` | `/api/investments` | Портфели и позиции: CRUD, `summary`, `{id}/holdings` (GET/POST/PUT/DELETE) |
+| `InvestmentsController.cs` | `/api/investments` | Портфели и позиции: CRUD, `summary`, `{id}/holdings` (GET/POST/PUT/DELETE), `POST refresh?force=` — обновление котировок по тикерам (пункт 1.1) |
+| `DebtsController.cs` | `/api/debts` | Долги (Задача 2): `GET ?filter=active\|closed\|all`, `summary`, `{id}`, CRUD, `{id}/events` (POST/DELETE), `{id}/close\|reopen`; история событий приходит вместе с долгом |
+| `ObligationsController.cs` | `/api/obligations` | Обязательные платежи (Задача 3): `GET ?filter=active\|paused\|completed\|all`, `summary`, `{id}`, CRUD, `POST {id}/pay`, `DELETE {id}/payments/{paymentId}`, `{id}/pause\|resume\|complete`; история оплат приходит вместе с платежом |
+| `CalendarController.cs` | `/api/calendar` | Календарь событий (Задача 5): `GET ?from=&to=&types=`, `GET upcoming?take=&days=`, CRUD `/events`; объединяет платежи, сроки долгов, вклады, проценты и пользовательские события |
 | `BanksController.cs` | `/api/banks` | Справочник банков (0.3/N5): системные + пользовательские; `GET ?search=` (возвращает `inUse`), `POST`, `PUT {id}`, `DELETE {id}` (только свои, если не используются), `DELETE /unused` (массовое удаление неиспользуемых своих); в UI — фильтр «Скрыть неиспользуемые»; идемпотентный `SeedBanks.Seed` |
 | `ImportController.cs` | `/api/import` | `receipt` (фото/скриншот через OCR), `receipt/text` (разбор вставленного текста); проверка Content-Type **и** расширения, rate limit |
 | `ExportController.cs` | `/api/export` | `GET profile` — полный JSON-профиль для ИИ-анализа |
@@ -98,7 +101,13 @@ SelfUpdate, Ocr, YandexOAuth, FrontUrl), `backend/appsettings.Development.json` 
 | `AccountRulesService.cs` | Правила распределения: `MatchAssignmentAsync`, `EvaluateAllAsync`, алерты, резервные займы (`TakeReserveLoanAsync`, `ReturnReserveLoanAsync`) |
 | `TransferService.cs` | Переводы между своими и семейными счетами (Задача 7 + 0.3/N3): запись `Transfer` принадлежит владельцу счёта-отправителя, расходная половина — ему, доходная — владельцу счёта-получателя; видимость, детали и отмена — всей семьёй (`CanManageTransferAsync` через `FamilyAccess`); `TransferTransactionIdsAsync` скрывает половины из журнала у всех членов семьи |
 | `InterestCalculator.cs` | Проценты по вкладам: Act/365, капитализация, режимы выплаты, НДФЛ, прогноз за месяц/год |
-| `InvestmentCalculator.cs` | Стоимость и доходность портфелей, налоговый ориентир, сравнение с накопительным счётом |
+| `InvestmentCalculator.cs` | Стоимость и доходность портфелей, налоговый ориентир, сравнение с накопительным счётом; в сводке позиции — источник цены, время обновления и ошибка |
+| `IQuoteProvider.cs` | Абстракция источника котировок: `QuoteOutcome` (`Found/NotFound/Unavailable`), `QuoteResult`, `QuoteLookup` |
+| `MoexIssQuoteProvider.cs` | MOEX ISS: акции/ETF (`markets/shares`) и облигации (`markets/bonds`), поле `PREVPRICE`; кэш 5 минут, backoff 1 минута при сбое; публичный `TryParsePrice` для тестов |
+| `InvestmentQuoteService.cs` | Обновление цен позиций пользователя: пропуск свежих цен (< 5 минут), сохранение `QuoteSource`/`PriceUpdatedAt`/`QuoteError`, статус последнего обновления |
+| `DebtService.cs` | Долги (Задачи 2 и 4): `DebtCalculator` (остаток из событий, просрочка, подписи) и `DebtService` (CRUD, история, закрытие/открытие, необязательная операция по счёту с категорией «Долги», пересчёт баланса); общий `RecalcRemainingAsync`, защита событий, созданных оплатой платежа |
+| `ObligationService.cs` | Обязательные платежи (Задачи 3 и 4): `ObligationCalculator` (периодичность, сдвиг даты, просрочка, статусы) и `ObligationService` (CRUD, факты оплаты с необязательной операцией, пауза/возобновление/завершение, пересчёт баланса и остатка связанного долга) |
+| `CalendarService.cs` | Календарь событий (Задача 5): `CalendarSource`/`CalendarItem`, объединение дат из платежей, долгов, вкладов, начислений процентов и пользовательских событий; фильтры по источникам, ближайшие события, CRUD событий |
 | `FamilyAccess.cs` | Проверки доступа к семейным данным: `ManageableUserIdsAsync`, `CanManageAccountAsync`, `IsFamilyAccountAsync` |
 | `ReceiptOcrService.cs` | OCR через CLI `tesseract` (rus+eng), таймаут, поддерживаемые форматы |
 | `ReceiptParser.cs` | Эвристики разбора текста чека: сумма, дата, тип, продавец, категория |
@@ -108,7 +117,7 @@ SelfUpdate, Ocr, YandexOAuth, FrontUrl), `backend/appsettings.Development.json` 
 
 ### 3.3 Данные (`backend/Data/`)
 
-`AppDbContext.cs` — EF-контекст и модель. 15 сущностей:
+`AppDbContext.cs` — EF-контекст и модель. 20 сущностей:
 
 | Сущность | Назначение |
 |---|---|
@@ -126,7 +135,12 @@ SelfUpdate, Ocr, YandexOAuth, FrontUrl), `backend/appsettings.Development.json` 
 | `Transfer` | Перевод между счетами: счета, сумма, дата; связывает две операции |
 | `Bank` | Банк: системный (`UserId = null`) или пользовательский |
 | `InvestmentPortfolio` | Портфель: банк, продукт, стратегия |
-| `InvestmentHolding` | Позиция портфеля: тикер/название, количество, цена, стоимость |
+| `InvestmentHolding` | Позиция портфеля: тикер/название, количество, цена, стоимость; котировки: `QuoteSource`, `PriceUpdatedAt`, `QuoteError` |
+| `Debt` | Долг (Задача 2): направление, контрагент, суммы (основная/остаток), срок, ставка, условия, счёт, статус; остаток пересчитывается из событий |
+| `DebtEvent` | Событие истории долга: вид (возврат, проценты, корректировка, списание), сумма, дата, связь с операцией |
+| `Obligation` | Обязательный платёж (Задача 3): получатель, категория, сумма, периодичность, дата следующего платежа, день платежа, счёт, напоминание, статус, связь с долгом |
+| `ObligationPayment` | Факт оплаты: сумма, дата оплаты и дата по графику, комментарий, связь с операцией и событием возврата |
+| `CalendarEvent` | Пользовательское событие календаря (Задача 5): название, дата/время, тип, сумма, связь с долгом/платежом/счётом, напоминание |
 
 `AppDbContextFactory.cs` — design-time фабрика для `dotnet ef`; путь `backend/data/app.db`,
 переопределяется переменной `SCHITAYKA_DB` (удобно для проверки на копии).
@@ -144,12 +158,16 @@ SelfUpdate, Ocr, YandexOAuth, FrontUrl), `backend/appsettings.Development.json` 
 | `20261113125249_AddAccountBankColumn` | Реально добавляет `Accounts.BankId`, индекс и внешний ключ |
 | `20261116095454_AddInterestAccrualIndex` | Индекс `IX_InterestAccruals_UserId_AccountId_From` (был только в комментарии) |
 | `20261117071500_BanksDirectory` | Брендовые поля `Banks.ShortName/BrandColor/LogoUrl` (0.3/N5) |
+| `20261118061349_InvestmentQuotes` | Котировки позиций: `InvestmentHoldings.QuoteSource/PriceUpdatedAt/QuoteError` (инвестиции 1.0) |
+| `20261118080900_DebtsAndObligations` | Таблицы `Debts`, `DebtEvents`, `Obligations`, `ObligationPayments`, индексы и внешние ключи (Задачи 2 и 3; миграции объедилены, чтобы не держать промежуточную схему) |
+| `20261118083304_ObligationDebtLinks` | `ObligationPayments.DebtEventId` + FK на `DebtEvents` (`SetNull`) — связь факта оплаты с событием возврата по долгу (Задача 4) |
+| `20261118090110_CalendarEvents` | Таблица `CalendarEvents`, индекс `(UserId, Date)` и связи с долгом/платежом/счётом (Задача 5) |
 
 `AppDbContextModelSnapshot.cs` — снимок модели, обновляется автоматически.
 
 ---
 
-## 4. Тесты (`backend.Tests/`, xUnit, 77 тестов)
+## 4. Тесты (`backend.Tests/`, xUnit, 133 теста)
 
 | Файл | Что проверяет |
 |---|---|
@@ -160,10 +178,14 @@ SelfUpdate, Ocr, YandexOAuth, FrontUrl), `backend/appsettings.Development.json` 
 | `Task03N3FamilyTransferTests.cs` | Задача 0.3/N3: принадлежность перевода владельцу счёта-отправителя (половины по владельцам счетов), видимость семье, отмена членом семьи, недоступность чужому пользователю, скрытие половин из журнала |
 | `InterestCalculatorTests.cs` | Формулы процентов, режимы выплаты, НДФЛ, прогнозы |
 | `InvestmentCalculatorTests.cs` | Стоимость, доходность, сравнение с накопительным счётом |
+| `InvestmentQuoteTests.cs` | Котировки 1.0–1.1: парсинг MOEX ISS (`PREVPRICE`), обновление цены/источника/времени, fallback при `NotFound`/`Unavailable`, пропуск свежих цен и денег копилки |
 | `ReceiptParserTests.cs` | Разбор сумм, дат, продавцов, типов операций |
 | `SelfUpdateTests.cs` | Версия, asset-имя, проверка контрольной суммы, отказ при 404, та же версия не запускает обновление |
 | `UpdateCheckerTests.cs` | Определение доступного обновления по релизам GitHub (N1) |
 | `EndpointFixesTests.cs` | P0 аудита 16.11.2026: `tx-for` (200 + пересчёт), выплата процентов (сумма `Net`, защита от повтора) |
+| `DebtTests.cs` | Долги (Задача 2): расчёт остатка по всем видам событий, просрочка и статусы, создание/изменение/удаление, возврат с операцией по счёту (расход/доход, без кэшбэка), удаление события с откатом операции, сводка и фильтры списка |
+| `ObligationTests.cs` | Обязательные платежи (Задачи 3 и 4): периоды и день платежа (в т.ч. 31-е число), статусы и просрочка, валидация связей, оплата с операцией и без, удаление факта с возвратом даты, пауза/завершение, сводка и API; уменьшение остатка долга, удаление события возврата, защита истории, проекция связанных платежей |
+| `CalendarTests.cs` | Календарь событий (Задача 5): валидация и CRUD пользовательских событий, объединение всех источников, фильтры, диапазоны, ближайшие с просрочкой, изоляция по пользователю, API |
 
 Тесты используют SQLite in-memory и вызывают контроллеры напрямую; HTTP-интеграционных
 тестов нет (бэклог B18). Запуск: `dotnet test SchitayKa.sln --no-build`.
@@ -175,19 +197,23 @@ SelfUpdate, Ocr, YandexOAuth, FrontUrl), `backend/appsettings.Development.json` 
 | Файл | Ответственность |
 |---|---|
 | `main.tsx` | Точка входа React, монтирование `App` |
-| `App.tsx` | Каркас SPA: sidebar/topbar, hash-роутинг (`#/accounts`, `#/journal`, `#/goals`, `#/budget`, `#/investments`), настройки (в т.ч. карточка «Банки», 0.3/N5: поиск, плитки с монограммой и брендовым цветом, свой банк; 0.3/N6: переключатель «Нейтральный/Фирменный» стиль карточек), блок обновления/версии, профиль, тема |
-| `components.tsx` | Крупные блоки дашборда: `Dashboard` (в т.ч. переключатель охвата «Я / члены / вся семья», 0.3/N4, хранение в `localStorage('sk_scope')`), карточки `WalletCard`/`FamilyWalletCard` (0.3/N6: брендовый градиент + монограмма банка), `TxRow`, `QuickTxModal` (быстрая операция + OCR), `Journal` (журнал по месяцам; 0.3/N3: владельцы счетов в переводах) |
+| `App.tsx` | Каркас SPA: sidebar/topbar, hash-роутинг (`#/accounts`, `#/journal`, `#/goals`, `#/budget`, `#/debts`, `#/obligations`, `#/calendar`, `#/investments`), настройки (в т.ч. карточка «Банки», 0.3/N5: поиск, плитки с монограммой и брендовым цветом, свой банк; 0.3/N6: переключатель «Нейтральный/Фирменный» стиль карточек; 1.2, 2, 3 и 5: карточка «Виджеты дашборда»), блок обновления/версии, профиль, тема |
+| `components.tsx` | Крупные блоки дашборда: `Dashboard` (в т.ч. переключатель охвата «Я / члены / вся семья», 0.3/N4, хранение в `localStorage('sk_scope')`; 1.2: виджет «Инвестиции»; 2: виджет «Долги» — суммы, просрочка, ближайший срок; 3: виджет «Обязательные платежи» — ближайшие, сумма за месяц, просрочка; 5: виджет «Ближайшие события»; видимость в `sk_dashboard_widgets`), карточки `WalletCard`/`FamilyWalletCard` (0.3/N6: брендовый градиент + монограмма банка), `TxRow`, `QuickTxModal` (быстрая операция + OCR), `Journal` (журнал по месяцам; 0.3/N3: владельцы счетов в переводах) |
 | `AccountsPage.tsx` | Вкладка «Счета»: карточки счетов (0.3/N6: брендовый аватар/монограмма по банку), редактирование, банк, вклад (ставка/режим), семейный доступ, `FamilyCard`, переводы (0.3/N3: владелец контрагента) |
 | `GoalsPage.tsx` | Цели и месячные лимиты (вкладка задаётся `initialTab`: `goals` или `limits`), прогресс, пополнения |
-| `InvestmentsPage.tsx` | Портфели, позиции, сводка и сравнение с накопительным счётом |
+| `InvestmentsPage.tsx` | Портфели, позиции, сводка и сравнение с накопительным счётом; котировки MOEX ISS: кнопка «Обновить», автообновление при открытии и каждые 5 минут, время/ошибки источника, компактные карточки и редактирование позиции |
+| `DebtsPage.tsx` | Вкладка «Долги» (Задачи 2 и 4): сводка (я должен / мне должны / сальдо / просрочка / ближайший срок), фильтры, карточки долгов, формы долга и события, история с удалением, закрытие/открытие, галочка «создать операцию» при возврате и оплате процентов; блок «Связанные платежи» с датами и суммами |
+| `ObligationsPage.tsx` | Вкладка «Платежи» (Задачи 3 и 4): сводка (план на месяц, оплачено, просрочка, ближайший), фильтры, карточки платежей, формы платежа и оплаты, история с удалением, пауза/возобновление/завершение, галочка «создать операцию» при оплате и «уменьшить остаток долга» |
+| `CalendarPage.tsx` | Вкладка «Календарь» (Задача 5): представления месяц/неделя/ближайшие, навигация, фильтры по 5 источникам, пользовательские события с напоминаниями и связями, создание двойным кликом по дню |
 | `AccountRulesCard.tsx` | Правила счетов: список, тест, применение, отмена, резервные займы |
 | `LoginPage.tsx` | Вход и регистрация |
-| `api.ts` | Все запросы к API + типы DTO (в т.ч. `apply` — статус автообновления) |
+| `api.ts` | Все запросы к API + типы DTO (в т.ч. `apply` — статус автообновления, `CalendarItem` — строка календаря) |
 | `auth.ts` | Хранение JWT и пользователя в `localStorage`, разбор токена |
 | `theme.ts` | Светлая/тёмная/системная тема, запоминание выбора |
 | `bankstyle.ts` | 0.3/N6: фирменный стиль карточек счёта по банку — `getBankCardStyle`/`setBankCardStyle` (`localStorage('sk_bankstyle')`, по умолчанию `neutral`), `bankOf`, `darken`, `bankMonogram` (монограмма из `ShortName`, без внешних логотипов) |
+| `widgets.ts` | 1.2, 2, 3 и 5: видимость виджетов дашборда (`investments`, `debts`, `obligations`, `calendar` в `localStorage('sk_dashboard_widgets')`), событие `sk-widgets-changed` для мгновенной перерисовки |
 | `toasts.tsx` | Всплывающие уведомления (частичная замена `alert`) |
-| `icons.tsx` | SVG-иконки в духе lucide |
+| `icons.tsx` | SVG-иконки в духе lucide (добавлены `calendar` для платежей и `calendar-clock` для календаря) |
 | `plural.ts` | Склонение русских существительных после чисел |
 | `index.css` | Дизайн-система: токены, стекломорфизм, компоненты, адаптив (~70 КБ, бэклог B17) |
 
@@ -284,7 +310,7 @@ Program.cs → путь к БД → PrepareDatabase() → Migrate() → SeedBank
 | Счета, семья, банк счёта | `backend/Controllers/AccountsController.cs`, `Services/FamilyAccess.cs` |
 | Переводы | `backend/Services/TransferService.cs`, `Controllers/TransfersController.cs` |
 | Проценты вкладов | `backend/Services/InterestCalculator.cs`, `Controllers/InterestController.cs` |
-| Инвестиции | `backend/Services/InvestmentCalculator.cs`, `Controllers/InvestmentsController.cs` |
+| Инвестиции | `backend/Services/InvestmentCalculator.cs`, `Services/MoexIssQuoteProvider.cs`, `Services/InvestmentQuoteService.cs`, `Controllers/InvestmentsController.cs` |
 | Импорт чека / OCR | `backend/Controllers/ImportController.cs`, `Services/ReceiptOcrService.cs`, `Services/ReceiptParser.cs` |
 | Экспорт профиля | `backend/Controllers/ExportController.cs` |
 | Проверка и установка обновлений | `backend/Services/SelfUpdateService.cs`, `Controllers/VersionController.cs` |

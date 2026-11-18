@@ -33,7 +33,10 @@ public static class InvestmentCalculator
         decimal AvgPrice,
         decimal CurrentPrice,
         string Currency,
-        int Id = 0);
+        int Id = 0,
+        QuoteSource? QuoteSource = null,
+        DateTime? PriceUpdatedAt = null,
+        string? QuoteError = null);
 
     /// <summary>Позиция в деньгах.</summary>
     public record HoldingSummary(
@@ -47,7 +50,10 @@ public static class InvestmentCalculator
         decimal Invested,
         decimal Value,
         decimal Pnl,
-        decimal PnlPct);
+        decimal PnlPct,
+        QuoteSource? QuoteSource = null,
+        DateTime? PriceUpdatedAt = null,
+        string? QuoteError = null);
 
     /// <summary>Итог по портфелю + сравнение с копилкой.</summary>
     public record PortfolioSummary(
@@ -78,7 +84,8 @@ public static class InvestmentCalculator
         var pnlPct = invested > 0m ? Math.Round(pnl / invested * 100m, 2) : 0m;
 
         return new HoldingSummary(
-            h.Id, h.Name, h.Ticker, h.Type, h.Quantity, avg, price, invested, value, pnl, pnlPct);
+            h.Id, h.Name, h.Ticker, h.Type, h.Quantity, avg, price, invested, value, pnl, pnlPct,
+            h.QuoteSource, h.PriceUpdatedAt, h.QuoteError);
     }
 
     /// <summary>

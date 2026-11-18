@@ -162,10 +162,14 @@ export interface BankInfo {
 export interface HoldingSummary {
   id: number; name: string; ticker: string; type: number; quantity: number;
   avgPrice: number; currentPrice: number; invested: number; value: number; pnl: number; pnlPct: number;
+  quoteSource?: number | null; quoteSourceName?: string;
+  priceUpdatedAt?: string | null; quoteError?: string | null;
 }
 export interface HoldingInfo {
   id: number; name: string; ticker: string; assetType: number; quantity: number;
   avgPrice: number; currentPrice: number; currency: string; updatedAt: string;
+  quoteSource?: number | null; quoteSourceName?: string;
+  priceUpdatedAt?: string | null; quoteError?: string | null;
 }
 export interface PortfolioInfo {
   id: number; name: string; bankId: number; bankName: string;
@@ -175,6 +179,7 @@ export interface PortfolioInfo {
   invested: number; value: number; pnl: number; pnlPct: number;
   cashValue: number; investedValue: number; days: number;
   savingsAt6: number; savingsAt8: number; riskPremium: number; taxEstimate: number;
+  quoteUpdatedAt?: string | null; quoteError?: string | null;
   holdings: HoldingSummary[];
 }
 export interface InvestmentsSummary {
@@ -182,7 +187,151 @@ export interface InvestmentsSummary {
   cashValue: number; investedValue: number; days: number;
   savingsAt6: number; savingsAt8: number; riskPremium: number; taxEstimate: number;
   portfoliosCount: number; savingsRate: number; savingsRatePro: number; taxRate: number;
+  quoteUpdatedAt: string | null; quoteError: string | null;
+  quoteSourceName: string; autoRefreshMinutes: number;
 }
+/** Результат обновления котировок (пункт 1.1 плана). */
+export interface QuoteRefreshResult {
+  updated: number; failed: number; skipped: number; quoted: number;
+  lastSuccessAt: string | null; lastError: string | null;
+  source: string; autoRefreshMinutes: number;
+}
+
+/** Событие истории долга (Задача 2). */
+export interface DebtEventInfo {
+  id: number;
+  kind: number;
+  kindName: string;
+  amount: number;
+  date: string;
+  note: string;
+  transactionId: number | null;
+  createdAt: string;
+}
+
+/** Долг: «я должен» или «мне должны» (Задача 2). */
+export interface DebtInfo {
+  id: number;
+  direction: number;
+  directionName: string;
+  counterparty: string;
+  name: string;
+  principalAmount: number;
+  remainingAmount: number;
+  currency: string;
+  issuedAt: string;
+  dueDate: string | null;
+  interestRate: number;
+  terms: string | null;
+  accountId: number | null;
+  accountName: string | null;
+  note: string;
+  status: number;
+  statusName: string;
+  isOverdue: boolean;
+  daysLeft: number | null;
+  eventsCount: number;
+  createdAt: string;
+  events: DebtEventInfo[];
+  /** Предстоящие платежи, связанные с долгом (Задача 4). */
+  linkedObligations: Array<{
+    id: number; name: string; amount: number; nextPaymentDate: string;
+    statusName: string; isOverdue: boolean;
+  }>;
+}
+
+/** Сводка по долгам для виджета дашборда. */
+export interface DebtsSummary {
+  iOwe: number;
+  owedToMe: number;
+  net: number;
+  activeCount: number;
+  closedCount: number;
+  overdueCount: number;
+  overdueAmount: number;
+  nearest: {
+    id: number; name: string; dueDate: string | null; remainingAmount: number;
+  } | null;
+}
+/** Факт оплаты обязательного платежа (Задача 3). */
+export interface ObligationPaymentInfo {
+  id: number;
+  amount: number;
+  date: string;
+  plannedDate: string;
+  note: string;
+  transactionId: number | null;
+  createdAt: string;
+}
+
+/** Обязательный платёж (Задача 3). */
+export interface ObligationInfo {
+  id: number;
+  name: string;
+  payee: string;
+  categoryId: number | null;
+  categoryName: string | null;
+  categoryColor: string | null;
+  amount: number;
+  periodicity: number;
+  periodicityName: string;
+  nextPaymentDate: string;
+  paymentDay: number | null;
+  intervalDays: number | null;
+  accountId: number | null;
+  accountName: string | null;
+  remind: boolean;
+  debtId: number | null;
+  debtName: string | null;
+  note: string;
+  status: number;
+  statusName: string;
+  isOverdue: boolean;
+  daysLeft: number;
+  paymentsCount: number;
+  lastPaymentDate: string | null;
+  payments: ObligationPaymentInfo[];
+}
+
+/** Сводка по обязательным платежам для виджета дашборда. */
+export interface ObligationsSummary {
+  activeCount: number;
+  pausedCount: number;
+  completedCount: number;
+  overdueCount: number;
+  overdueAmount: number;
+  dueIn7DaysCount: number;
+  dueIn7DaysAmount: number;
+  monthPlannedAmount: number;
+  paidThisMonthAmount: number;
+  next: {
+    id: number; name: string; payee: string;
+    nextPaymentDate: string; amount: number; isOverdue: boolean;
+  } | null;
+  upcoming: Array<{
+    id: number; name: string; nextPaymentDate: string; amount: number; isOverdue: boolean;
+  }>;
+}
+
+/** Строка календаря событий (Задача 5): событие из любого источника. */
+export interface CalendarItem {
+  key: string;
+  id: number;
+  source: number;
+  sourceName: string;
+  title: string;
+  date: string;
+  time: string | null;
+  amount: number | null;
+  isOverdue: boolean;
+  debtId: number | null;
+  obligationId: number | null;
+  accountId: number | null;
+  remind: boolean;
+  note: string;
+  typeName: string | null;
+}
+
 export interface InterestForecastRow {
   year: number; month: number; gross: number; tax: number; net: number;
   startBalance: number; endBalance: number;
@@ -355,4 +504,14 @@ export interface AccountSummaryRow {
 }
 
 export const fmt = (n: number) => new Intl.NumberFormat('ru-RU', { maximumFractionDigits: 0 }).format(n) + ' ₽';
+
+/**
+ * Разбор даты из API. Бэкенд хранит время в UTC, но отдаёт ISO-строку
+ * без указания зоны («2026-11-18T06:26:10»). Браузер в таком случае
+ * считает её локальной — добавляем «Z», чтобы время отображалось
+ * в часовом поясе пользователя.
+ */
+export function parseServerDate(value: string): Date {
+  return new Date(/(?:Z|[+-]\d{2}:?\d{2})$/.test(value) ? value : `${value}Z`);
+}
 export const MONTHS_RU = ['Январь','Февраль','Март','Апрель','Май','Июнь','Июль','Август','Сентябрь','Октябрь','Ноябрь','Декабрь'];

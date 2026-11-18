@@ -475,6 +475,9 @@ Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools();
 builder.Services.AddDbContext<AppDbContext>(o => o.UseSqlite(connStr));
 builder.Services.AddScoped<SchitayKa.Api.Services.AccountRulesService>();
 builder.Services.AddScoped<SchitayKa.Api.Services.TransferService>();
+builder.Services.AddScoped<SchitayKa.Api.Services.DebtService>();
+builder.Services.AddScoped<SchitayKa.Api.Services.ObligationService>();
+builder.Services.AddScoped<SchitayKa.Api.Services.CalendarService>();
 
 builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
     .AddJwtBearer(o =>
@@ -505,6 +508,10 @@ builder.Services.AddHttpClient("github-download", c => c.Timeout = TimeSpan.From
 builder.Services.AddSingleton<SchitayKa.Api.Services.UpdateChecker>();
 builder.Services.AddSingleton<SchitayKa.Api.Services.SelfUpdateService>();
 builder.Services.AddSingleton<SchitayKa.Api.Services.ReceiptOcrService>();
+// Котировки инвестиций (пункт 1.0 плана): публичный MOEX ISS, кэш/backoff внутри провайдера.
+builder.Services.AddHttpClient("moex", c => c.Timeout = TimeSpan.FromSeconds(8));
+builder.Services.AddSingleton<SchitayKa.Api.Services.IQuoteProvider, SchitayKa.Api.Services.MoexIssQuoteProvider>();
+builder.Services.AddScoped<SchitayKa.Api.Services.InvestmentQuoteService>();
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();
 

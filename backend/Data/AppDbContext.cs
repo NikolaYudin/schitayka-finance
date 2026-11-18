@@ -21,6 +21,11 @@ public class AppDbContext : DbContext
     public DbSet<Bank> Banks => Set<Bank>();
     public DbSet<InvestmentPortfolio> InvestmentPortfolios => Set<InvestmentPortfolio>();
     public DbSet<InvestmentHolding> InvestmentHoldings => Set<InvestmentHolding>();
+    public DbSet<Debt> Debts => Set<Debt>();
+    public DbSet<DebtEvent> DebtEvents => Set<DebtEvent>();
+    public DbSet<Obligation> Obligations => Set<Obligation>();
+    public DbSet<ObligationPayment> ObligationPayments => Set<ObligationPayment>();
+    public DbSet<CalendarEvent> CalendarEvents => Set<CalendarEvent>();
 
     protected override void OnModelCreating(ModelBuilder mb)
     {
@@ -115,6 +120,50 @@ public class AppDbContext : DbContext
         mb.Entity<InvestmentHolding>()
             .HasOne(h => h.Portfolio).WithMany(p => p.Holdings)
             .HasForeignKey(h => h.PortfolioId).OnDelete(DeleteBehavior.Cascade);
+
+        // --- Задача 2: долги и история событий ---
+        mb.Entity<Debt>().HasIndex(d => new { d.UserId, d.Status, d.DueDate });
+        mb.Entity<Debt>()
+            .HasOne(d => d.User).WithMany().HasForeignKey(d => d.UserId).OnDelete(DeleteBehavior.Cascade);
+        mb.Entity<Debt>()
+            .HasOne(d => d.Account).WithMany().HasForeignKey(d => d.AccountId).OnDelete(DeleteBehavior.SetNull);
+        mb.Entity<DebtEvent>().HasIndex(e => new { e.DebtId, e.Date });
+        mb.Entity<DebtEvent>()
+            .HasOne(e => e.Debt).WithMany(d => d.Events).HasForeignKey(e => e.DebtId).OnDelete(DeleteBehavior.Cascade);
+        mb.Entity<DebtEvent>()
+            .HasOne(e => e.Transaction).WithMany().HasForeignKey(e => e.TransactionId).OnDelete(DeleteBehavior.SetNull);
+
+        // --- Задача 3: обязательные платежи и факты оплаты ---
+        mb.Entity<Obligation>().HasIndex(o => new { o.UserId, o.Status, o.NextPaymentDate });
+        mb.Entity<Obligation>()
+            .HasOne(o => o.User).WithMany().HasForeignKey(o => o.UserId).OnDelete(DeleteBehavior.Cascade);
+        mb.Entity<Obligation>()
+            .HasOne(o => o.Account).WithMany().HasForeignKey(o => o.AccountId).OnDelete(DeleteBehavior.SetNull);
+        mb.Entity<Obligation>()
+            .HasOne(o => o.Category).WithMany().HasForeignKey(o => o.CategoryId).OnDelete(DeleteBehavior.SetNull);
+        mb.Entity<Obligation>()
+            .HasOne(o => o.Debt).WithMany(d => d.Obligations)
+            .HasForeignKey(o => o.DebtId).OnDelete(DeleteBehavior.SetNull);
+        mb.Entity<ObligationPayment>().HasIndex(p => new { p.ObligationId, p.Date });
+        mb.Entity<ObligationPayment>()
+            .HasOne(p => p.Obligation).WithMany(o => o.Payments)
+            .HasForeignKey(p => p.ObligationId).OnDelete(DeleteBehavior.Cascade);
+        mb.Entity<ObligationPayment>()
+            .HasOne(p => p.Transaction).WithMany().HasForeignKey(p => p.TransactionId).OnDelete(DeleteBehavior.SetNull);
+        mb.Entity<ObligationPayment>()
+            .HasOne(p => p.DebtEvent).WithMany().HasForeignKey(p => p.DebtEventId)
+            .OnDelete(DeleteBehavior.SetNull);
+
+        // --- Задача 5: календарь событий ---
+        mb.Entity<CalendarEvent>().HasIndex(e => new { e.UserId, e.Date });
+        mb.Entity<CalendarEvent>()
+            .HasOne(e => e.User).WithMany().HasForeignKey(e => e.UserId).OnDelete(DeleteBehavior.Cascade);
+        mb.Entity<CalendarEvent>()
+            .HasOne(e => e.Debt).WithMany().HasForeignKey(e => e.DebtId).OnDelete(DeleteBehavior.SetNull);
+        mb.Entity<CalendarEvent>()
+            .HasOne(e => e.Obligation).WithMany().HasForeignKey(e => e.ObligationId).OnDelete(DeleteBehavior.SetNull);
+        mb.Entity<CalendarEvent>()
+            .HasOne(e => e.Account).WithMany().HasForeignKey(e => e.AccountId).OnDelete(DeleteBehavior.SetNull);
     }
 }
 
@@ -398,6 +447,13 @@ public enum AssetType
     Other = 9,
 }
 
+// Источник последней цены позиции (пункт 1.0 плана).
+public enum QuoteSource
+{
+    Manual = 0,   // цену ввёл/обновил пользователь
+    MoexIss = 1,  // MOEX ISS (публичный API Мосбиржи)
+}
+
 // Банк, в котором открыт счёт. UserId = null — системный справочник.
 public class Bank
 {
@@ -446,4 +502,197 @@ public class InvestmentHolding
     public decimal CurrentPrice { get; set; }          // текущая цена (0 — не задана)
     public string Currency { get; set; } = "RUB";
     public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;
+
+    // --- Котировки (пункт 1.0 плана) ---
+    public QuoteSource? QuoteSource { get; set; }      // null — цена ещё не обновлялась автоматически
+    public DateTime? PriceUpdatedAt { get; set; }      // время последнего обновления цены
+    public string? QuoteError { get; set; }            // последняя ошибка источника (для карточки)
+}
+
+// ─── Задача 2. Долги ───────────────────────────────────────────────────────
+
+/// <summary>Направление долга: пользователь должен или должны пользователю.</summary>
+public enum DebtDirection
+{
+    IOwe = 0,      // я должен
+    OwedToMe = 1,  // мне должны
+}
+
+/// <summary>Хранимый статус долга. «Просрочен» вычисляется по сроку и остатку.</summary>
+public enum DebtStatus
+{
+    Active = 0,
+    Closed = 1,
+}
+
+/// <summary>Тип события в истории долга.</summary>
+public enum DebtEventKind
+{
+    Issued = 0,          // возникновение долга (создаётся автоматически)
+    Repayment = 1,       // возврат части или всего долга
+    InterestAccrued = 2, // начислены проценты (увеличивают остаток)
+    InterestPaid = 3,    // оплачены проценты (уменьшают остаток)
+    Adjustment = 4,      // корректировка: сумма со знаком (+ увеличить, − уменьшить)
+    WriteOff = 5,        // списание безнадёжного долга
+}
+
+/// <summary>
+/// Денежное обязательство (Задача 2): кому и сколько должен пользователь либо кто должен ему.
+/// Долги учитываются отдельно от доходов/расходов бюджета (решение 18.11.2026).
+/// </summary>
+public class Debt
+{
+    public int Id { get; set; }
+    public int UserId { get; set; }
+    public User User { get; set; } = null!;
+
+    public DebtDirection Direction { get; set; }
+    public string Counterparty { get; set; } = "";     // человек или организация
+    public string Name { get; set; } = "";
+    public decimal PrincipalAmount { get; set; }       // основная сумма
+    public decimal RemainingAmount { get; set; }       // текущий остаток (пересчитывается из событий)
+    public string Currency { get; set; } = "RUB";
+
+    public DateOnly IssuedAt { get; set; }
+    public DateOnly? DueDate { get; set; }             // срок возврата (опционально)
+    public decimal InterestRate { get; set; }          // ставка, % (0 — без процентов)
+    public string? Terms { get; set; }                 // условия/комментарий по договору
+
+    public int? AccountId { get; set; }                // счёт по умолчанию для операций
+    public Account? Account { get; set; }
+    public string Note { get; set; } = "";
+    public DebtStatus Status { get; set; } = DebtStatus.Active;
+    public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
+
+    public List<DebtEvent> Events { get; set; } = [];
+    public List<Obligation> Obligations { get; set; } = []; // связанный график платежей (Задача 4)
+}
+
+/// <summary>Событие истории долга: возврат, проценты, корректировка, списание.</summary>
+public class DebtEvent
+{
+    public int Id { get; set; }
+    public int UserId { get; set; }
+    public int DebtId { get; set; }
+    public Debt Debt { get; set; } = null!;
+    public DebtEventKind Kind { get; set; }
+    public decimal Amount { get; set; }                // для Adjustment допускается отрицательное значение
+    public DateOnly Date { get; set; }
+    public string Note { get; set; } = "";
+    public int? TransactionId { get; set; }            // операция, если событие её создало
+    public Transaction? Transaction { get; set; }
+    public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
+}
+
+// ─── Задача 3. Обязательные платежи ─────────────────────────────────────────
+
+/// <summary>Периодичность обязательного платежа.</summary>
+public enum ObligationPeriodicity
+{
+    OneTime = 0,    // разово
+    Monthly = 1,    // ежемесячно
+    Quarterly = 2,  // ежеквартально
+    Yearly = 3,     // ежегодно
+    Custom = 4,     // произвольно: интервал в днях
+}
+
+/// <summary>Состояние обязательного платежа. «Просрочен» вычисляется по дате.</summary>
+public enum ObligationStatus
+{
+    Active = 0,
+    Paused = 1,
+    Completed = 2,
+}
+
+/// <summary>
+/// Обязательный платёж (Задача 3): регулярные траты, не обязательно связанные с долгом —
+/// коммуналка, подписки, налоги, кредит. Сам платёж — это план и не влияет на бюджет;
+/// движение денег появляется только если при оплате создана операция (решение 18.11.2026).
+/// </summary>
+public class Obligation
+{
+    public int Id { get; set; }
+    public int UserId { get; set; }
+    public User User { get; set; } = null!;
+
+    public string Name { get; set; } = "";
+    public string Payee { get; set; } = "";              // получатель: человек или организация
+    public int? CategoryId { get; set; }                 // категория для операции при оплате
+    public Category? Category { get; set; }
+    public decimal Amount { get; set; }                  // ожидаемая/фиксированная сумма
+
+    public ObligationPeriodicity Periodicity { get; set; } = ObligationPeriodicity.Monthly;
+    public DateOnly NextPaymentDate { get; set; }        // дата следующего платежа (может быть в прошлом = просрочка)
+    public int? PaymentDay { get; set; }                 // день месяца для периодичных платежей (1–31)
+    public int? IntervalDays { get; set; }               // интервал для Periodicity.Custom
+
+    public int? AccountId { get; set; }                  // счёт списания по умолчанию
+    public Account? Account { get; set; }
+    public bool Remind { get; set; }                     // напоминание о платеже
+    public int? DebtId { get; set; }                     // связь с долгом (задача 4), опционально
+    public Debt? Debt { get; set; }
+    public string Note { get; set; } = "";
+
+    public ObligationStatus Status { get; set; } = ObligationStatus.Active;
+    public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
+
+    public List<ObligationPayment> Payments { get; set; } = [];
+}
+
+/// <summary>Факт оплаты обязательного платежа.</summary>
+public class ObligationPayment
+{
+    public int Id { get; set; }
+    public int UserId { get; set; }
+    public int ObligationId { get; set; }
+    public Obligation Obligation { get; set; } = null!;
+
+    public decimal Amount { get; set; }
+    public DateOnly Date { get; set; }                   // фактическая дата оплаты
+    public DateOnly PlannedDate { get; set; }            // дата по графику, которая оплачена
+    public string Note { get; set; } = "";
+    public int? TransactionId { get; set; }              // операция, если она создавалась при оплате
+    public Transaction? Transaction { get; set; }
+    public int? DebtEventId { get; set; }                // событие возврата по связанному долгу (Задача 4)
+    public DebtEvent? DebtEvent { get; set; }
+    public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
+}
+
+// ─── Задача 5. Календарь событий ─────────────────────────────────────────────
+
+/// <summary>Тип пользовательского события календаря.</summary>
+public enum CalendarEventType
+{
+    Event = 0,       // событие
+    Reminder = 1,    // напоминание
+    Meeting = 2,     // встреча
+    Other = 3,       // прочее
+}
+
+/// <summary>
+/// Пользовательское событие/напоминание календаря (Задача 5).
+/// Остальные события календарь собирает из долгов, платежей, вкладов и начислений.
+/// </summary>
+public class CalendarEvent
+{
+    public int Id { get; set; }
+    public int UserId { get; set; }
+    public User User { get; set; } = null!;
+
+    public string Title { get; set; } = "";
+    public DateOnly Date { get; set; }
+    public string? Time { get; set; }                    // "HH:mm", опционально
+    public CalendarEventType Type { get; set; } = CalendarEventType.Event;
+    public decimal? Amount { get; set; }
+    public bool Remind { get; set; }
+    public string Note { get; set; } = "";
+
+    public int? DebtId { get; set; }
+    public Debt? Debt { get; set; }
+    public int? ObligationId { get; set; }
+    public Obligation? Obligation { get; set; }
+    public int? AccountId { get; set; }
+    public Account? Account { get; set; }
+
+    public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
 }

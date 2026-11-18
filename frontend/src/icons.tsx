@@ -12,7 +12,7 @@ export type IconName =
   | 'trending-up' | 'trending-down' | 'arrow-up-right' | 'arrow-down-left'
   | 'trash' | 'pencil' | 'archive' | 'gift' | 'refresh' | 'user'
   | 'mail' | 'lock' | 'calculator' | 'pie' | 'credit-card' | 'shield' | 'copy'
-  | 'image' | 'camera' | 'download';
+  | 'image' | 'camera' | 'download' | 'calendar' | 'calendar-clock';
 
 const PATHS: Record<IconName, ReactNode> = {
   dashboard: (
@@ -182,6 +182,21 @@ const PATHS: Record<IconName, ReactNode> = {
       <rect x="2" y="5" width="20" height="14" rx="3" />
       <path d="M2 10h20" />
       <path d="M6 15h3" />
+    </>
+  ),
+  calendar: (
+    <>
+      <rect x="3" y="5" width="18" height="16" rx="2" />
+      <path d="M8 3v4M16 3v4M3 10h18" />
+      <path d="M8 14h.01M12 14h.01M16 14h.01M8 18h.01M12 18h.01" />
+    </>
+  ),
+  'calendar-clock': (
+    <>
+      <rect x="3" y="5" width="18" height="16" rx="2" />
+      <path d="M8 3v4M16 3v4M3 10h18" />
+      <circle cx="14.5" cy="16" r="3.5" />
+      <path d="M14.5 14v2l1.5 1" />
     </>
   ),
   shield: (
