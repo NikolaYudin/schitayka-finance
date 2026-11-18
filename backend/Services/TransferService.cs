@@ -222,22 +222,6 @@ public sealed class TransferService
     private Task RecalcAsync(params int[] accountIds) =>
         AccountBalanceService.RecalcAsync(_db, accountIds);
 
-    private async Task<Category> EnsureCategoryAsync(int userId, TxType type)
-    {
-        var existing = await _db.Categories
-            .FirstOrDefaultAsync(c => c.UserId == userId && c.Name == CategoryName && c.Type == type);
-        if (existing is not null) return existing;
-
-        var cat = new Category
-        {
-            UserId = userId,
-            Name = CategoryName,
-            Type = type,
-            Color = "#718096",
-            IsSystem = true,
-        };
-        _db.Categories.Add(cat);
-        await _db.SaveChangesAsync();
-        return cat;
-    }
+    private Task<Category> EnsureCategoryAsync(int userId, TxType type) =>
+        CategoryService.EnsureSystemAsync(_db, userId, CategoryName, type, "#718096");
 }

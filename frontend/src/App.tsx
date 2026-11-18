@@ -943,7 +943,10 @@ function CategoriesCard({ categories, onChanged }: { categories: Category[]; onC
       <div className="card-head">
         <div>
           <h3>Категории</h3>
-          <p className="card-sub">{categories.length} {plural(categories.length, 'категория', 'категории', 'категорий')} для доходов и расходов</p>
+          <p className="card-sub">
+            {categories.length} {plural(categories.length, 'категория', 'категории', 'категорий')} для доходов и расходов
+            {categories.some(c => c.familyShared) ? ' · 🏠 общие для семьи' : ''}
+          </p>
         </div>
       </div>
 
@@ -955,16 +958,21 @@ function CategoriesCard({ categories, onChanged }: { categories: Category[]; onC
             <span className={`cat-type ${c.type === 0 ? 'income' : ''}`}>
               {c.type === 0 ? 'доход' : 'расход'}
             </span>
-            <button
-              type="button"
-              className="btn icon danger"
-              style={{ width: 30, height: 30 }}
-              onClick={() => del(c.id)}
-              title="Удалить категорию"
-              aria-label={`Удалить категорию ${c.name}`}
-            >
-              <Icon name="x" size={14} />
-            </button>
+            {c.familyShared && (
+              <span className="badge badge-muted" title="Общая категория семьи" style={{ fontSize: 10 }}>🏠</span>
+            )}
+            {!c.isSystem && (
+              <button
+                type="button"
+                className="btn icon danger"
+                style={{ width: 30, height: 30 }}
+                onClick={() => del(c.id)}
+                title="Удалить категорию"
+                aria-label={`Удалить категорию ${c.name}`}
+              >
+                <Icon name="x" size={14} />
+              </button>
+            )}
           </div>
         ))}
         {categories.length === 0 && <div className="muted">Категорий пока нет.</div>}

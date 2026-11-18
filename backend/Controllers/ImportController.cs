@@ -73,8 +73,7 @@ public class ImportController : ControllerBase
 
     private async Task<ReceiptParseResult> ParseTextAsync(string text)
     {
-        var categories = await _db.Categories
-            .Where(c => c.UserId == Uid)
+        var categories = await (await CategoryService.AccessibleAsync(_db, Uid))
             .OrderBy(c => c.Name)
             .Select(c => new CategoryRef(c.Id, c.Name, c.Type))
             .ToListAsync();

@@ -171,15 +171,8 @@ public class InterestController : ControllerBase
         // Операция, пометка начислений и пересчёт баланса — одной транзакцией.
         await using var tr = await _db.Database.BeginTransactionAsync();
 
-        // Категория дохода для процентов — создаём системную при первом разе.
-        var cat = await _db.Categories
-            .FirstOrDefaultAsync(c => c.UserId == Uid && c.Name == "Проценты" && c.Type == TxType.Income);
-        if (cat is null)
-        {
-            cat = new Category { UserId = Uid, Name = "Проценты", Type = TxType.Income, Color = "#38a169", IsSystem = true };
-            _db.Categories.Add(cat);
-            await _db.SaveChangesAsync();
-        }
+        // Категория дохода для процентов — системная, общая для всей семьи.
+        var cat = await CategoryService.EnsureSystemAsync(_db, Uid, "Проценты", TxType.Income, "#38a169");
 
         var tx = new Transaction
         {

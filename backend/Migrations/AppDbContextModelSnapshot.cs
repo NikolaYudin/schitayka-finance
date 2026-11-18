@@ -342,6 +342,9 @@ namespace SchitayKa.Api.Migrations
                         .IsRequired()
                         .HasColumnType("TEXT");
 
+                    b.Property<string>("FamilyCode")
+                        .HasColumnType("TEXT");
+
                     b.Property<bool>("IsSystem")
                         .HasColumnType("INTEGER");
 
@@ -356,6 +359,8 @@ namespace SchitayKa.Api.Migrations
                         .HasColumnType("INTEGER");
 
                     b.HasKey("Id");
+
+                    b.HasIndex("FamilyCode", "Name", "Type");
 
                     b.HasIndex("UserId", "Name", "Type")
                         .IsUnique();

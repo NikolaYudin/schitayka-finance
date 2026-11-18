@@ -103,7 +103,10 @@ export const api = {
 export type TxType = 0 | 1; // 0 = доход, 1 = расход
 
 export interface UserInfo { id: number; email: string; name: string; startingBalance?: number; familyCode?: string | null; }
-export interface Category { id: number; name: string; type: TxType; color: string; isSystem?: boolean; }
+export interface Category {
+  id: number; name: string; type: TxType; color: string;
+  isSystem?: boolean; familyShared?: boolean;
+}
 export interface Tx {
   id: number; categoryId: number; type: TxType; amount: number; date: string;
   comment: string; categoryName?: string; categoryColor?: string;
@@ -231,6 +234,8 @@ export interface DebtInfo {
   isOverdue: boolean;
   daysLeft: number | null;
   eventsCount: number;
+  ownerId?: number;
+  ownerName?: string | null;
   createdAt: string;
   events: DebtEventInfo[];
   /** Предстоящие платежи, связанные с долгом (Задача 4). */
@@ -289,6 +294,8 @@ export interface ObligationInfo {
   isOverdue: boolean;
   daysLeft: number;
   paymentsCount: number;
+  ownerId?: number;
+  ownerName?: string | null;
   lastPaymentDate: string | null;
   payments: ObligationPaymentInfo[];
 }
@@ -330,6 +337,8 @@ export interface CalendarItem {
   remind: boolean;
   note: string;
   typeName: string | null;
+  ownerId?: number;
+  ownerName?: string | null;
 }
 
 export interface InterestForecastRow {

@@ -15,15 +15,15 @@ schitayka-finance/
 ├── backend/                  # ASP.NET Core 8: API, бизнес-логика, миграции, статика SPA
 │   ├── Program.cs            # вся конфигурация и старт приложения (см. §2)
 │   ├── Controllers/          # HTTP-концы: 15 файлов / 21 контроллер (§3.1)
-│   ├── Services/             # бизнес-логика и интеграции: 17 файлов (§3.2)
+│   ├── Services/             # бизнес-логика и интеграции: 18 файлов (§3.2)
 │   ├── Data/                 # EF-контекст (20 сущностей) и design-time фабрика (§3.3)
-│   ├── Migrations/           # 13 миграций EF Core + snapshot (§3.4)
+│   ├── Migrations/           # 14 миграций EF Core + snapshot (§3.4)
 │   ├── wwwroot/              # артефакт сборки фронтенда (в git лежит последняя сборка)
 │   ├── appsettings*.json     # JWT, строка подключения, SelfUpdate, OCR, Yandex
 │   └── SchitayKa.Api.csproj  # проект + MSBuild-таргет автосборки фронтенда
-├── backend.Tests/            # xUnit: 15 файлов, 133 теста (§4)
+├── backend.Tests/            # xUnit: 17 файлов, 147 тестов (§4)
 ├── frontend/                 # React 18 + TS + Vite; собирается в backend/wwwroot
-│   └── src/                  # 19 модулей интерфейса (§5)
+│   └── src/                  # 21 модуль интерфейса (§5)
 ├── deploy/xpenology/         # Docker, compose, обновление, установка на NAS (§6)
 │   └── release/              # упаковщик zip-дистрибутива и сборка app.zip для автообновления
 ├── docs/                     # эта документация (§7)
@@ -108,6 +108,7 @@ SelfUpdate, Ocr, YandexOAuth, FrontUrl), `backend/appsettings.Development.json` 
 | `DebtService.cs` | Долги (Задачи 2 и 4): `DebtCalculator` (остаток из событий, просрочка, подписи) и `DebtService` (CRUD, история, закрытие/открытие, необязательная операция по счёту с категорией «Долги», пересчёт баланса); общий `RecalcRemainingAsync`, защита событий, созданных оплатой платежа |
 | `ObligationService.cs` | Обязательные платежи (Задачи 3 и 4): `ObligationCalculator` (периодичность, сдвиг даты, просрочка, статусы) и `ObligationService` (CRUD, факты оплаты с необязательной операцией, пауза/возобновление/завершение, пересчёт баланса и остатка связанного долга) |
 | `CalendarService.cs` | Календарь событий (Задача 5): `CalendarSource`/`CalendarItem`, объединение дат из платежей, долгов, вкладов, начислений процентов и пользовательских событий; фильтры по источникам, ближайшие события, CRUD событий |
+| `CategoryService.cs` | Общие категории семьи: доступ по `FamilyCode`, проверка принадлежности, слияние одноимённых категорий с переносом ссылок, системные категории на семью |
 | `FamilyAccess.cs` | Проверки доступа к семейным данным: `ManageableUserIdsAsync`, `CanManageAccountAsync`, `IsFamilyAccountAsync` |
 | `ReceiptOcrService.cs` | OCR через CLI `tesseract` (rus+eng), таймаут, поддерживаемые форматы |
 | `ReceiptParser.cs` | Эвристики разбора текста чека: сумма, дата, тип, продавец, категория |
@@ -122,7 +123,7 @@ SelfUpdate, Ocr, YandexOAuth, FrontUrl), `backend/appsettings.Development.json` 
 | Сущность | Назначение |
 |---|---|
 | `User` | Пользователь: email, хэш пароля, семья (`FamilyCode`), тема, признак супруга |
-| `Category` | Категории доходов/расходов (стартовый набор + свои) |
+| `Category` | Категории доходов/расходов (стартовый набор + свои); `FamilyCode` делает категорию общей для семьи |
 | `Transaction` | Операция: сумма, тип (доход/расход), дата, категория, счёт, `IsTransfer` |
 | `SavingsGoal` | Финансовая цель/копилка: сумма, срок, пополнения |
 | `BudgetLimit` | Месячный лимит по категории, уникальный `(UserId, CategoryId, Year, Month)` |
@@ -162,12 +163,13 @@ SelfUpdate, Ocr, YandexOAuth, FrontUrl), `backend/appsettings.Development.json` 
 | `20261118080900_DebtsAndObligations` | Таблицы `Debts`, `DebtEvents`, `Obligations`, `ObligationPayments`, индексы и внешние ключи (Задачи 2 и 3; миграции объедилены, чтобы не держать промежуточную схему) |
 | `20261118083304_ObligationDebtLinks` | `ObligationPayments.DebtEventId` + FK на `DebtEvents` (`SetNull`) — связь факта оплаты с событием возврата по долгу (Задача 4) |
 | `20261118090110_CalendarEvents` | Таблица `CalendarEvents`, индекс `(UserId, Date)` и связи с долгом/платежом/счётом (Задача 5) |
+| `20261118124009_SharedFamilyCategories` | `Categories.FamilyCode` + индекс `(FamilyCode, Name, Type)` — общие категории семьи |
 
 `AppDbContextModelSnapshot.cs` — снимок модели, обновляется автоматически.
 
 ---
 
-## 4. Тесты (`backend.Tests/`, xUnit, 133 теста)
+## 4. Тесты (`backend.Tests/`, xUnit, 147 тестов)
 
 | Файл | Что проверяет |
 |---|---|
@@ -186,6 +188,8 @@ SelfUpdate, Ocr, YandexOAuth, FrontUrl), `backend/appsettings.Development.json` 
 | `DebtTests.cs` | Долги (Задача 2): расчёт остатка по всем видам событий, просрочка и статусы, создание/изменение/удаление, возврат с операцией по счёту (расход/доход, без кэшбэка), удаление события с откатом операции, сводка и фильтры списка |
 | `ObligationTests.cs` | Обязательные платежи (Задачи 3 и 4): периоды и день платежа (в т.ч. 31-е число), статусы и просрочка, валидация связей, оплата с операцией и без, удаление факта с возвратом даты, пауза/завершение, сводка и API; уменьшение остатка долга, удаление события возврата, защита истории, проекция связанных платежей |
 | `CalendarTests.cs` | Календарь событий (Задача 5): валидация и CRUD пользовательских событий, объединение всех источников, фильтры, диапазоны, ближайшие с просрочкой, изоляция по пользователю, API |
+| `FamilyCategoryTests.cs` | Общие категории семьи: видимость списка, запрет дублей, изменение другим членом, операции общей категорией, системные категории, слияние дублей с переносом ссылок, выход из семьи |
+| `FamilyScopeTests.cs` | Охват «я / семья»: разбор scope/ids, долги и платежи супруга в семейном режиме, календарь со всеми источниками, сводки контроллеров |
 
 Тесты используют SQLite in-memory и вызывают контроллеры напрямую; HTTP-интеграционных
 тестов нет (бэклог B18). Запуск: `dotnet test SchitayKa.sln --no-build`.
@@ -212,6 +216,8 @@ SelfUpdate, Ocr, YandexOAuth, FrontUrl), `backend/appsettings.Development.json` 
 | `theme.ts` | Светлая/тёмная/системная тема, запоминание выбора |
 | `bankstyle.ts` | 0.3/N6: фирменный стиль карточек счёта по банку — `getBankCardStyle`/`setBankCardStyle` (`localStorage('sk_bankstyle')`, по умолчанию `neutral`), `bankOf`, `darken`, `bankMonogram` (монограмма из `ShortName`, без внешних логотипов) |
 | `widgets.ts` | 1.2, 2, 3 и 5: видимость виджетов дашборда (`investments`, `debts`, `obligations`, `calendar` в `localStorage('sk_dashboard_widgets')`), событие `sk-widgets-changed` для мгновенной перерисовки |
+| `scope.ts` | Общий охват «я / семья / выбранные»: `sk_scope`, `scopeQuery`/`withScope`, событие `sk-scope-changed` |
+| `ScopeSwitch.tsx` | Переключатель охвата на страницах долгов, платежей и календаря |
 | `toasts.tsx` | Всплывающие уведомления (частичная замена `alert`) |
 | `icons.tsx` | SVG-иконки в духе lucide (добавлены `calendar` для платежей и `calendar-clock` для календаря) |
 | `plural.ts` | Склонение русских существительных после чисел |

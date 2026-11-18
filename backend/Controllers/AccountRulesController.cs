@@ -148,8 +148,8 @@ public class AccountRulesController : ControllerBase
         var activeAccountIds = (await _db.Accounts
             .Where(a => a.UserId == Uid && !a.IsArchived)
             .Select(a => a.Id).ToListAsync()).ToHashSet();
-        var validCategoryIds = (await _db.Categories
-            .Where(c => c.UserId == Uid).Select(c => c.Id).ToListAsync()).ToHashSet();
+        var validCategoryIds = (await (await CategoryService.AccessibleAsync(_db, Uid))
+            .Select(c => c.Id).ToListAsync()).ToHashSet();
 
         var txQuery = _db.Transactions.Where(t => t.UserId == Uid);
         if (!overwrite) txQuery = txQuery.Where(t => t.AccountId == null);
@@ -213,10 +213,10 @@ public class AccountRulesController : ControllerBase
             return "Минимальная сумма не может быть больше максимальной";
 
         if (dto.MatchCategoryId is { } matchId
-            && !await _db.Categories.AnyAsync(c => c.Id == matchId && c.UserId == Uid))
+            && await CategoryService.FindAsync(_db, Uid, matchId) is null)
             return "Категория условия не найдена";
         if (dto.SetCategoryId is { } setId
-            && !await _db.Categories.AnyAsync(c => c.Id == setId && c.UserId == Uid))
+            && await CategoryService.FindAsync(_db, Uid, setId) is null)
             return "Категория для подстановки не найдена";
 
         // Счёт для MinBalance должен быть активным; для AutoAssign — тоже.

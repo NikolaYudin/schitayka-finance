@@ -35,6 +35,8 @@ public class AppDbContext : DbContext
         mb.Entity<Category>()
             .HasOne(c => c.User).WithMany(u => u.Categories).HasForeignKey(c => c.UserId);
         mb.Entity<Category>().HasIndex(c => new { c.UserId, c.Name, c.Type }).IsUnique();
+        // Поиск общих категорий семьи (после нормализации — одна запись на семью).
+        mb.Entity<Category>().HasIndex(c => new { c.FamilyCode, c.Name, c.Type });
 
         mb.Entity<Transaction>()
             .HasOne(t => t.User).WithMany(u => u.Transactions).HasForeignKey(t => t.UserId);
@@ -210,6 +212,9 @@ public class Category
     public TxType Type { get; set; }
     public string Color { get; set; } = "#2b6cb0";
     public bool IsSystem { get; set; }               // стартовая категория — нельзя удалить
+    // Общая категория семьи: UserId — владелец-создатель, но видят и редактируют
+    // все члены семьи с этим кодом. null — личная категория без семьи.
+    public string? FamilyCode { get; set; }
     public List<Transaction> Transactions { get; set; } = [];
     public List<BudgetLimit> Limits { get; set; } = [];
 }

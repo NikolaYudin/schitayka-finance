@@ -32,9 +32,14 @@ public class CategoriesController : ControllerBase
     public async Task<IActionResult> List()
     {
         if (Uid < 0) return Unauthorized(new { error = "Требуется вход" });
-        var list = await _db.Categories.Where(c => c.UserId == Uid)
+        await CategoryService.NormalizeFamilyAsync(_db, Uid);
+        var list = await (await CategoryService.AccessibleAsync(_db, Uid))
             .OrderBy(c => c.Type).ThenBy(c => c.Name)
-            .Select(c => new { c.Id, c.Name, c.Type, c.Color, c.IsSystem })
+            .Select(c => new
+            {
+                c.Id, c.Name, c.Type, c.Color, c.IsSystem,
+                familyShared = c.FamilyCode != null,
+            })
             .ToListAsync();
         return Ok(list);
     }
@@ -44,7 +49,9 @@ public class CategoriesController : ControllerBase
     {
         if (Uid < 0) return Unauthorized(new { error = "Требуется вход" });
         if (string.IsNullOrWhiteSpace(dto.Name)) return BadRequest(new { error = "Название обязательно" });
-        var exists = await _db.Categories.AnyAsync(c => c.UserId == Uid && c.Name == dto.Name.Trim() && c.Type == dto.Type);
+        await CategoryService.NormalizeFamilyAsync(_db, Uid);
+        var accessible = await CategoryService.AccessibleAsync(_db, Uid);
+        var exists = await accessible.AnyAsync(c => c.Name.Trim() == dto.Name.Trim() && c.Type == dto.Type);
         if (exists) return BadRequest(new { error = "Такая категория уже есть" });
         var cat = new Category
         {
@@ -52,34 +59,43 @@ public class CategoriesController : ControllerBase
             Name = dto.Name.Trim(),
             Type = dto.Type,
             Color = string.IsNullOrWhiteSpace(dto.Color) ? "#2b6cb0" : dto.Color,
+            FamilyCode = await CategoryService.FamilyCodeOfAsync(_db, Uid),
         };
         _db.Categories.Add(cat);
         await _db.SaveChangesAsync();
-        return Ok(new { cat.Id, cat.Name, cat.Type, cat.Color, cat.IsSystem });
+        return Ok(new { cat.Id, cat.Name, cat.Type, cat.Color, cat.IsSystem, familyShared = cat.FamilyCode != null });
     }
 
     [HttpPut("{id:int}")]
     public async Task<IActionResult> Update(int id, CategoryDto dto)
     {
         if (Uid < 0) return Unauthorized(new { error = "Требуется вход" });
-        var cat = await _db.Categories.FirstOrDefaultAsync(c => c.Id == id && c.UserId == Uid);
+        await CategoryService.NormalizeFamilyAsync(_db, Uid);
+        var cat = await CategoryService.FindAsync(_db, Uid, id);
         if (cat is null) return NotFound();
         if (string.IsNullOrWhiteSpace(dto.Name)) return BadRequest(new { error = "Название обязательно" });
+        var duplicate = await (await CategoryService.AccessibleAsync(_db, Uid))
+            .AnyAsync(c => c.Id != id && c.Name.Trim() == dto.Name.Trim() && c.Type == dto.Type);
+        if (duplicate) return BadRequest(new { error = "Такая категория уже есть" });
         cat.Name = dto.Name.Trim();
         cat.Type = dto.Type;
         if (!string.IsNullOrWhiteSpace(dto.Color)) cat.Color = dto.Color;
         await _db.SaveChangesAsync();
-        return Ok(new { cat.Id, cat.Name, cat.Type, cat.Color, cat.IsSystem });
+        return Ok(new { cat.Id, cat.Name, cat.Type, cat.Color, cat.IsSystem, familyShared = cat.FamilyCode != null });
     }
 
     [HttpDelete("{id:int}")]
     public async Task<IActionResult> Delete(int id)
     {
         if (Uid < 0) return Unauthorized(new { error = "Требуется вход" });
-        var cat = await _db.Categories.FirstOrDefaultAsync(c => c.Id == id && c.UserId == Uid);
+        await CategoryService.NormalizeFamilyAsync(_db, Uid);
+        var cat = await CategoryService.FindAsync(_db, Uid, id);
         if (cat is null) return NotFound();
-        var used = await _db.Transactions.AnyAsync(t => t.CategoryId == id);
-        if (used) return BadRequest(new { error = "Категория используется в операциях — удалите или перенесите их" });
+        if (cat.IsSystem) return BadRequest(new { error = "Системную категорию удалить нельзя" });
+        var used = await _db.Transactions.AnyAsync(t => t.CategoryId == id)
+            || await _db.Obligations.AnyAsync(o => o.CategoryId == id)
+            || await _db.AccountRules.AnyAsync(r => r.MatchCategoryId == id || r.SetCategoryId == id);
+        if (used) return BadRequest(new { error = "Категория используется — удалите или перенесите записи" });
         _db.Categories.Remove(cat);
         await _db.SaveChangesAsync();
         return Ok();
@@ -158,11 +174,11 @@ public class TransactionsController : ControllerBase
                 dto.Type, dto.Amount, dto.Comment, dto.CategoryId));
         var effectiveCategoryId = dto.CategoryId;
         if (match?.SetCategoryId is { } setCat
-            && await _db.Categories.AnyAsync(c => c.Id == setCat && c.UserId == Uid))
+            && await CategoryService.FindAsync(_db, Uid, setCat) is not null)
             effectiveCategoryId = setCat;
         var effectiveAccountId = dto.AccountId ?? match?.AccountId;
 
-        var cat = await _db.Categories.FirstOrDefaultAsync(c => c.Id == effectiveCategoryId && c.UserId == Uid);
+        var cat = await CategoryService.FindAsync(_db, Uid, effectiveCategoryId);
         if (cat is null) return BadRequest(new { error = "Категория не найдена" });
         if (effectiveAccountId is { } accId && !await _db.Accounts.AnyAsync(a => a.Id == accId && a.UserId == Uid && !a.IsArchived))
             return BadRequest(new { error = "Счёт не найден или находится в архиве" });
@@ -195,7 +211,7 @@ public class TransactionsController : ControllerBase
         if (Uid < 0) return Unauthorized(new { error = "Требуется вход" });
         var tx = await _db.Transactions.FirstOrDefaultAsync(t => t.Id == id && t.UserId == Uid);
         if (tx is null) return NotFound();
-        var cat = await _db.Categories.FirstOrDefaultAsync(c => c.Id == dto.CategoryId && c.UserId == Uid);
+        var cat = await CategoryService.FindAsync(_db, Uid, dto.CategoryId);
         if (await _db.Transfers.AnyAsync(t => t.FromTxId == id || t.ToTxId == id))
             return BadRequest(new { error = "Стороны перевода нельзя изменять отдельно. Отмените перевод и создайте его заново." });
         if (cat is null) return BadRequest(new { error = "Категория не найдена" });
@@ -368,7 +384,7 @@ public class LimitsController : ControllerBase
         if (Uid < 0) return Unauthorized(new { error = "Требуется вход" });
         if (dto.Month is < 1 or > 12 || dto.Year < 2000) return BadRequest(new { error = "Некорректный месяц/год" });
         if (dto.Limit < 0) return BadRequest(new { error = "Лимит не может быть отрицательным" });
-        var cat = await _db.Categories.FirstOrDefaultAsync(c => c.Id == dto.CategoryId && c.UserId == Uid);
+        var cat = await CategoryService.FindAsync(_db, Uid, dto.CategoryId);
         if (cat is null) return BadRequest(new { error = "Категория не найдена" });
         if (cat.Type != TxType.Expense) return BadRequest(new { error = "Лимиты задаются только для расходов" });
 

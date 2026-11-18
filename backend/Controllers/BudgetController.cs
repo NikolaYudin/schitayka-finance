@@ -3,6 +3,7 @@ using SchitayKa.Api.Data;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
+using SchitayKa.Api.Services;
 
 namespace SchitayKa.Api.Controllers;
 
@@ -41,8 +42,8 @@ public class BudgetController : ControllerBase
         var target = await _db.Users.FirstOrDefaultAsync(u => u.Id == dto.ForUserId && u.FamilyCode == me.FamilyCode);
         if (target is null) return BadRequest(new { error = "Пользователь не найден в вашей семье" });
 
-        var cat = await _db.Categories.FirstOrDefaultAsync(c => c.Id == dto.CategoryId && c.UserId == target.Id);
-        if (cat is null) return BadRequest(new { error = "Категория не найдена у этого пользователя" });
+        var cat = await CategoryService.FindAsync(_db, uid, dto.CategoryId);
+        if (cat is null) return BadRequest(new { error = "Категория не найдена" });
         if (cat.Type != dto.Type) return BadRequest(new { error = "Тип операции не совпадает с категорией" });
 
         int? accId = dto.AccountId ?? (await _db.Accounts.FirstOrDefaultAsync(a => a.UserId == target.Id && !a.IsArchived))?.Id;
@@ -109,8 +110,8 @@ public class BudgetController : ControllerBase
         var user = await _db.Users.FindAsync(uid);
 
         // ---------- Охват агрегатов (N4) ----------
-        var familyIds = await SchitayKa.Api.Services.FamilyAccess.ManageableUserIdsAsync(_db, uid);
-        var (effectiveScope, scopeUserIds) = ResolveScope(scope, ids, uid, familyIds);
+        var familyIds = await FamilyAccess.ManageableUserIdsAsync(_db, uid);
+        var (effectiveScope, scopeUserIds) = await FamilyAccess.ResolveScopeAsync(_db, scope, ids, uid);
 
         var txs = await _db.Transactions.Where(t => scopeUserIds.Contains(t.UserId)).ToListAsync();
         var cats = await _db.Categories.Where(c => scopeUserIds.Contains(c.UserId)).ToListAsync();
@@ -323,34 +324,6 @@ public class BudgetController : ControllerBase
             reserves,
             reserveTaken,
         });
-    }
-
-    /// <summary>
-    /// Разбор параметра охвата (0.3/N4). Возвращает эффективный охват и идентификаторы
-    /// пользователей, по которым агрегировать. Чужие id отбрасываются — агрегировать можно
-    /// только себя и членов своей семьи (правило единственное место — FamilyAccess).
-    /// </summary>
-    private static (string Scope, List<int> UserIds) ResolveScope(string? scope, string? ids, int uid, List<int> familyIds)
-    {
-        switch ((scope ?? "me").Trim().ToLowerInvariant())
-        {
-            case "family" when familyIds.Count > 1:
-                return ("family", familyIds);
-            case "ids":
-            {
-                var parsed = (ids ?? "")
-                    .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
-                    .Select(s => int.TryParse(s, out var n) ? n : -1)
-                    .Where(n => n > 0 && familyIds.Contains(n))
-                    .Distinct()
-                    .ToList();
-                if (parsed.Count > 1 || (parsed.Count == 1 && parsed[0] != uid))
-                    return ("ids", parsed);
-                return ("me", [uid]); // нет валидных выбранных — работаем как «только я»
-            }
-            default:
-                return ("me", [uid]);
-        }
     }
 
     private static List<dynamic> BuildRecommendations(

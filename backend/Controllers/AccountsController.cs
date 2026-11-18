@@ -3,6 +3,7 @@ using SchitayKa.Api.Data;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
+using SchitayKa.Api.Services;
 
 namespace SchitayKa.Api.Controllers;
 
@@ -263,8 +264,8 @@ public class AccountsController : ControllerBase
     }
 
     // Операция по СЕМЕЙНОМУ счёту (счёт другого члена семьи).
-    // Операция записывается владельцу счёта, категория подбирается по названию
-    // среди его категорий (набор стартовых категорий у всех одинаковый).
+    // Операция записывается владельцу счёта, категория берётся из общего списка семьи
+    // (по названию) или создаётся общей для всей семьи.
     public record FamilyTxDto(TxType Type, decimal Amount, DateOnly? Date, string? Comment, string? CategoryName);
     [HttpPost("{id:int}/tx")]
     public async Task<IActionResult> CreateTxForFamilyAccount(int id, FamilyTxDto dto)
@@ -281,21 +282,23 @@ public class AccountsController : ControllerBase
         var ownerId = acc.UserId;
         var catName = string.IsNullOrWhiteSpace(dto.CategoryName) ? "Прочее" : dto.CategoryName.Trim();
 
-        var cat = await _db.Categories
-            .FirstOrDefaultAsync(c => c.UserId == ownerId && c.Name == catName && c.Type == dto.Type);
+        await CategoryService.NormalizeFamilyAsync(_db, Uid);
+        var accessible = await CategoryService.AccessibleAsync(_db, Uid);
+        var cat = await accessible.FirstOrDefaultAsync(c => c.Name == catName && c.Type == dto.Type);
         if (cat is null)
         {
             // Тип операции может отличаться от типа одноимённой категории — берём по названию без типа.
-            cat = await _db.Categories.FirstOrDefaultAsync(c => c.UserId == ownerId && c.Name == catName);
+            cat = await accessible.FirstOrDefaultAsync(c => c.Name == catName);
             if (cat is null)
             {
                 cat = new Category
                 {
-                    UserId = ownerId,
+                    UserId = Uid,
                     Name = catName,
                     Type = dto.Type,
                     Color = dto.Type == TxType.Income ? "#38a169" : "#718096",
                     IsSystem = true,
+                    FamilyCode = await CategoryService.FamilyCodeOfAsync(_db, Uid),
                 };
                 _db.Categories.Add(cat);
                 await _db.SaveChangesAsync();
@@ -500,6 +503,8 @@ public class FamilyController : ControllerBase
             invite.AcceptedByUserId = Uid;
         }
         await _db.SaveChangesAsync();
+        // Категории будущих членов семьи объединяются с уже общими.
+        await CategoryService.NormalizeFamilyAsync(_db, Uid);
 
         return Ok(new { familyCode = me.FamilyCode, members = await MembersOf(me.FamilyCode) });
     }
@@ -560,12 +565,23 @@ public class FamilyController : ControllerBase
         if (Uid < 0) return Unauthorized(new { error = "Требуется вход" });
         var me = await _db.Users.FindAsync(Uid);
         if (me is null || string.IsNullOrEmpty(me.FamilyCode)) return BadRequest(new { error = "Вы не состоите в семье" });
-        var others = await _db.Users.CountAsync(u => u.FamilyCode == me.FamilyCode && u.Id != Uid);
-        if (others == 0)
+        var familyCode = me.FamilyCode;
+        var otherIds = await _db.Users.Where(u => u.FamilyCode == familyCode && u.Id != Uid)
+            .Select(u => u.Id).ToListAsync();
+        var sharedCategories = await _db.Categories.Where(c => c.FamilyCode == familyCode).ToListAsync();
+        if (otherIds.Count > 0)
         {
-            // последний участник — распускаем группу и её приглашения
-            var invites = _db.FamilyInvitations.Where(i => i.Code == me.FamilyCode);
+            // Общие категории остаются у семьи: владельцем становится другой участник.
+            var successor = otherIds.Min();
+            foreach (var category in sharedCategories.Where(c => c.UserId == Uid))
+                category.UserId = successor;
+        }
+        else
+        {
+            // Последний участник — распускаем группу, категории становятся личными.
+            var invites = _db.FamilyInvitations.Where(i => i.Code == familyCode);
             _db.FamilyInvitations.RemoveRange(invites);
+            foreach (var category in sharedCategories) category.FamilyCode = null;
         }
         me.FamilyCode = null;
         await _db.SaveChangesAsync();

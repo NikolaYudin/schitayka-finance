@@ -91,14 +91,17 @@ public sealed class DebtService
         int Kind, decimal Amount, DateOnly? Date, string? Note,
         bool CreateTransaction, int? AccountId);
 
-    /// <summary>Список долгов: active / closed / all.</summary>
-    public async Task<List<Debt>> ListAsync(int userId, string? filter)
+    /// <summary>Список долгов: active / closed / all. scopeIds — охват «семья».</summary>
+    public async Task<List<Debt>> ListAsync(
+        int userId, string? filter, IReadOnlyCollection<int>? scopeIds = null)
     {
+        var ids = scopeIds ?? [userId];
         var query = _db.Debts
             .Include(d => d.Account)
+            .Include(d => d.User)
             .Include(d => d.Events)
             .Include(d => d.Obligations)
-            .Where(d => d.UserId == userId);
+            .Where(d => ids.Contains(d.UserId));
 
         query = (filter ?? "active").Trim().ToLowerInvariant() switch
         {
@@ -114,16 +117,21 @@ public sealed class DebtService
             .ToListAsync();
     }
 
-    /// <summary>Один долг с полной историей событий (только свой).</summary>
-    public Task<Debt?> GetAsync(int userId, int debtId) =>
-        _db.Debts
+    /// <summary>Один долг с полной историей событий в рамках охвата.</summary>
+    public Task<Debt?> GetAsync(int userId, int debtId, IReadOnlyCollection<int>? scopeIds = null)
+    {
+        var ids = scopeIds ?? [userId];
+        return _db.Debts
             .Include(d => d.Account)
+            .Include(d => d.User)
             .Include(d => d.Events.OrderByDescending(e => e.Date).ThenByDescending(e => e.Id))
             .Include(d => d.Obligations.OrderBy(o => o.NextPaymentDate))
-            .FirstOrDefaultAsync(d => d.Id == debtId && d.UserId == userId);
+            .FirstOrDefaultAsync(d => d.Id == debtId && ids.Contains(d.UserId));
+    }
 
     /// <summary>Создаёт долг и событие возникновения.</summary>
-    public async Task<(bool Ok, string? Error, Debt? Debt)> CreateAsync(int userId, DebtInput input)
+    public async Task<(bool Ok, string? Error, Debt? Debt)> CreateAsync(
+        int userId, DebtInput input, IReadOnlyCollection<int>? scopeIds = null)
     {
         if (!Enum.IsDefined((DebtDirection)input.Direction))
             return (false, "Неизвестное направление долга", null);
@@ -145,7 +153,7 @@ public sealed class DebtService
         if (input.DueDate is DateOnly due && due < issuedAt)
             return (false, "Срок возврата раньше даты возникновения", null);
 
-        var account = await ResolveAccountAsync(userId, input.AccountId);
+        var account = await ResolveAccountAsync(scopeIds ?? [userId], input.AccountId);
         if (input.AccountId is not null && account is null)
             return (false, "Счёт не найден", null);
 
@@ -185,11 +193,13 @@ public sealed class DebtService
     }
 
     /// <summary>Изменяет долг и пересчитывает остаток из истории.</summary>
-    public async Task<(bool Ok, string? Error)> UpdateAsync(int userId, int debtId, DebtInput input)
+    public async Task<(bool Ok, string? Error)> UpdateAsync(
+        int userId, int debtId, DebtInput input, IReadOnlyCollection<int>? scopeIds = null)
     {
+        var ids = scopeIds ?? [userId];
         var debt = await _db.Debts
             .Include(d => d.Events)
-            .FirstOrDefaultAsync(d => d.Id == debtId && d.UserId == userId);
+            .FirstOrDefaultAsync(d => d.Id == debtId && ids.Contains(d.UserId));
         if (debt is null) return (false, "Долг не найден");
 
         if (!Enum.IsDefined((DebtDirection)input.Direction))
@@ -210,7 +220,7 @@ public sealed class DebtService
         Account? account = null;
         if (input.AccountId is int aid)
         {
-            account = await ResolveAccountAsync(userId, aid);
+            account = await ResolveAccountAsync(ids, aid);
             if (account is null) return (false, "Счёт не найден");
         }
 
@@ -241,12 +251,14 @@ public sealed class DebtService
     /// Добавляет событие истории. Для возврата/оплаты процентов можно
     /// одновременно создать операцию по счёту (галочка в форме).
     /// </summary>
-    public async Task<(bool Ok, string? Error)> AddEventAsync(int userId, int debtId, DebtEventInput input)
+    public async Task<(bool Ok, string? Error)> AddEventAsync(
+        int userId, int debtId, DebtEventInput input, IReadOnlyCollection<int>? scopeIds = null)
     {
+        var ids = scopeIds ?? [userId];
         var debt = await _db.Debts
             .Include(d => d.Account)
             .Include(d => d.Events)
-            .FirstOrDefaultAsync(d => d.Id == debtId && d.UserId == userId);
+            .FirstOrDefaultAsync(d => d.Id == debtId && ids.Contains(d.UserId));
         if (debt is null) return (false, "Долг не найден");
         if (debt.RemainingAmount <= 0) return (false, "Долг уже погашен — остаток нулевой");
 
@@ -289,7 +301,7 @@ public sealed class DebtService
             {
                 var accountId = input.AccountId ?? debt.AccountId;
                 if (accountId is null) return (false, "Выберите счёт для операции");
-                var account = await ResolveAccountAsync(userId, accountId);
+                var account = await ResolveAccountAsync(ids, accountId);
                 if (account is null) return (false, "Счёт не найден");
                 if (account.IsArchived) return (false, "Счёт в архиве");
 
@@ -343,14 +355,16 @@ public sealed class DebtService
     }
 
     /// <summary>Удаляет событие, связанную операцию и пересчитывает остаток.</summary>
-    public async Task<(bool Ok, string? Error)> DeleteEventAsync(int userId, int debtId, int eventId)
+    public async Task<(bool Ok, string? Error)> DeleteEventAsync(
+        int userId, int debtId, int eventId, IReadOnlyCollection<int>? scopeIds = null)
     {
+        var ids = scopeIds ?? [userId];
         var ev = await _db.DebtEvents
             .Include(e => e.Transaction)
             .FirstOrDefaultAsync(e => e.Id == eventId && e.DebtId == debtId);
         if (ev is null) return (false, "Событие не найдено");
 
-        var debt = await _db.Debts.FirstOrDefaultAsync(d => d.Id == debtId && d.UserId == userId);
+        var debt = await _db.Debts.FirstOrDefaultAsync(d => d.Id == debtId && ids.Contains(d.UserId));
         if (debt is null) return (false, "Долг не найден");
         if (ev.Kind == DebtEventKind.Issued)
             return (false, "Событие возникновения удалить нельзя — удалите сам долг");
@@ -380,9 +394,11 @@ public sealed class DebtService
     }
 
     /// <summary>Закрывает долг вручную или снова открывает его.</summary>
-    public async Task<(bool Ok, string? Error)> SetStatusAsync(int userId, int debtId, bool close)
+    public async Task<(bool Ok, string? Error)> SetStatusAsync(
+        int userId, int debtId, bool close, IReadOnlyCollection<int>? scopeIds = null)
     {
-        var debt = await _db.Debts.FirstOrDefaultAsync(d => d.Id == debtId && d.UserId == userId);
+        var ids = scopeIds ?? [userId];
+        var debt = await _db.Debts.FirstOrDefaultAsync(d => d.Id == debtId && ids.Contains(d.UserId));
         if (debt is null) return (false, "Долг не найден");
 
         if (close)
@@ -401,11 +417,13 @@ public sealed class DebtService
     }
 
     /// <summary>Удаляет долг, историю и связанные операции; пересчитывает счета.</summary>
-    public async Task<(bool Ok, string? Error)> DeleteAsync(int userId, int debtId)
+    public async Task<(bool Ok, string? Error)> DeleteAsync(
+        int userId, int debtId, IReadOnlyCollection<int>? scopeIds = null)
     {
+        var ids = scopeIds ?? [userId];
         var debt = await _db.Debts
             .Include(d => d.Events)
-            .FirstOrDefaultAsync(d => d.Id == debtId && d.UserId == userId);
+            .FirstOrDefaultAsync(d => d.Id == debtId && ids.Contains(d.UserId));
         if (debt is null) return (false, "Долг не найден");
 
         var accountIds = new HashSet<int>();
@@ -454,9 +472,10 @@ public sealed class DebtService
     /// <summary>Пересчитывает остаток и синхронизирует статус.</summary>
     private Task RecalcAsync(Debt debt) => RecalcRemainingAsync(_db, debt.Id);
 
-    private Task<Account?> ResolveAccountAsync(int userId, int? accountId) =>
+    private Task<Account?> ResolveAccountAsync(
+        IReadOnlyCollection<int> userIds, int? accountId) =>
         accountId is int id
-            ? _db.Accounts.FirstOrDefaultAsync(a => a.Id == id && a.UserId == userId)
+            ? _db.Accounts.FirstOrDefaultAsync(a => a.Id == id && userIds.Contains(a.UserId))
             : Task.FromResult<Account?>(null);
 
     private static string TransactionComment(Debt debt, DebtEventKind kind)
@@ -467,23 +486,7 @@ public sealed class DebtService
             : $"{prefix} (мне вернули): {debt.Name}";
     }
 
-    /// <summary>Категория «Долги» нужного типа — как в переводах, создаётся при первом использовании.</summary>
-    private async Task<Category> EnsureCategoryAsync(int userId, TxType type)
-    {
-        var existing = await _db.Categories
-            .FirstOrDefaultAsync(c => c.UserId == userId && c.Name == CategoryName && c.Type == type);
-        if (existing is not null) return existing;
-
-        var category = new Category
-        {
-            UserId = userId,
-            Name = CategoryName,
-            Type = type,
-            Color = "#718096",
-            IsSystem = true,
-        };
-        _db.Categories.Add(category);
-        await _db.SaveChangesAsync();
-        return category;
-    }
+    /// <summary>Категория «Долги» нужного типа — общая для всей семьи.</summary>
+    private Task<Category> EnsureCategoryAsync(int userId, TxType type) =>
+        CategoryService.EnsureSystemAsync(_db, userId, CategoryName, type, "#718096");
 }

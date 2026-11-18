@@ -32,8 +32,14 @@ public class ExportController : ControllerBase
         var user = await _db.Users.AsNoTracking().FirstOrDefaultAsync(u => u.Id == Uid, ct);
         if (user is null) return Unauthorized(new { error = "Пользователь не найден" });
 
+        // Экспорт остаётся личным (только мои операции), но категории могут быть
+        // общими для семьи — включаем и те, на которые ссылаются мои записи.
+        var usedCategoryIds = await _db.Transactions.AsNoTracking()
+            .Where(t => t.UserId == Uid).Select(t => t.CategoryId).Distinct().ToListAsync(ct);
+        usedCategoryIds.AddRange(await _db.BudgetLimits.AsNoTracking()
+            .Where(l => l.UserId == Uid).Select(l => l.CategoryId).Distinct().ToListAsync(ct));
         var categories = await _db.Categories.AsNoTracking()
-            .Where(c => c.UserId == Uid)
+            .Where(c => c.UserId == Uid || usedCategoryIds.Contains(c.Id))
             .OrderBy(c => c.Type).ThenBy(c => c.Name)
             .ToListAsync(ct);
 

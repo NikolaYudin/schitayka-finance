@@ -3,42 +3,19 @@ import { useAuth } from './auth';
 import {
   Summary, Category, Tx, TxType, AccountInfo, api, fmt, parseServerDate, MONTHS_RU,
   ReserveInfo, ShareRow, AccountSummaryRow, FamilyAccountRow, MonthRow, ReceiptParseResult,
-  Transfer, DashboardScope, ScopeUser, InvestmentsSummary, DebtsSummary, ObligationsSummary, CalendarItem,
+  Transfer, ScopeUser, InvestmentsSummary, DebtsSummary, ObligationsSummary, CalendarItem,
 } from './api';
 import { useToast } from './toasts';
 import { Icon, type IconName } from './icons';
 import { plural } from './plural';
 import { bankOf, bankMonogram, darken } from './bankstyle';
 import { loadWidgets, type DashboardWidgets } from './widgets';
+import { loadScope, saveScope, scopeQuery, SCOPE_CHANGED, type ScopeState } from './scope';
 
 // ============================================================================
 // Вспомогательные функции
 // ============================================================================
 const pad2 = (n: number) => String(n).padStart(2, '0');
-
-/** Охват дашборда (0.3/N4): хранится локально, применяется к /api/budget/summary. */
-const SCOPE_KEY = 'sk_scope';
-type ScopeState = { mode: DashboardScope; ids: number[] };
-
-function loadScope(): ScopeState {
-  try {
-    const raw = localStorage.getItem(SCOPE_KEY);
-    if (raw) {
-      const v = JSON.parse(raw);
-      if (v && ['me', 'family', 'ids'].includes(v.mode)) {
-        return {
-          mode: v.mode,
-          ids: Array.isArray(v.ids) ? v.ids.filter((n: unknown) => typeof n === 'number') : [],
-        };
-      }
-    }
-  } catch { /* ignore */ }
-  return { mode: 'me', ids: [] };
-}
-
-function saveScope(s: ScopeState) {
-  try { localStorage.setItem(SCOPE_KEY, JSON.stringify(s)); } catch { /* ignore */ }
-}
 
 function greeting(): string {
   const h = new Date().getHours();
@@ -93,46 +70,45 @@ export function Dashboard({ onAdd, onFamilyTx }: { onAdd?: () => void; onFamilyT
   const toast = useToast();
   const seenAlerts = useRef<Set<number>>(new Set());
 
-  const scopeQuery = useMemo(() => {
-    const p = new URLSearchParams();
-    if (scope.mode !== 'me') {
-      p.set('scope', scope.mode);
-      if (scope.mode === 'ids' && scope.ids.length > 0) p.set('ids', scope.ids.join(','));
-    }
-    const q = p.toString();
-    return q ? `?${q}` : '';
-  }, [scope]);
+  const sq = useMemo(() => scopeQuery(scope), [scope]);
 
   const reload = () => {
     const now = new Date();
     Promise.all([
-      api.get<Summary>(`/api/budget/summary${scopeQuery}`),
+      api.get<Summary>(`/api/budget/summary${sq}`),
       api.get<Tx[]>(`/api/transactions?month=${now.getMonth() + 1}&year=${now.getFullYear()}&take=8`),
     ]).then(([s, t]) => { setSum(s); setRecent(t); }).catch(e => setErr(e.message));
   };
-  useEffect(() => { reload(); }, [scopeQuery]);
+  useEffect(() => { reload(); }, [sq]);
 
-  // Виджет инвестиций (пункт 1.2 плана): грузим отдельно, чтобы сбой источника не ломал дашборд.
+  // Виджеты грузим отдельно, чтобы сбой источника не ломал дашборд; охват общий для всех.
   useEffect(() => {
     api.get<InvestmentsSummary>('/api/investments/summary')
       .then(setInv)
       .catch(() => { /* инвестиции не критичны для главной */ });
-    api.get<DebtsSummary>('/api/debts/summary')
+    api.get<DebtsSummary>(`/api/debts/summary${sq}`)
       .then(setDebtSum)
       .catch(() => { /* долги не критичны для главной */ });
-    api.get<ObligationsSummary>('/api/obligations/summary')
+    api.get<ObligationsSummary>(`/api/obligations/summary${sq}`)
       .then(setOblSum)
       .catch(() => { /* платежи не критичны для главной */ });
-    api.get<CalendarItem[]>('/api/calendar/upcoming?take=5&days=30')
+    api.get<CalendarItem[]>(`/api/calendar/upcoming?take=5&days=30${sq ? `&${sq.slice(1)}` : ''}`)
       .then(setCalendarItems)
       .catch(() => { /* календарь не критичен для главной */ });
-  }, []);
+  }, [sq]);
 
   // Настройка видимости виджетов меняется в «Настройках» и приходит событием.
   useEffect(() => {
     const sync = () => setWidgets(loadWidgets());
     window.addEventListener('sk-widgets-changed', sync);
     return () => window.removeEventListener('sk-widgets-changed', sync);
+  }, []);
+
+  // Охват может поменяться на любой другой странице — подхватываем его.
+  useEffect(() => {
+    const sync = () => setScope(loadScope());
+    window.addEventListener(SCOPE_CHANGED, sync);
+    return () => window.removeEventListener(SCOPE_CHANGED, sync);
   }, []);
 
   /** Смена охвата: сохраняем локально и перезагружаем сводку. */

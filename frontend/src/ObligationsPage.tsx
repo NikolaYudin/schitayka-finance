@@ -3,6 +3,8 @@ import {
   api, fmt, AccountInfo, Category, DebtInfo, ObligationInfo, ObligationsSummary,
 } from './api';
 import { Icon } from './icons';
+import { ScopeSwitch } from './ScopeSwitch';
+import { loadScope, withScope, SCOPE_CHANGED, type ScopeState } from './scope';
 
 const PERIODS = [
   { v: 0, label: 'Разово' },
@@ -38,6 +40,7 @@ export function ObligationsPage() {
   const [categories, setCategories] = useState<Category[]>([]);
   const [debts, setDebts] = useState<DebtInfo[]>([]);
   const [filter, setFilter] = useState<'active' | 'paused' | 'completed' | 'all'>('active');
+  const [scope, setScope] = useState<ScopeState>(loadScope);
   const [err, setErr] = useState('');
   const [busy, setBusy] = useState(false);
 
@@ -69,11 +72,11 @@ export function ObligationsPage() {
   const load = async (nextFilter: typeof filter = filter) => {
     try {
       const [list, s, a, c, d] = await Promise.all([
-        api.get<ObligationInfo[]>(`/api/obligations?filter=${nextFilter}`),
-        api.get<ObligationsSummary>('/api/obligations/summary'),
+        api.get<ObligationInfo[]>(withScope(`/api/obligations?filter=${nextFilter}`, scope)),
+        api.get<ObligationsSummary>(withScope('/api/obligations/summary', scope)),
         api.get<AccountInfo[]>('/api/accounts'),
         api.get<Category[]>('/api/categories'),
-        api.get<DebtInfo[]>('/api/debts?filter=active'),
+        api.get<DebtInfo[]>(withScope('/api/debts?filter=active', scope)),
       ]);
       setItems(list);
       setSummary(s);
@@ -83,7 +86,12 @@ export function ObligationsPage() {
     } catch (ex: any) { setErr(ex.message); }
   };
 
-  useEffect(() => { load(filter); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [filter]);
+  useEffect(() => { load(filter); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [filter, scope]);
+  useEffect(() => {
+    const sync = () => setScope(loadScope());
+    window.addEventListener(SCOPE_CHANGED, sync);
+    return () => window.removeEventListener(SCOPE_CHANGED, sync);
+  }, []);
 
   const activeAccounts = accounts.filter(a => !a.isArchived);
   const periodUsesDay = fPeriodicity >= 1 && fPeriodicity <= 3;
@@ -132,8 +140,8 @@ export function ObligationsPage() {
       note: fNote,
     };
     try {
-      if (editing) await api.put(`/api/obligations/${editing.id}`, body);
-      else await api.post('/api/obligations', body);
+      if (editing) await api.put(withScope(`/api/obligations/${editing.id}`, scope), body);
+      else await api.post(withScope('/api/obligations', scope), body);
       setFormOpen(false); resetForm();
       if (!editing && filter === 'completed') setFilter('active');
       else await load();
@@ -153,7 +161,7 @@ export function ObligationsPage() {
     e.preventDefault();
     setErr(''); setBusy(true);
     try {
-      await api.post(`/api/obligations/${o.id}/pay`, {
+      await api.post(withScope(`/api/obligations/${o.id}/pay`, scope), {
         amount: pAmount ? num(pAmount) : null,
         date: pDate || null,
         note: pNote,
@@ -169,20 +177,20 @@ export function ObligationsPage() {
 
   const delPayment = async (o: ObligationInfo, paymentId: number) => {
     if (!confirm('Удалить факт оплаты? Связанная операция тоже будет удалена.')) return;
-    try { await api.del(`/api/obligations/${o.id}/payments/${paymentId}`); await load(); }
+    try { await api.del(withScope(`/api/obligations/${o.id}/payments/${paymentId}`, scope)); await load(); }
     catch (ex: any) { setErr(ex.message); }
   };
 
   const changeStatus = async (o: ObligationInfo, action: 'pause' | 'resume' | 'complete') => {
     try {
-      await api.post(`/api/obligations/${o.id}/${action}`);
+      await api.post(withScope(`/api/obligations/${o.id}/${action}`, scope));
       if (filter !== 'all') setFilter('all'); else await load();
     } catch (ex: any) { setErr(ex.message); }
   };
 
   const delObligation = async (id: number) => {
     if (!confirm('Удалить платёж, историю оплат и связанные операции?')) return;
-    try { await api.del(`/api/obligations/${id}`); await load(); }
+    try { await api.del(withScope(`/api/obligations/${id}`, scope)); await load(); }
     catch (ex: any) { setErr(ex.message); }
   };
 
@@ -201,6 +209,7 @@ export function ObligationsPage() {
             <Icon name="plus" size={15} /> Новый платёж
           </button>
         </div>
+        <div style={{ marginTop: 10 }}><ScopeSwitch /></div>
 
         {err && <div className="alert alert-danger">{err}</div>}
 
@@ -353,6 +362,7 @@ export function ObligationsPage() {
                 {o.payee} · {o.periodicityName}
                 {o.categoryName ? ` · ${o.categoryName}` : ''}
                 {o.remind ? ' · 🔔' : ''}
+                {scope.mode !== 'me' && o.ownerName ? ` · 👤 ${o.ownerName}` : ''}
               </p>
             </div>
             <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>

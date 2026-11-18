@@ -52,7 +52,7 @@ public class CalendarTests
 
     private static CalendarController ControllerFor(AppDbContext db, int userId)
     {
-        var controller = new CalendarController(new CalendarService(db));
+        var controller = new CalendarController(db, new CalendarService(db));
         controller.ControllerContext = new ControllerContext
         {
             HttpContext = new DefaultHttpContext { User = PrincipalFor(userId) },

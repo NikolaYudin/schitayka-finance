@@ -23,6 +23,35 @@ public static class FamilyAccess
             .ToListAsync();
     }
 
+    /// <summary>
+    /// Единый разбор охвата «я / семья / выбранные» (me / family / ids).
+    /// Чужие id отбрасываются: агрегировать и изменять можно только себя и свою семью.
+    /// </summary>
+    public static async Task<(string Scope, List<int> UserIds)> ResolveScopeAsync(
+        AppDbContext db, string? scope, string? ids, int uid)
+    {
+        var familyIds = await ManageableUserIdsAsync(db, uid);
+        switch ((scope ?? "me").Trim().ToLowerInvariant())
+        {
+            case "family" when familyIds.Count > 1:
+                return ("family", familyIds);
+            case "ids":
+            {
+                var parsed = (ids ?? "")
+                    .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+                    .Select(s => int.TryParse(s, out var n) ? n : -1)
+                    .Where(n => n > 0 && familyIds.Contains(n))
+                    .Distinct()
+                    .ToList();
+                if (parsed.Count > 1 || (parsed.Count == 1 && parsed[0] != uid))
+                    return ("ids", parsed);
+                return ("me", [uid]);
+            }
+            default:
+                return ("me", [uid]);
+        }
+    }
+
     /// <summary>Можно ли текущему пользователю работать с этим счётом.</summary>
     public static async Task<bool> CanManageAccountAsync(AppDbContext db, int uid, int accountId)
     {

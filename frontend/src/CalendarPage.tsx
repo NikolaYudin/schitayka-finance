@@ -3,6 +3,8 @@ import {
   api, fmt, AccountInfo, CalendarItem, DebtInfo, ObligationInfo,
 } from './api';
 import { Icon } from './icons';
+import { ScopeSwitch } from './ScopeSwitch';
+import { loadScope, withScope, SCOPE_CHANGED, type ScopeState } from './scope';
 
 type View = 'month' | 'week' | 'upcoming';
 
@@ -47,6 +49,7 @@ export function CalendarPage() {
   const [anchor, setAnchor] = useState(new Date());
   const [items, setItems] = useState<CalendarItem[]>([]);
   const [filter, setFilter] = useState<number[]>([]);
+  const [scope, setScope] = useState<ScopeState>(loadScope);
   const [debts, setDebts] = useState<DebtInfo[]>([]);
   const [obligations, setObligations] = useState<ObligationInfo[]>([]);
   const [accounts, setAccounts] = useState<AccountInfo[]>([]);
@@ -77,9 +80,9 @@ export function CalendarPage() {
     try {
       const q = filter.length ? `&types=${filter.join(',')}` : '';
       const [list, d, o, a] = await Promise.all([
-        api.get<CalendarItem[]>(`/api/calendar?from=${range.from}&to=${range.to}${q}`),
-        api.get<DebtInfo[]>('/api/debts?filter=active'),
-        api.get<ObligationInfo[]>('/api/obligations?filter=active'),
+        api.get<CalendarItem[]>(withScope(`/api/calendar?from=${range.from}&to=${range.to}${q}`, scope)),
+        api.get<DebtInfo[]>(withScope('/api/debts?filter=active', scope)),
+        api.get<ObligationInfo[]>(withScope('/api/obligations?filter=active', scope)),
         api.get<AccountInfo[]>('/api/accounts'),
       ]);
       setItems(list);
@@ -87,7 +90,12 @@ export function CalendarPage() {
     } catch (ex: any) { setErr(ex.message); }
   };
 
-  useEffect(() => { load(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [view, anchor, filter]);
+  useEffect(() => { load(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [view, anchor, filter, scope]);
+  useEffect(() => {
+    const sync = () => setScope(loadScope());
+    window.addEventListener(SCOPE_CHANGED, sync);
+    return () => window.removeEventListener(SCOPE_CHANGED, sync);
+  }, []);
 
   const byDate = useMemo(() => {
     const map = new Map<string, CalendarItem[]>();
@@ -142,15 +150,15 @@ export function CalendarPage() {
       accountId: fAccountId ? Number(fAccountId) : null,
     };
     try {
-      if (editing) await api.put(`/api/calendar/events/${editing.id}`, body);
-      else await api.post('/api/calendar/events', body);
+      if (editing) await api.put(withScope(`/api/calendar/events/${editing.id}`, scope), body);
+      else await api.post(withScope('/api/calendar/events', scope), body);
       setFormOpen(false); resetForm(); await load();
     } catch (ex: any) { setErr(ex.message); } finally { setBusy(false); }
   };
 
   const del = async (item: CalendarItem) => {
     if (!confirm(`Удалить событие «${item.title}»?`)) return;
-    try { await api.del(`/api/calendar/events/${item.id}`); await load(); }
+    try { await api.del(withScope(`/api/calendar/events/${item.id}`, scope)); await load(); }
     catch (ex: any) { setErr(ex.message); }
   };
 
@@ -168,6 +176,7 @@ export function CalendarPage() {
           <div className="tx-sub">
             {item.sourceName}{item.typeName ? ` · ${item.typeName}` : ''}
             {item.note ? ` · ${item.note}` : ''}
+            {scope.mode !== 'me' && item.ownerName ? ` · 👤 ${item.ownerName}` : ''}
           </div>
         )}
       </div>
@@ -211,6 +220,8 @@ export function CalendarPage() {
             >{v.label}</button>
           ))}
         </div>
+
+        <div style={{ marginTop: 10 }}><ScopeSwitch /></div>
 
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 12, flexWrap: 'wrap' }}>
           <button className="btn secondary" onClick={() => shift(-1)}>‹</button>

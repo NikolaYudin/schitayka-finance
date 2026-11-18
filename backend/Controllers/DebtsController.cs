@@ -35,6 +35,10 @@ public class DebtsController : ControllerBase
 
     private static string? Iso(DateOnly? date) => date?.ToString("yyyy-MM-dd");
 
+    /// <summary>Охват «я / семья / выбранные» для всех операций с долгами.</summary>
+    private async Task<List<int>> ScopeIdsAsync(string? scope, string? ids) =>
+        (await FamilyAccess.ResolveScopeAsync(_db, scope, ids, Uid)).UserIds;
+
     /// <summary>Проекция долга с историей событий (для списка, карточки и ответов).</summary>
     private static object Project(Debt d, DateOnly today) => new
     {
@@ -58,6 +62,8 @@ public class DebtsController : ControllerBase
         isOverdue = DebtCalculator.IsOverdue(d.Status, d.RemainingAmount, d.DueDate, today),
         daysLeft = d.DueDate is DateOnly due ? due.DayNumber - today.DayNumber : (int?)null,
         eventsCount = d.Events.Count,
+        ownerId = d.UserId,
+        ownerName = d.User?.Name,
         d.CreatedAt,
         events = d.Events.Select(ProjectEvent).ToList(),
         // Связанный график платежей (Задача 4): только активные, без учёта сумм в аналитике.
@@ -89,21 +95,23 @@ public class DebtsController : ControllerBase
 
     /// <summary>Список долгов: filter = active (по умолчанию), closed, all.</summary>
     [HttpGet]
-    public async Task<IActionResult> List([FromQuery] string? filter)
+    public async Task<IActionResult> List(
+        [FromQuery] string? filter, [FromQuery] string? scope = null, [FromQuery] string? ids = null)
     {
         if (Uid < 0) return Unauthorized(new { error = "Требуется вход" });
         var today = DateOnly.FromDateTime(DateTime.Today);
-        var list = await _debts.ListAsync(Uid, filter);
+        var list = await _debts.ListAsync(Uid, filter, await ScopeIdsAsync(scope, ids));
         return Ok(list.Select(d => Project(d, today)).ToList());
     }
 
     /// <summary>Сводка по долгам для виджета дашборда.</summary>
     [HttpGet("summary")]
-    public async Task<IActionResult> Summary()
+    public async Task<IActionResult> Summary([FromQuery] string? scope = null, [FromQuery] string? ids = null)
     {
         if (Uid < 0) return Unauthorized(new { error = "Требуется вход" });
         var today = DateOnly.FromDateTime(DateTime.Today);
-        var all = await _db.Debts.Where(d => d.UserId == Uid).ToListAsync();
+        var scopeIds = await ScopeIdsAsync(scope, ids);
+        var all = await _db.Debts.Where(d => scopeIds.Contains(d.UserId)).ToListAsync();
         var active = all.Where(d => d.Status == DebtStatus.Active && d.RemainingAmount > 0).ToList();
 
         var iOwe = active.Where(d => d.Direction == DebtDirection.IOwe).Sum(d => d.RemainingAmount);
@@ -136,10 +144,10 @@ public class DebtsController : ControllerBase
 
     /// <summary>Долг с полной историей событий.</summary>
     [HttpGet("{id:int}")]
-    public async Task<IActionResult> Get(int id)
+    public async Task<IActionResult> Get(int id, [FromQuery] string? scope = null, [FromQuery] string? ids = null)
     {
         if (Uid < 0) return Unauthorized(new { error = "Требуется вход" });
-        var debt = await _debts.GetAsync(Uid, id);
+        var debt = await _debts.GetAsync(Uid, id, await ScopeIdsAsync(scope, ids));
         if (debt is null) return NotFound(new { error = "Долг не найден" });
 
         var today = DateOnly.FromDateTime(DateTime.Today);
@@ -148,17 +156,19 @@ public class DebtsController : ControllerBase
 
     /// <summary>Создать долг.</summary>
     [HttpPost]
-    public async Task<IActionResult> Create([FromBody] DebtDto dto)
+    public async Task<IActionResult> Create(
+        [FromBody] DebtDto dto, [FromQuery] string? scope = null, [FromQuery] string? ids = null)
     {
         if (Uid < 0) return Unauthorized(new { error = "Требуется вход" });
         var input = new DebtService.DebtInput(
             dto.Direction, dto.Counterparty, dto.Name, dto.PrincipalAmount,
             dto.Currency, dto.IssuedAt, dto.DueDate, dto.InterestRate ?? 0m,
             dto.Terms, dto.AccountId, dto.Note);
-        var (ok, error, debt) = await _debts.CreateAsync(Uid, input);
+        var (ok, error, debt) = await _debts.CreateAsync(Uid, input, await ScopeIdsAsync(scope, ids));
         if (!ok || debt is null) return BadRequest(new { error });
 
         await _db.Entry(debt).Reference(d => d.Account).LoadAsync();
+        await _db.Entry(debt).Reference(d => d.User).LoadAsync();
         await _db.Entry(debt).Collection(d => d.Events).LoadAsync();
         var today = DateOnly.FromDateTime(DateTime.Today);
         return Ok(Project(debt, today));
@@ -166,17 +176,19 @@ public class DebtsController : ControllerBase
 
     /// <summary>Изменить долг.</summary>
     [HttpPut("{id:int}")]
-    public async Task<IActionResult> Update(int id, [FromBody] DebtDto dto)
+    public async Task<IActionResult> Update(
+        int id, [FromBody] DebtDto dto, [FromQuery] string? scope = null, [FromQuery] string? ids = null)
     {
         if (Uid < 0) return Unauthorized(new { error = "Требуется вход" });
         var input = new DebtService.DebtInput(
             dto.Direction, dto.Counterparty, dto.Name, dto.PrincipalAmount,
             dto.Currency, dto.IssuedAt, dto.DueDate, dto.InterestRate ?? 0m,
             dto.Terms, dto.AccountId, dto.Note);
-        var (ok, error) = await _debts.UpdateAsync(Uid, id, input);
+        var scopeIds = await ScopeIdsAsync(scope, ids);
+        var (ok, error) = await _debts.UpdateAsync(Uid, id, input, scopeIds);
         if (!ok) return BadRequest(new { error });
 
-        var debt = await _debts.GetAsync(Uid, id);
+        var debt = await _debts.GetAsync(Uid, id, scopeIds);
         if (debt is null) return NotFound(new { error = "Долг не найден" });
         var today = DateOnly.FromDateTime(DateTime.Today);
         return Ok(Project(debt, today));
@@ -184,25 +196,27 @@ public class DebtsController : ControllerBase
 
     /// <summary>Удалить долг вместе с историей и связанными операциями.</summary>
     [HttpDelete("{id:int}")]
-    public async Task<IActionResult> Delete(int id)
+    public async Task<IActionResult> Delete(int id, [FromQuery] string? scope = null, [FromQuery] string? ids = null)
     {
         if (Uid < 0) return Unauthorized(new { error = "Требуется вход" });
-        var (ok, error) = await _debts.DeleteAsync(Uid, id);
+        var (ok, error) = await _debts.DeleteAsync(Uid, id, await ScopeIdsAsync(scope, ids));
         if (!ok) return NotFound(new { error });
         return Ok(new { deleted = id });
     }
 
     /// <summary>Добавить событие истории (возврат, проценты, корректировка, списание).</summary>
     [HttpPost("{id:int}/events")]
-    public async Task<IActionResult> AddEvent(int id, [FromBody] DebtEventDto dto)
+    public async Task<IActionResult> AddEvent(
+        int id, [FromBody] DebtEventDto dto, [FromQuery] string? scope = null, [FromQuery] string? ids = null)
     {
         if (Uid < 0) return Unauthorized(new { error = "Требуется вход" });
         var input = new DebtService.DebtEventInput(
             dto.Kind, dto.Amount, dto.Date, dto.Note, dto.CreateTransaction, dto.AccountId);
-        var (ok, error) = await _debts.AddEventAsync(Uid, id, input);
+        var scopeIds = await ScopeIdsAsync(scope, ids);
+        var (ok, error) = await _debts.AddEventAsync(Uid, id, input, scopeIds);
         if (!ok) return BadRequest(new { error });
 
-        var debt = await _debts.GetAsync(Uid, id);
+        var debt = await _debts.GetAsync(Uid, id, scopeIds);
         if (debt is null) return NotFound(new { error = "Долг не найден" });
         var today = DateOnly.FromDateTime(DateTime.Today);
         return Ok(Project(debt, today));
@@ -210,13 +224,15 @@ public class DebtsController : ControllerBase
 
     /// <summary>Удалить событие истории (связанная операция тоже удаляется).</summary>
     [HttpDelete("{id:int}/events/{eventId:int}")]
-    public async Task<IActionResult> DeleteEvent(int id, int eventId)
+    public async Task<IActionResult> DeleteEvent(
+        int id, int eventId, [FromQuery] string? scope = null, [FromQuery] string? ids = null)
     {
         if (Uid < 0) return Unauthorized(new { error = "Требуется вход" });
-        var (ok, error) = await _debts.DeleteEventAsync(Uid, id, eventId);
+        var scopeIds = await ScopeIdsAsync(scope, ids);
+        var (ok, error) = await _debts.DeleteEventAsync(Uid, id, eventId, scopeIds);
         if (!ok) return BadRequest(new { error });
 
-        var debt = await _debts.GetAsync(Uid, id);
+        var debt = await _debts.GetAsync(Uid, id, scopeIds);
         if (debt is null) return NotFound(new { error = "Долг не найден" });
         var today = DateOnly.FromDateTime(DateTime.Today);
         return Ok(Project(debt, today));
@@ -224,20 +240,20 @@ public class DebtsController : ControllerBase
 
     /// <summary>Закрыть долг вручную.</summary>
     [HttpPost("{id:int}/close")]
-    public async Task<IActionResult> Close(int id)
+    public async Task<IActionResult> Close(int id, [FromQuery] string? scope = null, [FromQuery] string? ids = null)
     {
         if (Uid < 0) return Unauthorized(new { error = "Требуется вход" });
-        var (ok, error) = await _debts.SetStatusAsync(Uid, id, close: true);
+        var (ok, error) = await _debts.SetStatusAsync(Uid, id, close: true, await ScopeIdsAsync(scope, ids));
         if (!ok) return NotFound(new { error });
         return Ok(new { id, status = (int)DebtStatus.Closed });
     }
 
     /// <summary>Снова открыть закрытый долг.</summary>
     [HttpPost("{id:int}/reopen")]
-    public async Task<IActionResult> Reopen(int id)
+    public async Task<IActionResult> Reopen(int id, [FromQuery] string? scope = null, [FromQuery] string? ids = null)
     {
         if (Uid < 0) return Unauthorized(new { error = "Требуется вход" });
-        var (ok, error) = await _debts.SetStatusAsync(Uid, id, close: false);
+        var (ok, error) = await _debts.SetStatusAsync(Uid, id, close: false, await ScopeIdsAsync(scope, ids));
         if (!ok) return BadRequest(new { error });
         return Ok(new { id, status = (int)DebtStatus.Active });
     }

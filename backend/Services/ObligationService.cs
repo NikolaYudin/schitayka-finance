@@ -101,14 +101,17 @@ public sealed class ObligationService
         int? AccountId, bool ReduceDebt = false);
 
     /// <summary>Список платежей: active (по умолчанию), paused, completed, all.</summary>
-    public async Task<List<Obligation>> ListAsync(int userId, string? filter)
+    public async Task<List<Obligation>> ListAsync(
+        int userId, string? filter, IReadOnlyCollection<int>? scopeIds = null)
     {
+        var ids = scopeIds ?? [userId];
         var query = _db.Obligations
             .Include(o => o.Account)
             .Include(o => o.Category)
             .Include(o => o.Debt)
+            .Include(o => o.User)
             .Include(o => o.Payments)
-            .Where(o => o.UserId == userId);
+            .Where(o => ids.Contains(o.UserId));
 
         query = (filter ?? "active").Trim().ToLowerInvariant() switch
         {
@@ -125,20 +128,25 @@ public sealed class ObligationService
             .ToListAsync();
     }
 
-    /// <summary>Один платёж с историей оплат (только свой).</summary>
-    public Task<Obligation?> GetAsync(int userId, int obligationId) =>
-        _db.Obligations
+    /// <summary>Один платёж с историей оплат в рамках охвата.</summary>
+    public Task<Obligation?> GetAsync(
+        int userId, int obligationId, IReadOnlyCollection<int>? scopeIds = null)
+    {
+        var ids = scopeIds ?? [userId];
+        return _db.Obligations
             .Include(o => o.Account)
             .Include(o => o.Category)
             .Include(o => o.Debt)
+            .Include(o => o.User)
             .Include(o => o.Payments.OrderByDescending(p => p.Date).ThenByDescending(p => p.Id))
-            .FirstOrDefaultAsync(o => o.Id == obligationId && o.UserId == userId);
+            .FirstOrDefaultAsync(o => o.Id == obligationId && ids.Contains(o.UserId));
+    }
 
     /// <summary>Создаёт обязательный платёж.</summary>
     public async Task<(bool Ok, string? Error, Obligation? Obligation)> CreateAsync(
-        int userId, ObligationInput input)
+        int userId, ObligationInput input, IReadOnlyCollection<int>? scopeIds = null)
     {
-        var violation = await ValidateAsync(userId, input);
+        var violation = await ValidateAsync(userId, input, scopeIds);
         if (violation is not null) return (false, violation, null);
 
         var obligation = new Obligation
@@ -166,13 +174,15 @@ public sealed class ObligationService
 
     /// <summary>Изменяет обязательный платёж.</summary>
     public async Task<(bool Ok, string? Error)> UpdateAsync(
-        int userId, int obligationId, ObligationInput input)
+        int userId, int obligationId, ObligationInput input,
+        IReadOnlyCollection<int>? scopeIds = null)
     {
+        var ids = scopeIds ?? [userId];
         var obligation = await _db.Obligations
-            .FirstOrDefaultAsync(o => o.Id == obligationId && o.UserId == userId);
+            .FirstOrDefaultAsync(o => o.Id == obligationId && ids.Contains(o.UserId));
         if (obligation is null) return (false, "Платёж не найден");
 
-        var violation = await ValidateAsync(userId, input);
+        var violation = await ValidateAsync(userId, input, ids);
         if (violation is not null) return (false, violation);
 
         obligation.Name = input.Name!.Trim();
@@ -196,10 +206,12 @@ public sealed class ObligationService
     /// дату следующего платежа на один период. Разовые платежи завершаются.
     /// </summary>
     public async Task<(bool Ok, string? Error)> PayAsync(
-        int userId, int obligationId, PaymentInput input)
+        int userId, int obligationId, PaymentInput input,
+        IReadOnlyCollection<int>? scopeIds = null)
     {
+        var ids = scopeIds ?? [userId];
         var obligation = await _db.Obligations
-            .FirstOrDefaultAsync(o => o.Id == obligationId && o.UserId == userId);
+            .FirstOrDefaultAsync(o => o.Id == obligationId && ids.Contains(o.UserId));
         if (obligation is null) return (false, "Платёж не найден");
         if (obligation.Status == ObligationStatus.Paused)
             return (false, "Платёж на паузе — сначала возобновите его");
@@ -222,7 +234,7 @@ public sealed class ObligationService
             if (obligation.DebtId is null)
                 return (false, "Платёж не связан с долгом");
             debtForPayment = await _db.Debts
-                .FirstOrDefaultAsync(d => d.Id == obligation.DebtId && d.UserId == userId);
+                .FirstOrDefaultAsync(d => d.Id == obligation.DebtId && ids.Contains(d.UserId));
             if (debtForPayment is null) return (false, "Долг не найден");
             if (debtForPayment.RemainingAmount <= 0)
                 return (false, "Долг уже погашен — остаток нулевой");
@@ -239,7 +251,7 @@ public sealed class ObligationService
             {
                 var accountId = input.AccountId ?? obligation.AccountId;
                 if (accountId is null) return (false, "Выберите счёт для операции");
-                var account = await ResolveAccountAsync(userId, accountId);
+                var account = await ResolveAccountAsync(ids, accountId);
                 if (account is null) return (false, "Счёт не найден");
                 if (account.IsArchived) return (false, "Счёт в архиве");
 
@@ -248,7 +260,8 @@ public sealed class ObligationService
 
                 var tx = new Transaction
                 {
-                    UserId = userId,
+                    // Операция записывается владельцу счёта — так же, как другие семейные операции.
+                    UserId = account.UserId,
                     CategoryId = category.Id,
                     Type = TxType.Expense,
                     Amount = amount,
@@ -268,7 +281,7 @@ public sealed class ObligationService
             var plannedDate = obligation.NextPaymentDate;
             var payment = new ObligationPayment
             {
-                UserId = userId,
+                UserId = obligation.UserId,
                 ObligationId = obligation.Id,
                 Amount = amount,
                 Date = date,
@@ -287,7 +300,7 @@ public sealed class ObligationService
                 // чтобы не дублировать сумму в журнале и балансе.
                 var ev = new DebtEvent
                 {
-                    UserId = userId,
+                    UserId = debtForPayment.UserId,
                     DebtId = debtForPayment.Id,
                     Kind = DebtEventKind.Repayment,
                     Amount = amount,
@@ -333,15 +346,16 @@ public sealed class ObligationService
     /// дата следующего платежа возвращается на оплаченную дату по графику.
     /// </summary>
     public async Task<(bool Ok, string? Error)> DeletePaymentAsync(
-        int userId, int obligationId, int paymentId)
+        int userId, int obligationId, int paymentId, IReadOnlyCollection<int>? scopeIds = null)
     {
+        var ids = scopeIds ?? [userId];
         var payment = await _db.ObligationPayments
             .Include(p => p.Transaction)
             .FirstOrDefaultAsync(p => p.Id == paymentId && p.ObligationId == obligationId);
         if (payment is null) return (false, "Факт оплаты не найден");
 
         var obligation = await _db.Obligations
-            .FirstOrDefaultAsync(o => o.Id == obligationId && o.UserId == userId);
+            .FirstOrDefaultAsync(o => o.Id == obligationId && ids.Contains(o.UserId));
         if (obligation is null) return (false, "Платёж не найден");
 
         int? balanceAccountId = null;
@@ -378,10 +392,12 @@ public sealed class ObligationService
 
     /// <summary>Ставит платёж на паузу, возобновляет или завершает.</summary>
     public async Task<(bool Ok, string? Error)> SetStatusAsync(
-        int userId, int obligationId, ObligationStatus status)
+        int userId, int obligationId, ObligationStatus status,
+        IReadOnlyCollection<int>? scopeIds = null)
     {
+        var ids = scopeIds ?? [userId];
         var obligation = await _db.Obligations
-            .FirstOrDefaultAsync(o => o.Id == obligationId && o.UserId == userId);
+            .FirstOrDefaultAsync(o => o.Id == obligationId && ids.Contains(o.UserId));
         if (obligation is null) return (false, "Платёж не найден");
         if (!Enum.IsDefined(status)) return (false, "Неизвестный статус");
 
@@ -391,18 +407,22 @@ public sealed class ObligationService
     }
 
     /// <summary>Удаляет платёж, историю оплат и связанные операции.</summary>
-    public async Task<(bool Ok, string? Error)> DeleteAsync(int userId, int obligationId)
+    public async Task<(bool Ok, string? Error)> DeleteAsync(
+        int userId, int obligationId, IReadOnlyCollection<int>? scopeIds = null)
     {
+        var ids = scopeIds ?? [userId];
         var obligation = await _db.Obligations
             .Include(o => o.Payments)
-            .FirstOrDefaultAsync(o => o.Id == obligationId && o.UserId == userId);
+            .FirstOrDefaultAsync(o => o.Id == obligationId && ids.Contains(o.UserId));
         if (obligation is null) return (false, "Платёж не найден");
 
         var txIds = obligation.Payments.Where(p => p.TransactionId != null)
             .Select(p => p.TransactionId!.Value).ToList();
+        var affectedAccountIds = new List<int>();
         if (txIds.Count > 0)
         {
             var txs = await _db.Transactions.Where(t => txIds.Contains(t.Id)).ToListAsync();
+            affectedAccountIds.AddRange(txs.Where(t => t.AccountId != null).Select(t => t.AccountId!.Value));
             _db.Transactions.RemoveRange(txs);
         }
 
@@ -420,16 +440,18 @@ public sealed class ObligationService
 
         foreach (var debtId in affectedDebtIds)
             await DebtService.RecalcRemainingAsync(_db, debtId);
-        if (txIds.Count > 0)
-            await AccountBalanceService.RecalcAsync(_db, await UserAccountIdsAsync(userId));
+        if (affectedAccountIds.Count > 0)
+            await AccountBalanceService.RecalcAsync(_db, affectedAccountIds.Distinct().ToArray());
 
         return (true, null);
     }
 
     // ---------- Вспомогательные методы ----------
 
-    private async Task<string?> ValidateAsync(int userId, ObligationInput input)
+    private async Task<string?> ValidateAsync(
+        int userId, ObligationInput input, IReadOnlyCollection<int>? scopeIds = null)
     {
+        var ids = scopeIds ?? [userId];
         if (string.IsNullOrWhiteSpace(input.Name))
             return "Название платежа обязательно";
         if (string.IsNullOrWhiteSpace(input.Payee))
@@ -448,16 +470,16 @@ public sealed class ObligationService
             return "День платежа должен быть от 1 до 31";
 
         if (input.CategoryId is int categoryId
-            && await _db.Categories.CountAsync(c => c.Id == categoryId && c.UserId == userId) == 0)
+            && await CategoryService.FindAsync(_db, userId, categoryId) is null)
             return "Категория не найдена";
         if (input.AccountId is int accountId)
         {
-            var account = await ResolveAccountAsync(userId, accountId);
+            var account = await ResolveAccountAsync(ids, accountId);
             if (account is null) return "Счёт не найден";
         }
         if (input.DebtId is int debtId)
         {
-            var debt = await _db.Debts.FirstOrDefaultAsync(d => d.Id == debtId && d.UserId == userId);
+            var debt = await _db.Debts.FirstOrDefaultAsync(d => d.Id == debtId && ids.Contains(d.UserId));
             if (debt is null) return "Долг не найден";
             // Обязательный платёж — это то, что пользователь платит. Связь с долгом
             // «мне должны» не имеет смысла: там деньги приходят и учитываются событиями долга.
@@ -468,37 +490,16 @@ public sealed class ObligationService
         return null;
     }
 
-    private Task<Account?> ResolveAccountAsync(int userId, int? accountId) =>
+    private Task<Account?> ResolveAccountAsync(
+        IReadOnlyCollection<int> userIds, int? accountId) =>
         accountId is int id
-            ? _db.Accounts.FirstOrDefaultAsync(a => a.Id == id && a.UserId == userId)
+            ? _db.Accounts.FirstOrDefaultAsync(a => a.Id == id && userIds.Contains(a.UserId))
             : Task.FromResult<Account?>(null);
 
-    private Task<Category?> ResolveCategoryAsync(int userId, int? categoryId) =>
-        categoryId is int id
-            ? _db.Categories.FirstOrDefaultAsync(c => c.Id == id && c.UserId == userId)
-            : Task.FromResult<Category?>(null);
+    private async Task<Category?> ResolveCategoryAsync(int userId, int? categoryId) =>
+        categoryId is int id ? await CategoryService.FindAsync(_db, userId, id) : null;
 
-    private async Task<List<int>> UserAccountIdsAsync(int userId) =>
-        await _db.Accounts.Where(a => a.UserId == userId).Select(a => a.Id).ToListAsync();
-
-    /// <summary>Категория «Обязательные платежи» создаётся при первом использовании.</summary>
-    private async Task<Category> EnsureFallbackCategoryAsync(int userId)
-    {
-        var existing = await _db.Categories
-            .FirstOrDefaultAsync(c => c.UserId == userId
-                && c.Name == FallbackCategoryName && c.Type == TxType.Expense);
-        if (existing is not null) return existing;
-
-        var category = new Category
-        {
-            UserId = userId,
-            Name = FallbackCategoryName,
-            Type = TxType.Expense,
-            Color = "#dd6b20",
-            IsSystem = true,
-        };
-        _db.Categories.Add(category);
-        await _db.SaveChangesAsync();
-        return category;
-    }
+    /// <summary>Категория «Обязательные платежи» создаётся один раз на всю семью.</summary>
+    private Task<Category> EnsureFallbackCategoryAsync(int userId) =>
+        CategoryService.EnsureSystemAsync(_db, userId, FallbackCategoryName, TxType.Expense, "#dd6b20");
 }

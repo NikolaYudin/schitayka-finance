@@ -29,7 +29,9 @@ public sealed record CalendarItem(
     int? AccountId,
     bool Remind,
     string Note,
-    string? TypeName);
+    string? TypeName,
+    int OwnerId,
+    string? OwnerName);
 
 /// <summary>
 /// Календарь событий (Задача 5): объединяет даты из долгов, платежей, вкладов,
@@ -47,9 +49,14 @@ public sealed class CalendarService
 
     /// <summary>События в диапазоне дат; sources — номера источников из CalendarSource.</summary>
     public async Task<List<CalendarItem>> GetAsync(
-        int userId, DateOnly from, DateOnly to, IReadOnlyCollection<int>? sources = null)
+        int userId, DateOnly from, DateOnly to, IReadOnlyCollection<int>? sources = null,
+        IReadOnlyCollection<int>? scopeIds = null)
     {
+        var ids = scopeIds ?? [userId];
         var today = DateOnly.FromDateTime(DateTime.Today);
+        var owners = await _db.Users.Where(u => ids.Contains(u.Id))
+            .Select(u => new { u.Id, u.Name }).ToDictionaryAsync(u => u.Id, u => u.Name);
+        string? OwnerName(int id) => owners.TryGetValue(id, out var name) ? name : null;
         var wanted = sources is { Count: > 0 } ? sources.ToHashSet() : null;
         var include = (CalendarSource s) => wanted is null || wanted.Contains((int)s);
         var items = new List<CalendarItem>();
@@ -62,39 +69,39 @@ public sealed class CalendarService
                 .Include(e => e.Debt)
                 .Include(e => e.Obligation)
                 .Include(e => e.Account)
-                .Where(e => e.UserId == userId && e.Date >= from && e.Date <= to)
+                .Where(e => ids.Contains(e.UserId) && e.Date >= from && e.Date <= to)
                 .ToListAsync();
             items.AddRange(events.Select(e => new CalendarItem(
                 $"event:{e.Id}", e.Id, (int)CalendarSource.UserEvent, "Событие",
                 e.Title, e.Date, NormalizeTime(e.Time), e.Amount, e.Date < today,
                 e.DebtId, e.ObligationId, e.AccountId, e.Remind, e.Note ?? "",
-                TypeName((CalendarEventType)e.Type))));
+                TypeName((CalendarEventType)e.Type), e.UserId, OwnerName(e.UserId))));
         }
 
         if (include(CalendarSource.Obligation))
         {
             var obligations = await _db.Obligations
-                .Where(o => o.UserId == userId && o.Status == ObligationStatus.Active
+                .Where(o => ids.Contains(o.UserId) && o.Status == ObligationStatus.Active
                     && o.NextPaymentDate >= from && o.NextPaymentDate <= to)
-                .Select(o => new { o.Id, o.Name, o.Payee, o.NextPaymentDate, o.Amount, o.Remind })
+                .Select(o => new { o.Id, o.UserId, o.Name, o.Payee, o.NextPaymentDate, o.Amount, o.Remind })
                 .ToListAsync();
             items.AddRange(obligations.Select(o => new CalendarItem(
                 $"obligation:{o.Id}", o.Id, (int)CalendarSource.Obligation, "Платёж",
                 o.Name, o.NextPaymentDate, null, o.Amount, o.NextPaymentDate < today,
-                null, o.Id, null, o.Remind, o.Payee, null)));
+                null, o.Id, null, o.Remind, o.Payee, null, o.UserId, OwnerName(o.UserId))));
         }
 
         if (include(CalendarSource.DebtDue))
         {
             var debts = await _db.Debts
-                .Where(d => d.UserId == userId && d.Status == DebtStatus.Active
+                .Where(d => ids.Contains(d.UserId) && d.Status == DebtStatus.Active
                     && d.RemainingAmount > 0 && d.DueDate >= from && d.DueDate <= to)
-                .Select(d => new { d.Id, d.Name, d.DueDate, d.RemainingAmount })
+                .Select(d => new { d.Id, d.UserId, d.Name, d.DueDate, d.RemainingAmount })
                 .ToListAsync();
             items.AddRange(debts.Select(d => new CalendarItem(
                 $"debt:{d.Id}", d.Id, (int)CalendarSource.DebtDue, "Срок долга",
                 $"Срок возврата: {d.Name}", d.DueDate!.Value, null, d.RemainingAmount,
-                d.DueDate < today, d.Id, null, null, false, "", null)));
+                d.DueDate < today, d.Id, null, null, false, "", null, d.UserId, OwnerName(d.UserId))));
         }
 
         if (include(CalendarSource.DepositMaturity))
@@ -102,8 +109,8 @@ public sealed class CalendarService
             // MaturesAt хранится как DateTime — сравниваем по календарным датам в C#,
             // чтобы не зависить от часового пояса SQLite.
             var accounts = await _db.Accounts
-                .Where(a => a.UserId == userId && !a.IsArchived && a.MaturesAt != null)
-                .Select(a => new { a.Id, a.Name, a.MaturesAt, a.Balance })
+                .Where(a => ids.Contains(a.UserId) && !a.IsArchived && a.MaturesAt != null)
+                .Select(a => new { a.Id, a.UserId, a.Name, a.MaturesAt, a.Balance })
                 .ToListAsync();
             var maturing = accounts
                 .Where(a => a.MaturesAt is DateTime dt
@@ -112,7 +119,7 @@ public sealed class CalendarService
                     $"deposit:{a.Id}", a.Id, (int)CalendarSource.DepositMaturity, "Вклад",
                     $"Окончание вклада: {a.Name}", DateOnly.FromDateTime(a.MaturesAt!.Value),
                     null, a.Balance, DateOnly.FromDateTime(a.MaturesAt.Value) < today,
-                    null, null, a.Id, false, "", null));
+                    null, null, a.Id, false, "", null, a.UserId, OwnerName(a.UserId)));
             items.AddRange(maturing);
         }
 
@@ -120,7 +127,7 @@ public sealed class CalendarService
         {
             var accruals = await _db.InterestAccruals
                 .Include(a => a.Account)
-                .Where(a => a.UserId == userId && !a.IsPaid)
+                .Where(a => ids.Contains(a.UserId) && !a.IsPaid)
                 .ToListAsync();
             var inRange = accruals
                 .Where(a => DateOnly.FromDateTime(a.To) >= from && DateOnly.FromDateTime(a.To) <= to)
@@ -128,7 +135,7 @@ public sealed class CalendarService
                     $"interest:{a.Id}", a.Id, (int)CalendarSource.InterestAccrual, "Проценты",
                     $"Начисление процентов: {a.Account.Name}", DateOnly.FromDateTime(a.To),
                     null, a.Net, DateOnly.FromDateTime(a.To) < today,
-                    null, null, a.AccountId, false, "", null));
+                    null, null, a.AccountId, false, "", null, a.UserId, OwnerName(a.UserId)));
             items.AddRange(inRange);
         }
 
@@ -141,23 +148,29 @@ public sealed class CalendarService
 
     /// <summary>Ближайшие события: от сегодня на заданное число дней.</summary>
     public async Task<List<CalendarItem>> UpcomingAsync(
-        int userId, int take = 5, int days = 30, IReadOnlyCollection<int>? sources = null)
+        int userId, int take = 5, int days = 30, IReadOnlyCollection<int>? sources = null,
+        IReadOnlyCollection<int>? scopeIds = null)
     {
         var today = DateOnly.FromDateTime(DateTime.Today);
         // Просроченные события тоже показываем — иначе они «пропадают» из ближайших.
-        var all = await GetAsync(userId, today.AddDays(-30), today.AddDays(Math.Max(1, days)), sources);
+        var all = await GetAsync(userId, today.AddDays(-30), today.AddDays(Math.Max(1, days)),
+            sources, scopeIds);
         return all.Take(Math.Clamp(take, 1, 50)).ToList();
     }
 
     /// <summary>Одно пользовательское событие (для редактирования).</summary>
-    public Task<CalendarEvent?> GetEventAsync(int userId, int id) =>
-        _db.CalendarEvents.FirstOrDefaultAsync(e => e.Id == id && e.UserId == userId);
+    public Task<CalendarEvent?> GetEventAsync(
+        int userId, int id, IReadOnlyCollection<int>? scopeIds = null)
+    {
+        var ids = scopeIds ?? [userId];
+        return _db.CalendarEvents.FirstOrDefaultAsync(e => e.Id == id && ids.Contains(e.UserId));
+    }
 
     /// <summary>Создаёт пользовательское событие.</summary>
     public async Task<(bool Ok, string? Error, CalendarEvent? Event)> CreateAsync(
-        int userId, CalendarEventInput input)
+        int userId, CalendarEventInput input, IReadOnlyCollection<int>? scopeIds = null)
     {
-        var violation = await ValidateAsync(userId, input);
+        var violation = await ValidateAsync(userId, input, scopeIds);
         if (violation is not null) return (false, violation, null);
 
         var entity = new CalendarEvent
@@ -182,13 +195,14 @@ public sealed class CalendarService
 
     /// <summary>Изменяет пользовательское событие.</summary>
     public async Task<(bool Ok, string? Error)> UpdateAsync(
-        int userId, int id, CalendarEventInput input)
+        int userId, int id, CalendarEventInput input, IReadOnlyCollection<int>? scopeIds = null)
     {
+        var ids = scopeIds ?? [userId];
         var entity = await _db.CalendarEvents
-            .FirstOrDefaultAsync(e => e.Id == id && e.UserId == userId);
+            .FirstOrDefaultAsync(e => e.Id == id && ids.Contains(e.UserId));
         if (entity is null) return (false, "Событие не найдено");
 
-        var violation = await ValidateAsync(userId, input);
+        var violation = await ValidateAsync(userId, input, ids);
         if (violation is not null) return (false, violation);
 
         entity.Title = input.Title!.Trim();
@@ -206,10 +220,12 @@ public sealed class CalendarService
     }
 
     /// <summary>Удаляет пользовательское событие.</summary>
-    public async Task<(bool Ok, string? Error)> DeleteAsync(int userId, int id)
+    public async Task<(bool Ok, string? Error)> DeleteAsync(
+        int userId, int id, IReadOnlyCollection<int>? scopeIds = null)
     {
+        var ids = scopeIds ?? [userId];
         var entity = await _db.CalendarEvents
-            .FirstOrDefaultAsync(e => e.Id == id && e.UserId == userId);
+            .FirstOrDefaultAsync(e => e.Id == id && ids.Contains(e.UserId));
         if (entity is null) return (false, "Событие не найдено");
         _db.CalendarEvents.Remove(entity);
         await _db.SaveChangesAsync();
@@ -234,8 +250,10 @@ public sealed class CalendarService
         _ => "Событие",
     };
 
-    private async Task<string?> ValidateAsync(int userId, CalendarEventInput input)
+    private async Task<string?> ValidateAsync(
+        int userId, CalendarEventInput input, IReadOnlyCollection<int>? scopeIds = null)
     {
+        var ids = scopeIds ?? [userId];
         if (string.IsNullOrWhiteSpace(input.Title))
             return "Название события обязательно";
         if (input.Date is null)
@@ -247,13 +265,13 @@ public sealed class CalendarService
         if (input.Amount is decimal amount && (amount < 0 || decimal.Round(amount, 2) != amount))
             return "Неверная сумма: укажите неотрицательное значение с точностью до копеек";
         if (input.DebtId is int debtId
-            && await _db.Debts.CountAsync(d => d.Id == debtId && d.UserId == userId) == 0)
+            && await _db.Debts.CountAsync(d => d.Id == debtId && ids.Contains(d.UserId)) == 0)
             return "Долг не найден";
         if (input.ObligationId is int obligationId
-            && await _db.Obligations.CountAsync(o => o.Id == obligationId && o.UserId == userId) == 0)
+            && await _db.Obligations.CountAsync(o => o.Id == obligationId && ids.Contains(o.UserId)) == 0)
             return "Платёж не найден";
         if (input.AccountId is int accountId
-            && await _db.Accounts.CountAsync(a => a.Id == accountId && a.UserId == userId) == 0)
+            && await _db.Accounts.CountAsync(a => a.Id == accountId && ids.Contains(a.UserId)) == 0)
             return "Счёт не найден";
         return null;
     }

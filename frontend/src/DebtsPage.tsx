@@ -1,6 +1,8 @@
 import { useEffect, useState } from 'react';
 import { api, fmt, AccountInfo, DebtInfo, DebtEventInfo, DebtsSummary } from './api';
 import { Icon } from './icons';
+import { ScopeSwitch } from './ScopeSwitch';
+import { loadScope, withScope, SCOPE_CHANGED, type ScopeState } from './scope';
 
 const DIRECTIONS = [
   { v: 0, label: 'Я должен' },
@@ -47,6 +49,7 @@ export function DebtsPage() {
   const [summary, setSummary] = useState<DebtsSummary | null>(null);
   const [accounts, setAccounts] = useState<AccountInfo[]>([]);
   const [filter, setFilter] = useState<'active' | 'closed' | 'all'>('active');
+  const [scope, setScope] = useState<ScopeState>(loadScope);
   const [err, setErr] = useState('');
   const [busy, setBusy] = useState(false);
 
@@ -77,8 +80,8 @@ export function DebtsPage() {
   const load = async (nextFilter: typeof filter = filter) => {
     try {
       const [d, s, a] = await Promise.all([
-        api.get<DebtInfo[]>(`/api/debts?filter=${nextFilter}`),
-        api.get<DebtsSummary>('/api/debts/summary'),
+        api.get<DebtInfo[]>(withScope(`/api/debts?filter=${nextFilter}`, scope)),
+        api.get<DebtsSummary>(withScope('/api/debts/summary', scope)),
         api.get<AccountInfo[]>('/api/accounts'),
       ]);
       setDebts(d);
@@ -87,7 +90,12 @@ export function DebtsPage() {
     } catch (ex: any) { setErr(ex.message); }
   };
 
-  useEffect(() => { load(filter); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [filter]);
+  useEffect(() => { load(filter); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [filter, scope]);
+  useEffect(() => {
+    const sync = () => setScope(loadScope());
+    window.addEventListener(SCOPE_CHANGED, sync);
+    return () => window.removeEventListener(SCOPE_CHANGED, sync);
+  }, []);
 
   const activeAccounts = accounts.filter(a => !a.isArchived);
 
@@ -139,8 +147,8 @@ export function DebtsPage() {
       note: fNote,
     };
     try {
-      if (editing) await api.put(`/api/debts/${editing.id}`, body);
-      else await api.post('/api/debts', body);
+      if (editing) await api.put(withScope(`/api/debts/${editing.id}`, scope), body);
+      else await api.post(withScope('/api/debts', scope), body);
       setFormOpen(false);
       resetForm();
       if (!editing && filter === 'closed') setFilter('active');
@@ -163,7 +171,7 @@ export function DebtsPage() {
     e.preventDefault();
     setErr(''); setBusy(true);
     try {
-      await api.post(`/api/debts/${d.id}/events`, {
+      await api.post(withScope(`/api/debts/${d.id}/events`, scope), {
         kind: eKind,
         amount: num(eAmount),
         date: eDate || null,
@@ -178,20 +186,20 @@ export function DebtsPage() {
 
   const delEvent = async (debtId: number, eventId: number) => {
     if (!confirm('Удалить событие? Связанная операция тоже будет удалена.')) return;
-    try { await api.del(`/api/debts/${debtId}/events/${eventId}`); await load(); }
+    try { await api.del(withScope(`/api/debts/${debtId}/events/${eventId}`, scope)); await load(); }
     catch (ex: any) { setErr(ex.message); }
   };
 
   const setStatus = async (d: DebtInfo, close: boolean) => {
     try {
-      await api.post(`/api/debts/${d.id}/${close ? 'close' : 'reopen'}`);
+      await api.post(withScope(`/api/debts/${d.id}/${close ? 'close' : 'reopen'}`, scope));
       await load();
     } catch (ex: any) { setErr(ex.message); }
   };
 
   const delDebt = async (id: number) => {
     if (!confirm('Удалить долг, историю и связанные операции?')) return;
-    try { await api.del(`/api/debts/${id}`); await load(); }
+    try { await api.del(withScope(`/api/debts/${id}`, scope)); await load(); }
     catch (ex: any) { setErr(ex.message); }
   };
 
@@ -212,6 +220,7 @@ export function DebtsPage() {
             <Icon name="plus" size={15} /> Новый долг
           </button>
         </div>
+        <div style={{ marginTop: 10 }}><ScopeSwitch /></div>
 
         {err && <div className="alert alert-danger">{err}</div>}
 
@@ -347,6 +356,7 @@ export function DebtsPage() {
                 </span>
                 {' '}· {d.counterparty} · от {fmtDate(d.issuedAt)}
                 {d.dueDate ? ` · до ${fmtDate(d.dueDate)}` : ''}
+                {scope.mode !== 'me' && d.ownerName ? ` · 👤 ${d.ownerName}` : ''}
               </p>
             </div>
             <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>

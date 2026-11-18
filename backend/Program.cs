@@ -260,6 +260,7 @@ string? SqliteError(string path, string sql)
 var AddCols = new (string Table, string Col, string Def)[]
 {
     ("Users", "FamilyCode", "TEXT NULL"),
+    ("Categories", "FamilyCode", "TEXT NULL"),
     ("Transactions", "AccountId", "INTEGER NULL"),
     // Появился позже первых версий схемы; нужен, чтобы legacy-база
     // соответствовала baseline-миграции InitialCreate.
