@@ -164,6 +164,9 @@ public sealed class BudgetSummaryService
         _rules = rules;
     }
 
+    // B15: компактная карточка банка для соединения со счетами в памяти.
+    private sealed record BankBrand(string? ShortName, string? BrandColor);
+
     /// <summary>
     /// Сводка за месяц. Личные инструменты (лимиты, цели, уведомления, резервы)
     /// считаются по uid; доходы/расходы — по выбранному охвату (me/family/ids).
@@ -190,6 +193,8 @@ public sealed class BudgetSummaryService
 
         // Счета семьи: видны всем членам группы, но не влияют на личный бюджет
         // (доходы/расходы считаются только по собственным операциям).
+        // B15: раньше на каждый счёт уходили коррелированные подзапросы за владельцем
+        // и банком. Теперь все справочники выбираются пакетно и соединяются в памяти.
         var familyAccountsRaw = await _db.Accounts
             .Where(a => familyIds.Contains(a.UserId) && a.UserId != uid && !a.IsArchived)
             .OrderBy(a => a.UserId).ThenBy(a => a.Name)
@@ -197,15 +202,10 @@ public sealed class BudgetSummaryService
             {
                 a.Id, a.Name, a.Type, typeName = AccountTypeNames.Ru(a.Type),
                 a.Balance, a.CreditLimit, a.CashbackRate, a.CashbackAccrued, a.Color,
+                a.BankId,
                 ownerId = a.UserId,
-                ownerName = _db.Users.Where(u => u.Id == a.UserId).Select(u => u.Name).FirstOrDefault(),
-                bankShortName = _db.Banks.Where(b => b.Id == a.BankId).Select(b => b.ShortName).FirstOrDefault(),
-                bankColor = _db.Banks.Where(b => b.Id == a.BankId).Select(b => b.BrandColor).FirstOrDefault(),
             })
             .ToListAsync(ct);
-        var familyAccounts = familyAccountsRaw.Select(a => new BudgetFamilyAccountRow(
-            a.Id, a.Name, a.Type, a.typeName, a.Balance, a.CreditLimit, a.CashbackRate,
-            a.CashbackAccrued, a.Color, a.ownerId, a.ownerName, a.bankShortName, a.bankColor)).ToList();
 
         var alertsRaw = await _db.AccountAlerts
             .Where(a => a.UserId == uid && a.ResolvedAt == null && a.DismissedAt == null)
@@ -213,13 +213,8 @@ public sealed class BudgetSummaryService
             .Select(a => new
             {
                 a.Id, a.AccountId, a.RuleId, a.Kind, a.Level, a.Message, a.BalanceSnapshot, a.CreatedAt,
-                accountName = a.AccountId == null ? null
-                    : _db.Accounts.Where(x => x.Id == a.AccountId).Select(x => x.Name).FirstOrDefault(),
             })
             .ToListAsync(ct);
-        var alerts = alertsRaw.Select(a => new BudgetAlertRow(
-            a.Id, a.AccountId, a.RuleId, a.Kind, a.Level, a.Message, a.BalanceSnapshot,
-            a.CreatedAt, a.accountName)).ToList();
 
         var reserveLoansRaw = await _db.ReserveLoans
             .Where(l => l.UserId == uid && l.ReturnedAt == null)
@@ -227,13 +222,57 @@ public sealed class BudgetSummaryService
             .Select(l => new
             {
                 l.Id, l.AccountId, l.RuleId, l.Amount, l.TakenAt, l.DueDate, l.Comment,
-                accountName = _db.Accounts.Where(a => a.Id == l.AccountId).Select(a => a.Name).FirstOrDefault(),
-                isOverdue = l.DueDate < DateTime.UtcNow.Date,
             })
             .ToListAsync(ct);
+
+        // B15: по одному IN-запросу на каждый справочник вместо подзапроса на строку.
+        var ownerIds = familyAccountsRaw.Select(a => a.ownerId).Distinct().ToList();
+        var owners = ownerIds.Count == 0
+            ? new Dictionary<int, string>()
+            : await _db.Users.AsNoTracking().Where(u => ownerIds.Contains(u.Id))
+                .Select(u => new { u.Id, u.Name })
+                .ToDictionaryAsync(u => u.Id, u => u.Name, ct);
+
+        var bankIds = accounts.Where(a => a.BankId.HasValue).Select(a => a.BankId!.Value)
+            .Concat(familyAccountsRaw.Where(a => a.BankId.HasValue).Select(a => a.BankId!.Value))
+            .Distinct().ToList();
+        var banks = bankIds.Count == 0
+            ? new Dictionary<int, BankBrand>()
+            : await _db.Banks.AsNoTracking().Where(b => bankIds.Contains(b.Id))
+                .Select(b => new { b.Id, b.ShortName, b.BrandColor })
+                .ToDictionaryAsync(b => b.Id, b => new BankBrand(b.ShortName, b.BrandColor), ct);
+
+        var namedAccountIds = alertsRaw.Where(a => a.AccountId.HasValue).Select(a => a.AccountId!.Value)
+            .Concat(reserveLoansRaw.Select(l => l.AccountId))
+            .Distinct().ToList();
+        var accountNames = namedAccountIds.Count == 0
+            ? new Dictionary<int, string>()
+            : await _db.Accounts.AsNoTracking().Where(a => namedAccountIds.Contains(a.Id))
+                .Select(a => new { a.Id, a.Name })
+                .ToDictionaryAsync(a => a.Id, a => a.Name, ct);
+
+        BankBrand? BankOf(int? bankId) =>
+            bankId is { } id && banks.TryGetValue(id, out var bank) ? bank : null;
+
+        var familyAccounts = familyAccountsRaw.Select(a =>
+        {
+            var bank = BankOf(a.BankId);
+            return new BudgetFamilyAccountRow(
+                a.Id, a.Name, a.Type, a.typeName, a.Balance, a.CreditLimit, a.CashbackRate,
+                a.CashbackAccrued, a.Color, a.ownerId,
+                owners.TryGetValue(a.ownerId, out var ownerName) ? ownerName : null,
+                bank?.ShortName, bank?.BrandColor);
+        }).ToList();
+
+        var alerts = alertsRaw.Select(a => new BudgetAlertRow(
+            a.Id, a.AccountId, a.RuleId, a.Kind, a.Level, a.Message, a.BalanceSnapshot,
+            a.CreatedAt,
+            a.AccountId is { } aid && accountNames.TryGetValue(aid, out var name) ? name : null)).ToList();
+
         var reserveLoans = reserveLoansRaw.Select(l => new BudgetReserveLoanRow(
             l.Id, l.AccountId, l.RuleId, l.Amount, l.TakenAt, l.DueDate, l.Comment,
-            l.accountName, l.isOverdue)).ToList();
+            accountNames.TryGetValue(l.AccountId, out var loanAccountName) ? loanAccountName : null,
+            l.DueDate < DateTime.UtcNow.Date)).ToList();
 
         var reserveRules = await _db.AccountRules
             .Where(r => r.UserId == uid && r.Kind == AccountRuleKind.EmergencyReserve
@@ -270,11 +309,18 @@ public sealed class BudgetSummaryService
         var noAccountUserIds = scopeUserIds
             .Where(id => !scopeAccounts.Any(a => a.UserId == id)).ToList();
         decimal totalBalance = scopeAccounts.Sum(a => a.Type == AccountType.CreditCard ? -a.Balance : a.Balance);
+        // B15: один запрос на все стартовые балансы вместо запроса на каждого пользователя.
+        // Себя берём из уже загруженной записи user — как и раньше.
+        var missingUserIds = noAccountUserIds.Where(id => id != uid).ToList();
+        var startingBalances = missingUserIds.Count == 0
+            ? new Dictionary<int, decimal>()
+            : await _db.Users.AsNoTracking().Where(u => missingUserIds.Contains(u.Id))
+                .Select(u => new { u.Id, u.StartingBalance })
+                .ToDictionaryAsync(u => u.Id, u => u.StartingBalance, ct);
         foreach (var id in noAccountUserIds)
         {
             var start = id == uid ? user?.StartingBalance ?? 0
-                : await _db.Users.Where(u => u.Id == id)
-                    .Select(u => (decimal?)u.StartingBalance).FirstOrDefaultAsync(ct) ?? 0;
+                : startingBalances.GetValueOrDefault(id);
             totalBalance += start + analytics
                 .Where(t => t.UserId == id)
                 .Sum(t => t.Type == TxType.Income ? t.Amount : -t.Amount);
@@ -353,16 +399,14 @@ public sealed class BudgetSummaryService
             : null;
         var scopeUsers = scopeUsersRaw?.Select(u => new BudgetScopeUserRow(u.Id, u.Name, u.Id == uid)).ToList();
 
-        // accounts: банковские реквизиты подтягиваем отдельно, как и раньше.
-        var accountRows = accounts.Select(a => new BudgetAccountRow(
-            a.Id, a.Name, a.Type, AccountTypeNames.Ru(a.Type), a.Balance, a.CreditLimit,
-            a.CashbackRate, a.CashbackAccrued, a.Color,
-            a.BankId is { } bid
-                ? _db.Banks.Where(b => b.Id == bid).Select(b => b.ShortName).FirstOrDefault()
-                : null,
-            a.BankId is { } bid2
-                ? _db.Banks.Where(b => b.Id == bid2).Select(b => b.BrandColor).FirstOrDefault()
-                : null)).ToList();
+        // accounts: банковские реквизиты из одного пакетного справочника (B15).
+        var accountRows = accounts.Select(a =>
+        {
+            var bank = BankOf(a.BankId);
+            return new BudgetAccountRow(
+                a.Id, a.Name, a.Type, AccountTypeNames.Ru(a.Type), a.Balance, a.CreditLimit,
+                a.CashbackRate, a.CashbackAccrued, a.Color, bank?.ShortName, bank?.BrandColor);
+        }).ToList();
 
         return new BudgetSummaryResult(
             year, month,

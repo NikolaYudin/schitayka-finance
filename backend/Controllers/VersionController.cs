@@ -63,20 +63,14 @@ public class VersionController : ControllerBase
             canUpdate,
             status = statusName,
             targetVersion = state.TargetVersion,
-            progress = state.Progress,
+            progress = Math.Clamp(state.Progress, 0, 100),
             error = state.Error,
             installDir = state.InstallDir,
             currentVersion = state.CurrentVersion,
             startedAt = state.StartedAt,
             finishedAt = state.FinishedAt,
             log = state.Log,
-            running = state.Status is SchitayKa.Api.Services.SelfUpdateStatus.Running
-                or SchitayKa.Api.Services.SelfUpdateStatus.Downloading
-                or SchitayKa.Api.Services.SelfUpdateStatus.Verifying
-                or SchitayKa.Api.Services.SelfUpdateStatus.Extracting
-                or SchitayKa.Api.Services.SelfUpdateStatus.BackingUp
-                or SchitayKa.Api.Services.SelfUpdateStatus.Applying
-                or SchitayKa.Api.Services.SelfUpdateStatus.Restarting,
+            running = SelfUpdateService.IsRunning(state.Status),
         });
     }
 

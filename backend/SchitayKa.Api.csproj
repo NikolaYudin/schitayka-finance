@@ -59,16 +59,15 @@
     <Message Importance="high" Text="[SchitayKa] wwwroot скопирован в публикацию: $(PublishDir)wwwroot" Condition="'@(_PubWpSrc)'!=''" />
   </Target>
 
-  <!-- Автосборка фронтенда при сборке проекта, если установлен Node.js и есть node_modules.
-       Если npm отсутствует — предупреждение, но сборка .NET продолжается. -->
+  <!-- B16: сборка фронтенда НЕ запускается автоматически при dotnet build/publish.
+       Готовый backend/wwwroot лежит в репозитории, CI собирает фронтенд отдельным job,
+       релизный скрипт вызывает npm run build явно. Ручная сборка:
+       dotnet build backend/SchitayKa.Api.csproj -p:BuildFrontend=true -->
 
   <Target Name="BuildFrontend" BeforeTargets="BeforeBuild"
-          Condition="Exists('$(FrontendDir)/package.json') And Exists('$(FrontendDir)/node_modules')">
+          Condition="'$(BuildFrontend)' == 'true' And Exists('$(FrontendDir)/package.json')">
     <Message Importance="high" Text="Building frontend (npm run build)..." />
-    <Exec Command="npm run build" WorkingDirectory="$(FrontendDir)" IgnoreExitCode="true" ContinueOnError="WarnAndContinue">
-      <Output TaskParameter="ExitCode" PropertyName="NpmExitCode" />
-    </Exec>
-    <Message Importance="high" Condition="'$(NpmExitCode)'!='0'" Text="WARNING: npm run build failed (exit $(NpmExitCode)). If this is new after 'git pull', run setup.cmd once to install dependencies." />
+    <Exec Command="npm run build" WorkingDirectory="$(FrontendDir)" />
   </Target>
 
   <ItemGroup>

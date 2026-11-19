@@ -2751,3 +2751,19 @@ td .btn { vertical-align: middle; }
 .account-card--hybrid { --account-accent: var(--acc, var(--accent, #6c7cff)); }
 .account-ring { flex: 0 0 44px; width: 44px; height: 44px; background: conic-gradient(#f5c400 var(--ring, 40%), rgba(120,120,140,.18) 0); }
 .account-ring > span { width: 36px; height: 36px; font-size: 8px; }
+
+/* ---------- B21: прогресс автообновления ---------- */
+.self-update-progress {
+  height: 10px;
+}
+.self-update-progress > div {
+  background: linear-gradient(90deg, var(--accent, #6c7cff), var(--green, #4ade80));
+  transition: width 400ms var(--ease);
+}
+.self-update-progress > div.over {
+  background: var(--red, #ff5c5c) !important;
+}
+.self-update-step {
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}

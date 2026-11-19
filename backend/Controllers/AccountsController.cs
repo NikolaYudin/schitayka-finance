@@ -103,20 +103,49 @@ public class AccountsController : ControllerBase
             ? Math.Round(a.Balance / a.CreditLimit * 100, 1) : (decimal?)null,
     };
 
+    // B15: компактная карточка банка для проекции счёта (N6).
+    private sealed record BankProjection(string? Name, string? ShortName, string? BrandColor);
+
+    // B15: владельцы и банки грузятся пакетно — один IN-запрос на справочник,
+    // а не по два запроса на каждый счёт в списке.
+    private async Task<(Dictionary<int, string> Owners, Dictionary<int, BankProjection> Banks)>
+        LoadProjectionLookupsAsync(IReadOnlyCollection<Account> accounts)
+    {
+        var ownerIds = accounts.Select(a => a.UserId).Distinct().ToList();
+        var bankIds = accounts.Where(a => a.BankId.HasValue)
+            .Select(a => a.BankId!.Value).Distinct().ToList();
+
+        var owners = ownerIds.Count == 0
+            ? new Dictionary<int, string>()
+            : await _db.Users.AsNoTracking().Where(u => ownerIds.Contains(u.Id))
+                .Select(u => new { u.Id, u.Name })
+                .ToDictionaryAsync(u => u.Id, u => u.Name);
+        var banks = bankIds.Count == 0
+            ? new Dictionary<int, BankProjection>()
+            : await _db.Banks.AsNoTracking().Where(b => bankIds.Contains(b.Id))
+                .Select(b => new { b.Id, b.Name, b.ShortName, b.BrandColor })
+                .ToDictionaryAsync(b => b.Id, b => new BankProjection(b.Name, b.ShortName, b.BrandColor));
+        return (owners, banks);
+    }
+
+    // Одиночный счёт (создание/обновление/корректировки): справочник грузим для одного Id.
     private async Task<object> ProjectWithOwner(Account a)
     {
-        var owner = await _db.Users.Where(u => u.Id == a.UserId)
-            .Select(u => new { u.Id, u.Name }).FirstOrDefaultAsync();
-        // N6: брендовые данные банка для оформления карточки
-        var bank = a.BankId is int bankId
-            ? await _db.Banks.Where(b => b.Id == bankId)
-                .Select(b => new { b.Name, b.ShortName, b.BrandColor }).FirstOrDefaultAsync()
-            : null;
+        var (owners, banks) = await LoadProjectionLookupsAsync(new[] { a });
+        return ProjectWithOwner(a, owners, banks);
+    }
+
+    // B15: сама проекция не обращается к БД — все справочники переданы заранее.
+    private object ProjectWithOwner(Account a, IReadOnlyDictionary<int, string> owners,
+        IReadOnlyDictionary<int, BankProjection> banks)
+    {
+        var bank = a.BankId is { } bankId && banks.TryGetValue(bankId, out var b) ? b : null;
         return new
         {
             a.Id, a.Name, a.Type, typeName = AccountTypeNames.Ru(a.Type),
             a.Balance, a.StartingBalance, a.CreditLimit, a.CashbackRate, a.CashbackAccrued, a.Color, a.IsArchived,
-            ownerId = a.UserId, ownerName = owner?.Name ?? "",
+            ownerId = a.UserId,
+            ownerName = owners.TryGetValue(a.UserId, out var ownerName) ? ownerName : "",
             isFamily = a.UserId != Uid,
             bankId = a.BankId,
             bankName = bank?.Name,
@@ -144,8 +173,10 @@ public class AccountsController : ControllerBase
         var q = _db.Accounts.Where(a => ids.Contains(a.UserId));
         if (!includeArchived) q = q.Where(a => !a.IsArchived);
         var list = await q.OrderBy(a => a.UserId).ThenBy(a => a.Type).ThenBy(a => a.Name).ToListAsync();
+        // B15: два запроса на все счета вместо двух на каждый счёт.
+        var (owners, banks) = await LoadProjectionLookupsAsync(list);
         var result = new List<object>();
-        foreach (var a in list) result.Add(await ProjectWithOwner(a));
+        foreach (var a in list) result.Add(ProjectWithOwner(a, owners, banks));
         return Ok(result);
     }
 

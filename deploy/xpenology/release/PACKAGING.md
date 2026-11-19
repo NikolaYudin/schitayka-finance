@@ -24,6 +24,10 @@ Linux / macOS / CI:
 Результат: `dist/schitayka-<версия>-docker.zip` (~0,2 МБ, ~64 файла).
 Скрипт печатает размер и SHA256.
 
+> Сборка фронтенда не встроена в `dotnet build`: скрипт сам вызывает `npm run build`,
+> а готовый `backend/wwwroot` лежит в репозитории. При разработке после изменений UI
+> выполняйте `cd frontend && npm run build` вручную (или `dotnet build -p:BuildFrontend=true`).
+
 ---
 
 ## 2. Параметры упаковщика
@@ -135,9 +139,11 @@ curl http://127.0.0.1:5023/api/health
 
 ## 6. Ограничения
 
-- **Слабый NAS** (2 ГБ RAM) может не собрать образ — используйте `-Image` после
-  публикации образа в GHCR (PLAN.md, B8) либо соберите на ПК и перенесите
-  `docker save` / `docker load`.
+- **Слабый NAS** (2 ГБ RAM) может не собрать образ — используйте готовый образ из GHCR:
+  `ghcr.io/nikolayudin/schitayka:latest` (теги версий выставляет workflow
+  `.github/workflows/docker-ghcr.yml` при публикации релиза или тега `v*`).
+  Включение: `cp docker-compose.image.yml docker-compose.yml`, затем `sh scripts/update.sh --no-build`.
+  Либо соберите на ПК и перенесите `docker save` / `docker load`.
 - **ARM-модели** — только готовый образ.
 - **Секрет в `.env`** — архив с `-NoEnv` обязателен для публикации; личный архив
   с ключом нельзя выкладывать в открытый доступ.

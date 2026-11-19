@@ -13,26 +13,45 @@ public class AccountRulesService
     public record RuleCandidate(TxType Type, decimal Amount, string? Comment, int? CategoryId);
     public record RuleResult(int RuleId, string RuleName, int? AccountId, int? SetCategoryId);
 
+    // B15: в память попадают только поля, реально участвующие в сопоставлении.
+    internal sealed record AssignmentRuleCondition(
+        int Id, string Name, int? AccountId, int? SetCategoryId,
+        TxType? TxType, int? MatchCategoryId, string? CommentContains,
+        decimal? AmountMin, decimal? AmountMax);
+
     // Первое подходящее включённое правило по приоритету (меньше — раньше).
     // Условия объединяются через И; пустые условия игнорируются.
     public async Task<RuleResult?> MatchAssignmentAsync(int userId, RuleCandidate candidate)
     {
-        var rules = await _db.AccountRules.AsNoTracking()
-            .Where(r => r.UserId == userId && r.Kind == AccountRuleKind.AutoAssign && r.IsEnabled)
-            .OrderBy(r => r.Priority).ThenBy(r => r.Id)
-            .ToListAsync();
-        if (rules.Count == 0) return null;
-
-        var activeAccountIds = await _db.Accounts
+        var activeAccountIds = await _db.Accounts.AsNoTracking()
             .Where(a => a.UserId == userId && !a.IsArchived)
             .Select(a => a.Id)
             .ToListAsync();
-        return MatchRule(rules, activeAccountIds.ToHashSet(), candidate);
+        if (activeAccountIds.Count == 0) return null;
+
+        // B15: правила без счёта или с архивным счётом матчингом всё равно отбрасываются —
+        // отфильтровываем их в SQL и не тащим полные сущности в память.
+        var rules = await _db.AccountRules.AsNoTracking()
+            .Where(r => r.UserId == userId && r.Kind == AccountRuleKind.AutoAssign && r.IsEnabled
+                        && r.AccountId != null && activeAccountIds.Contains(r.AccountId.Value))
+            .OrderBy(r => r.Priority).ThenBy(r => r.Id)
+            .Select(r => new AssignmentRuleCondition(
+                r.Id, r.Name, r.AccountId, r.SetCategoryId,
+                r.TxType, r.MatchCategoryId, r.CommentContains, r.AmountMin, r.AmountMax))
+            .ToListAsync();
+        return MatchConditions(rules, activeAccountIds.ToHashSet(), candidate);
     }
 
     // Чистое сопоставление без обращения к БД — используется и для bulk-apply.
     public static RuleResult? MatchRule(IEnumerable<AccountRule> rules, HashSet<int> activeAccountIds,
-        RuleCandidate candidate)
+        RuleCandidate candidate) =>
+        MatchConditions(rules.Select(r => new AssignmentRuleCondition(
+            r.Id, r.Name, r.AccountId, r.SetCategoryId,
+            r.TxType, r.MatchCategoryId, r.CommentContains, r.AmountMin, r.AmountMax)),
+            activeAccountIds, candidate);
+
+    private static RuleResult? MatchConditions(IEnumerable<AssignmentRuleCondition> rules,
+        HashSet<int> activeAccountIds, RuleCandidate candidate)
     {
         var comment = (candidate.Comment ?? "").Trim().ToLowerInvariant();
         foreach (var r in rules)
@@ -75,9 +94,14 @@ public class AccountRulesService
     public async Task<ApplyResult> ApplyToExistingAsync(
         int userId, ApplyOptions options, CancellationToken ct = default)
     {
+        // B15: только условия сопоставления, без лишних колонок правил.
         var rules = await _db.AccountRules.AsNoTracking()
             .Where(r => r.UserId == userId && r.Kind == AccountRuleKind.AutoAssign && r.IsEnabled)
-            .OrderBy(r => r.Priority).ThenBy(r => r.Id).ToListAsync(ct);
+            .OrderBy(r => r.Priority).ThenBy(r => r.Id)
+            .Select(r => new AssignmentRuleCondition(
+                r.Id, r.Name, r.AccountId, r.SetCategoryId,
+                r.TxType, r.MatchCategoryId, r.CommentContains, r.AmountMin, r.AmountMax))
+            .ToListAsync(ct);
         if (rules.Count == 0)
             return new ApplyResult(0, 0, 0, Array.Empty<object>());
 
@@ -107,7 +131,7 @@ public class AccountRulesService
             : await _db.Database.BeginTransactionAsync(ct);
         foreach (var tx in txs)
         {
-            var result = MatchRule(rules, activeAccountIds,
+            var result = MatchConditions(rules, activeAccountIds,
                 new RuleCandidate(tx.Type, tx.Amount, tx.Comment, tx.CategoryId));
             if (result is null) continue;
             matched++;
@@ -148,13 +172,19 @@ public class AccountRulesService
     // Полная проверка: минимумы, резервы, просрочки займов.
     public async Task EvaluateAllAsync(int userId)
     {
-        var rules = await _db.AccountRules
+        // B15: правилам и займам нужны лишь отдельные поля — полные сущности больше
+        // не выгружаются; уведомления грузятся целиком (они изменяются).
+        var rules = await _db.AccountRules.AsNoTracking()
             .Where(r => r.UserId == userId && r.IsEnabled)
+            .Select(r => new { r.Id, r.Kind, r.AccountId, r.Threshold })
             .ToListAsync();
+        // Счета грузим отслеживаемыми: баланс мог быть изменён в памяти вызывающим
+        // до вызова проверки, и старое поведение учитывало это через identity map.
         var accounts = await _db.Accounts.Where(a => a.UserId == userId).ToListAsync();
         var activeAccounts = accounts.Where(a => !a.IsArchived).ToDictionary(a => a.Id);
-        var loans = await _db.ReserveLoans
+        var loans = await _db.ReserveLoans.AsNoTracking()
             .Where(l => l.UserId == userId && l.ReturnedAt == null)
+            .Select(l => new { l.AccountId, l.RuleId, l.Amount, l.DueDate })
             .ToListAsync();
         var activeAlerts = await _db.AccountAlerts
             .Where(a => a.UserId == userId && a.ResolvedAt == null)

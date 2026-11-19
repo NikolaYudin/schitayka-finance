@@ -21,6 +21,27 @@ public enum SelfUpdateStatus
     Restarting,
 }
 
+/// <summary>
+/// Единая шкала прогресса автообновления (задача B21). Значения зафиксированы по шагам:
+/// процент не зависит от скорости сети и всегда укладывается в диапазон 0..100.
+/// </summary>
+public static class SelfUpdateProgress
+{
+    public const int Start = 0;
+    public const int Running = 2;
+    public const int DownloadingFrom = 5;
+    public const int DownloadingTo = 50;
+    public const int Verifying = 55;
+    public const int Extracting = 65;
+    public const int Extracted = 68;
+    public const int BackingUpFrom = 70;
+    public const int BackingUpTo = 78;
+    public const int ApplyingFrom = 82;
+    public const int ApplyingTo = 95;
+    public const int Restarting = 98;
+    public const int Done = 100;
+}
+
 /// <summary>Состояние процесса самообновления (для UI и журнала).</summary>
 public sealed record SelfUpdateState(
     SelfUpdateStatus Status,
@@ -65,10 +86,22 @@ public sealed class SelfUpdateService
     private readonly IHttpClientFactory _http;
     private readonly ILogger<SelfUpdateService> _log;
     private readonly SemaphoreSlim _gate = new(1, 1);
+    // Один общий мьютекс для состояния и журнала: раньше роль мьютекса выполнял список логов,
+    // из-за чего часть обновлений состояния шла вне блокировки (гонка на шаге Restarting).
+    private readonly object _sync = new();
 
     private readonly List<string> _logLines = [];
     private SelfUpdateState _state;
     private Task? _running;
+
+    /// <summary>
+    /// Перезапуск процесса вынесен в свойство, чтобы тесты не завершали тестовый раннер.
+    /// В рабочем режиме это Environment.Exit(0).
+    /// </summary>
+    public Action RestartProcess { get; set; } = static () => Environment.Exit(0);
+
+    /// <summary>Задержка перед перезапуском: успеваем отдать ответ клиенту.</summary>
+    public TimeSpan RestartDelay { get; set; } = TimeSpan.FromSeconds(2);
 
     public SelfUpdateService(IConfiguration cfg, IHttpClientFactory http, ILogger<SelfUpdateService> log)
     {
@@ -92,9 +125,25 @@ public sealed class SelfUpdateService
     {
         get
         {
-            lock (_logLines) return _state with { Log = _logLines.ToArray() };
+            lock (_sync) return Snapshot();
         }
     }
+
+    /// <summary>Снимок состояния; вызывается только под блокировкой _sync.</summary>
+    private SelfUpdateState Snapshot() => _state with { Log = _logLines.ToArray() };
+
+    /// <summary>Добавляет строку в журнал; вызывается только под блокировкой _sync.</summary>
+    private void AppendLog(string message)
+    {
+        _logLines.Add($"{DateTime.Now:HH:mm:ss}  {message}");
+        if (_logLines.Count > MaxLogLines) _logLines.RemoveRange(0, _logLines.Count - MaxLogLines);
+    }
+
+    /// <summary>Признак активного процесса обновления (используется и контроллером).</summary>
+    public static bool IsRunning(SelfUpdateStatus status) => status is
+        SelfUpdateStatus.Running or SelfUpdateStatus.Downloading or SelfUpdateStatus.Verifying
+        or SelfUpdateStatus.Extracting or SelfUpdateStatus.BackingUp or SelfUpdateStatus.Applying
+        or SelfUpdateStatus.Restarting;
 
     /// <summary>
     /// Разрешён ли запуск обновления этому пользователю:
@@ -117,50 +166,49 @@ public sealed class SelfUpdateService
         // допускаем только цифры и точки — иначе «..\..» выводит запись за каталог.
         if (target is not null && !System.Text.RegularExpressions.Regex.IsMatch(target, @"^[0-9]+(\.[0-9]+){0,3}$"))
         {
-            lock (_logLines)
+            lock (_sync)
             {
                 _logLines.Clear();
-                _logLines.Add($"{DateTime.Now:HH:mm:ss}  Некорректная версия: {target}");
+                AppendLog($"Некорректная версия: {target}");
+                var now = DateTimeOffset.UtcNow;
                 _state = _state with
                 {
                     Status = SelfUpdateStatus.Failed,
                     TargetVersion = target,
-                    Progress = 0,
+                    Progress = SelfUpdateProgress.Start,
                     Error = "Некорректная версия обновления: допустимы цифры и точки (например, 0.2.3).",
-                    StartedAt = null,
-                    FinishedAt = DateTimeOffset.Now,
+                    StartedAt = now,
+                    FinishedAt = now,
                 };
-                return Task.FromResult(State);
             }
+            return Task.FromResult(State);
         }
 
         // Обновление на уже установленную версию не запускаем: иначе кнопка «Обновить сейчас»
         // повторно скачивала бы тот же app.zip и перезаписывала файлы.
         if (target is not null && AppVersion.IsSame(AppVersion.Current.Version, target))
         {
-            lock (_logLines)
+            lock (_sync)
             {
                 _logLines.Clear();
-                _logLines.Add($"{DateTime.Now:HH:mm:ss}  Версия {target} уже установлена — обновление не требуется.");
+                AppendLog($"Версия {target} уже установлена — обновление не требуется.");
+                var now = DateTimeOffset.UtcNow;
                 _state = _state with
                 {
                     Status = SelfUpdateStatus.Done,
                     TargetVersion = target,
-                    Progress = 100,
+                    Progress = SelfUpdateProgress.Done,
                     Error = null,
-                    StartedAt = DateTimeOffset.Now,
-                    FinishedAt = DateTimeOffset.Now,
+                    StartedAt = now,
+                    FinishedAt = now,
                 };
             }
             return Task.FromResult(State);
         }
 
-        lock (_logLines)
+        lock (_sync)
         {
-            if (_state.Status is SelfUpdateStatus.Running or SelfUpdateStatus.Downloading
-                or SelfUpdateStatus.Verifying or SelfUpdateStatus.Extracting or SelfUpdateStatus.BackingUp
-                or SelfUpdateStatus.Applying or SelfUpdateStatus.Restarting)
-                return Task.FromResult(State);
+            if (IsRunning(_state.Status)) return Task.FromResult(State);
 
             _logLines.Clear();
             // Статус Running выставляем до возврата из StartAsync: иначе второй клик
@@ -169,13 +217,13 @@ public sealed class SelfUpdateService
             {
                 Status = SelfUpdateStatus.Running,
                 TargetVersion = target,
-                Progress = 0,
+                Progress = SelfUpdateProgress.Start,
                 Error = null,
-                StartedAt = DateTimeOffset.Now,
+                StartedAt = DateTimeOffset.UtcNow,
                 FinishedAt = null,
             };
             _running = Task.Run(() => RunAsync(target, restart));
-            return Task.FromResult(State);
+            return Task.FromResult(Snapshot());
         }
     }
 
@@ -196,13 +244,35 @@ public sealed class SelfUpdateService
     private async Task RunCoreAsync(string? version, bool restart)
     {
         var started = DateTimeOffset.UtcNow;
+        // Версия может быть определена из последнего релиза GitHub — шаги должны её видеть.
+        string? target = version?.Trim();
+
         void Step(SelfUpdateStatus status, int progress, string message)
         {
-            lock (_logLines)
+            lock (_sync)
             {
-                _logLines.Add($"{DateTime.Now:HH:mm:ss}  {message}");
-                if (_logLines.Count > MaxLogLines) _logLines.RemoveRange(0, _logLines.Count - MaxLogLines);
-                _state = _state with { Status = status, Progress = progress, TargetVersion = version ?? _state.TargetVersion };
+                var value = Math.Clamp(Math.Max(progress, _state.Progress), SelfUpdateProgress.Start, SelfUpdateProgress.Done);
+                AppendLog($"[{value,3}%] {message}");
+                _state = _state with { Status = status, Progress = value, TargetVersion = target ?? _state.TargetVersion };
+            }
+            _log.LogInformation("[self-update] {Message}", message);
+        }
+
+        // Финальный шаг: 100 выставляется только после успешного завершения всех работ.
+        void Finish(string message)
+        {
+            lock (_sync)
+            {
+                AppendLog($"[{SelfUpdateProgress.Done,3}%] {message}");
+                _state = _state with
+                {
+                    Status = SelfUpdateStatus.Done,
+                    Progress = SelfUpdateProgress.Done,
+                    Error = null,
+                    TargetVersion = target ?? _state.TargetVersion,
+                    StartedAt = started,
+                    FinishedAt = DateTimeOffset.UtcNow,
+                };
             }
             _log.LogInformation("[self-update] {Message}", message);
         }
@@ -217,7 +287,6 @@ public sealed class SelfUpdateService
             if (repoUrl.EndsWith(".git", StringComparison.OrdinalIgnoreCase)) repoUrl = repoUrl[..^4];
             var assetTemplate = _cfg["SelfUpdate:ReleaseAsset"] ?? "schitayka-{version}-app.zip";
 
-            var target = version?.Trim();
             if (string.IsNullOrWhiteSpace(target))
             {
                 // Версию берём из последнего релиза GitHub.
@@ -226,21 +295,26 @@ public sealed class SelfUpdateService
             if (string.IsNullOrWhiteSpace(target))
                 throw new InvalidOperationException("Не удалось определить версию обновления.");
 
+            target = target.Trim();
             var assetName = assetTemplate.Replace("{version}", target, StringComparison.OrdinalIgnoreCase);
             var downloadUrl = $"{repoUrl}/releases/download/v{target}/{assetName}";
 
-            Step(SelfUpdateStatus.Running, 2, $"Начинаю обновление до версии {target}.");
-            Step(SelfUpdateStatus.Downloading, 5, $"Скачиваю {assetName}…");
+            Step(SelfUpdateStatus.Running, SelfUpdateProgress.Running, $"Начинаю обновление до версии {target}.");
+            Step(SelfUpdateStatus.Downloading, SelfUpdateProgress.DownloadingFrom, $"Скачиваю {assetName}…");
 
             var tempZip = Path.Combine(Path.GetTempPath(), $"schitayka-update-{target}-{Guid.NewGuid():N}.zip");
             try
             {
-                await DownloadAsync(downloadUrl, tempZip, p => Step(SelfUpdateStatus.Downloading, 5 + p * 45, $"Скачано {p}%."), CancellationToken.None);
+                // Диапазон загрузки занимает фиксированную часть шкалы; процент считаем от ContentLength.
+                await DownloadAsync(downloadUrl, tempZip, p => Step(
+                    SelfUpdateStatus.Downloading,
+                    SelfUpdateProgress.DownloadingFrom + p * (SelfUpdateProgress.DownloadingTo - SelfUpdateProgress.DownloadingFrom) / 100,
+                    $"Скачано {p}%."), CancellationToken.None);
 
-                Step(SelfUpdateStatus.Verifying, 55, "Проверяю контрольную сумму…");
+                Step(SelfUpdateStatus.Verifying, SelfUpdateProgress.Verifying, "Проверяю контрольную сумму…");
                 await VerifyChecksumAsync(downloadUrl + ".sha256", tempZip);
 
-                Step(SelfUpdateStatus.Extracting, 65, "Распаковываю обновление…");
+                Step(SelfUpdateStatus.Extracting, SelfUpdateProgress.Extracting, "Распаковываю обновление…");
                 var tempDir = Path.Combine(Path.GetTempPath(), $"schitayka-update-{Guid.NewGuid():N}");
                 Directory.CreateDirectory(tempDir);
                 try
@@ -248,31 +322,34 @@ public sealed class SelfUpdateService
                     var files = ExtractSafe(tempZip, tempDir);
                     if (!File.Exists(Path.Combine(tempDir, "SchitayKa.Api.dll")))
                         throw new InvalidOperationException("В архиве нет SchitayKa.Api.dll — это не сборка приложения.");
+                    Step(SelfUpdateStatus.Extracting, SelfUpdateProgress.Extracted, $"Распаковано файлов: {files}.");
 
-                    Step(SelfUpdateStatus.BackingUp, 75, "Делаю резервную копию текущих файлов…");
+                    Step(SelfUpdateStatus.BackingUp, SelfUpdateProgress.BackingUpFrom, "Делаю резервную копию текущих файлов…");
                     var backupDir = Path.Combine(installDir, $".backup-{target}-{DateTime.Now:yyyyMMdd-HHmmss}");
                     CopyDirectory(installDir, backupDir, skipData: true);
-                    Step(SelfUpdateStatus.BackingUp, 80, $"Резервная копия: {Path.GetFileName(backupDir)}");
+                    Step(SelfUpdateStatus.BackingUp, SelfUpdateProgress.BackingUpTo, $"Резервная копия: {Path.GetFileName(backupDir)}");
 
-                    Step(SelfUpdateStatus.Applying, 85, "Заменяю файлы приложения…");
+                    Step(SelfUpdateStatus.Applying, SelfUpdateProgress.ApplyingFrom, "Заменяю файлы приложения…");
                     var applied = CopyDirectory(tempDir, installDir, skipData: true);
-                    Step(SelfUpdateStatus.Applying, 95, $"Обновлено файлов: {applied}. База данных не тронута.");
+                    Step(SelfUpdateStatus.Applying, SelfUpdateProgress.ApplyingTo, $"Обновлено файлов: {applied}. База данных не тронута.");
 
                     if (restart)
                     {
-                        Step(SelfUpdateStatus.Restarting, 98, "Перезапускаю приложение…");
-                        _state = _state with { Status = SelfUpdateStatus.Restarting, Progress = 98 };
+                        Step(SelfUpdateStatus.Restarting, SelfUpdateProgress.Restarting, "Перезапускаю приложение…");
                         // Даём время отдать ответ, затем перезапускаем процесс:
                         // в Docker контейнер поднимется заново (restart: unless-stopped).
-                        _ = Task.Delay(TimeSpan.FromSeconds(2)).ContinueWith(_ =>
+                        _ = Task.Delay(RestartDelay).ContinueWith(_ =>
                         {
                             _log.LogWarning("[self-update] перезапуск процесса после обновления");
-                            Environment.Exit(0);
-                        });
+                            RestartProcess();
+                        }, TaskScheduler.Default);
+                        // Все шаги завершены, перезапуск запланирован: фиксируем успех,
+                        // чтобы интерфейс успел показать 100 % до выхода процесса.
+                        Finish($"Обновление до версии {target} применено. Приложение перезапускается…");
                     }
                     else
                     {
-                        Step(SelfUpdateStatus.Done, 100, "Обновление применено. Перезапустите приложение вручную.");
+                        Finish("Обновление применено. Перезапустите приложение вручную.");
                     }
                 }
                 finally
@@ -288,16 +365,17 @@ public sealed class SelfUpdateService
         catch (Exception ex)
         {
             _log.LogError(ex, "[self-update] не удалось применить обновление");
-            lock (_logLines)
+            lock (_sync)
             {
-                _logLines.Add($"{DateTime.Now:HH:mm:ss}  ОШИБКА: {ex.Message}");
+                AppendLog($"ОШИБКА: {ex.Message}");
+                // Сброс: достигнутый процент больше не описывает состояние процесса.
                 _state = _state with
                 {
                     Status = SelfUpdateStatus.Failed,
                     Error = ex.Message,
-                    Progress = 0,
+                    Progress = SelfUpdateProgress.Start,
                     StartedAt = started,
-                    FinishedAt = DateTimeOffset.Now,
+                    FinishedAt = DateTimeOffset.UtcNow,
                 };
             }
         }
@@ -344,23 +422,26 @@ public sealed class SelfUpdateService
         await using var dst = File.Create(destPath);
         var buffer = new byte[81920];
         long read = 0;
-        int lastPercent = -1;
+        var lastPercent = 0;
         while (true)
         {
             var n = await src.ReadAsync(buffer, ct);
             if (n == 0) break;
             await dst.WriteAsync(buffer.AsMemory(0, n), ct);
             read += n;
-            if (total > 0)
+            // ContentLength может отсутствовать или расходиться с фактическим размером:
+            // ограничиваем процент 0..100 и не даём ему идти назад.
+            var pct = total > 0 ? (int)Math.Clamp(read * 100 / total, 0, 100) : 0;
+            if (pct > lastPercent)
             {
-                var pct = (int)(read * 100 / total);
-                if (pct != lastPercent)
-                {
-                    lastPercent = pct;
-                    onProgress(pct);
-                }
+                lastPercent = pct;
+                onProgress(pct);
             }
         }
+
+        // Фиксируем завершение загрузки даже при неизвестной длине (chunked),
+        // иначе прогресс застревал на первом шаге скачивания.
+        onProgress(100);
     }
 
     /// <summary>

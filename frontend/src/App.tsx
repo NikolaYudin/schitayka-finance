@@ -677,6 +677,23 @@ function UpdateCard({ update, busy, error, onCheck }: {
     })
     : '—';
 
+  // B21: название текущего шага берём из статуса, процент показывает сервер.
+  const stepName = (status?: string | null): string => {
+    switch (status) {
+      case 'Running': return 'Подготовка обновления';
+      case 'Downloading': return 'Скачивание сборки';
+      case 'Verifying': return 'Проверка контрольной суммы';
+      case 'Extracting': return 'Распаковка архива';
+      case 'BackingUp': return 'Резервная копия текущих файлов';
+      case 'Applying': return 'Замена файлов приложения';
+      case 'Restarting': return 'Перезапуск приложения';
+      case 'Done': return 'Обновление завершено';
+      case 'Failed': return 'Обновление прервано';
+      default: return 'Ожидание';
+    }
+  };
+  const updateProgress = Math.min(100, Math.max(0, Math.round(apply?.progress ?? 0)));
+
   const copy = () => {
     const done = () => {
       setCopied(true);
@@ -773,23 +790,24 @@ function UpdateCard({ update, busy, error, onCheck }: {
         <div className="self-update">
           <div className="self-update-head">
             <span><Icon name="download" size={15} /> Автоматическое обновление</span>
-            <span className="badge badge-muted">{apply.status}</span>
+            <span className="badge badge-muted">{stepName(apply.status)}</span>
           </div>
 
-          {apply.running && (
+          {(apply.running || apply.status === 'Done') && (
             <>
-              <div className="progress" style={{ marginTop: 8 }}>
-                <div style={{ width: `${Math.max(3, apply.progress)}%` }} />
+              <div
+                className="progress self-update-progress"
+                style={{ marginTop: 8 }}
+                role="progressbar"
+                aria-valuemin={0}
+                aria-valuemax={100}
+                aria-valuenow={updateProgress}
+              >
+                <div style={{ width: `${updateProgress}%` }} />
               </div>
-              <div className="muted" style={{ marginTop: 6 }}>
-                {apply.status === 'Downloading' ? 'Скачиваем обновление…'
-                  : apply.status === 'Verifying' ? 'Проверяем контрольную сумму…'
-                    : apply.status === 'Extracting' ? 'Распаковываем…'
-                      : apply.status === 'BackingUp' ? 'Делаем резервную копию…'
-                        : apply.status === 'Applying' ? 'Заменяем файлы приложения…'
-                          : apply.status === 'Restarting' ? 'Перезапускаем приложение…'
-                            : 'Выполняем обновление…'}
-                {' '}· {apply.progress}%
+              <div className="muted self-update-step" style={{ marginTop: 6 }}>
+                <b>{stepName(apply.status)}</b> · {updateProgress}%
+                {apply.targetVersion ? ` · v${apply.targetVersion}` : ''}
               </div>
             </>
           )}
@@ -797,13 +815,14 @@ function UpdateCard({ update, busy, error, onCheck }: {
           {apply.status === 'Done' && !apply.running && (
             <div className="rec rec-good" style={{ marginTop: 8 }}>
               <span className="rec-icon"><Icon name="check" size={16} /></span>
-              <span>Обновление до версии {apply.targetVersion} применено. Приложение перезапущено, база сохранена.</span>
+              <span>Обновление до версии {apply.targetVersion} применено, база сохранена. Приложение перезапускается — обновите страницу, если оно не вернулось автоматически.</span>
             </div>
           )}
 
           {apply.status === 'Failed' && !apply.running && (
             <div className="alert alert-danger" style={{ marginTop: 8 }}>
               Не удалось обновиться: {apply.error}
+              <div className="muted" style={{ marginTop: 4 }}>Прогресс сброшен. Повторите попытку после устранения причины ошибки.</div>
             </div>
           )}
 
@@ -813,7 +832,7 @@ function UpdateCard({ update, busy, error, onCheck }: {
             <pre className="update-log">{(apply.log ?? []).slice(-8).join('\n')}</pre>
           )}
 
-          {apply.canUpdate && !apply.running && update?.updateAvailable && (
+          {apply.canUpdate && !apply.running && (
             confirmOpen ? (
               <div className="action-row" style={{ marginTop: 10 }}>
                 <button className="btn primary" type="button" onClick={startUpdate}>
@@ -840,7 +859,7 @@ function UpdateCard({ update, busy, error, onCheck }: {
 
           {apply.enabled && !apply.canUpdate && (
             <p className="muted update-note" style={{ marginTop: 6 }}>
-              Обновлять может только администратор экземпляра (первый зарегистрированный пользователь).
+              Обновлять может только администратор экземпляра (роль Master или e-mail из списка SelfUpdate:AdminEmails).
             </p>
           )}
         </div>

@@ -315,183 +315,6 @@ bool HasPendingMigrations(string path)
     }
 }
 
-// --- Жёсткая самонастройка схемы: демо работает ВСЕГДА ---
-// Проверка выполняется ДО регистрации DbContext и до первого подключения EF,
-// чтобы исключаемые SqliteException не всплывали в отладчике Visual Studio
-// («Вызвано исключение ... no such column: u.FamilyCode») и не давали 500.
-// EnsureCreated() не обновляет существующую базу, поэтому любую копию app.db
-// (в data/, bin/... из старых запусков VS) с устаревшей схемой пересоздаём.
-// Таблицы/колонки актуальной схемы (имена как в EF: DbSet FamilyInvitations).
-string? SqliteError(string path, string sql)
-{
-    try
-    {
-        using var conn = new Microsoft.Data.Sqlite.SqliteConnection($"Data Source={path};Pooling=False");
-        conn.Open();
-        using var cmd = conn.CreateCommand();
-        cmd.CommandText = sql;
-        cmd.ExecuteScalar();
-        return null;
-    }
-    catch (Microsoft.Data.Sqlite.SqliteException ex) { return ex.SqliteErrorCode == 1 ? ex.Message : null; }
-}
-
-// Полный список колонок актуальной модели EF (таблица -> колонки). Используется для
-// точечного ALTER TABLE ADD COLUMN — данные пользователя при этом сохраняются.
-var AddCols = new (string Table, string Col, string Def)[]
-{
-    ("Users", "FamilyCode", "TEXT NULL"),
-    ("Categories", "FamilyCode", "TEXT NULL"),
-    ("Transactions", "AccountId", "INTEGER NULL"),
-    // Появился позже первых версий схемы; нужен, чтобы legacy-база
-    // соответствовала baseline-миграции InitialCreate.
-    ("Accounts", "Balance", "TEXT NOT NULL DEFAULT '0'"),
-};
-
-// Колонки таблиц, которые могут полностью отсутствовать в старой базе.
-var NewTableCols = new (string Table, (string Col, string Def)[] Cols)[]
-{
-    ("Accounts", new (string, string)[]
-    {
-        ("Id", "INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT"),
-        ("UserId", "INTEGER NOT NULL"),
-        ("Name", "TEXT NOT NULL"),
-        ("Type", "INTEGER NOT NULL"),
-        ("StartingBalance", "TEXT NOT NULL"),
-        ("Balance", "TEXT NOT NULL DEFAULT '0'"),
-        ("CreditLimit", "TEXT NOT NULL DEFAULT '0'"),
-        ("CashbackRate", "TEXT NOT NULL DEFAULT '0'"),
-        ("CashbackAccrued", "TEXT NOT NULL DEFAULT '0'"),
-        ("Color", "TEXT NULL"),
-        ("IsArchived", "INTEGER NOT NULL DEFAULT 0"),
-        ("CreatedAt", "TEXT NOT NULL"),
-    }),
-    ("FamilyInvitations", new (string, string)[]
-    {
-        ("Id", "INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT"),
-        ("OwnerUserId", "INTEGER NOT NULL"),
-        ("Code", "TEXT NOT NULL"),
-        ("Email", "TEXT NULL"),
-        ("CreatedAt", "TEXT NOT NULL"),
-        ("ExpiresAt", "TEXT NOT NULL"),
-        ("AcceptedAt", "TEXT NULL"),
-        ("AcceptedByUserId", "INTEGER NULL"),
-    }),
-};
-
-bool IsStaleCopy(string path)
-{
-    foreach (var (t, c, _) in AddCols)
-        if (SqliteError(path, $"SELECT \"{c}\" FROM \"{t}\" LIMIT 1;") is not null) return true;
-    foreach (var nt in NewTableCols)
-        if (SqliteError(path, $"SELECT 1 FROM \"{nt.Table}\" LIMIT 1;") is not null) return true;
-    return false;
-}
-
-// Удаляет «мусорные» копии БД (полностью устаревшая схема, без ценных данных):
-// сначала сбрасываем пулы, затем жёсткий retry-delete (файл мог быть занят процессом VS/антивирусом).
-void DeleteStaleDbCopy(string path)
-{
-    Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools();
-    foreach (var f in new[] { path, path + "-shm", path + "-wal" })
-    {
-        try
-        {
-            if (!File.Exists(f)) continue;
-            for (int attempt = 0; ; attempt++)
-            {
-                try { File.Delete(f); break; }
-                catch when (attempt < 8) { Thread.Sleep(150 * (attempt + 1)); }
-            }
-        }
-        catch (Exception ex) { Console.WriteLine($"[SchitayKa] Не удалось удалить {f}: {ex.Message}"); }
-    }
-}
-
-// Гармонизация схемы ВСЕХ известных копий app.db (data/ и bin/... из старых запусков VS):
-//  - копия со СТАРОЙ схемой и БЕЗ пользовательских данных -> удаляется (будет пересоздана);
-//  - копия со СТАРОЙ схемой, но с данными -> чинится на месте (CREATE TABLE + ALTER TABLE),
-//    данные сохраняются;
-//  - актуальная копия остаётся как есть.
-void HarmonizeDbCopies(IEnumerable<string> copies)
-{
-    foreach (var path in copies.Distinct(StringComparer.OrdinalIgnoreCase).Where(File.Exists))
-    {
-        if (!IsStaleCopy(path)) continue;
-
-        long userCount = 0;
-        try
-        {
-            using var conn = new Microsoft.Data.Sqlite.SqliteConnection($"Data Source={path};Pooling=False");
-            conn.Open();
-            using var q = conn.CreateCommand();
-            q.CommandText = "SELECT COUNT(*) FROM Users;";
-            userCount = Convert.ToInt64(q.ExecuteScalar());
-        }
-        catch { /* таблицы Users нет или файл битый — считаем копию пустой */ }
-
-        if (userCount == 0)
-        {
-            Console.WriteLine($"[SchitayKa] Устаревшая пустая копия БД — удаляю {path} (будет пересоздана с актуальной схемой)");
-            DeleteStaleDbCopy(path);
-            continue;
-        }
-
-        // Есть пользовательские данные — восстанавливаем схему на месте, ничего не удаляя.
-        try
-        {
-            using var conn = new Microsoft.Data.Sqlite.SqliteConnection($"Data Source={path};Pooling=False");
-            conn.Open();
-            void Exec(string sql) { using var c = conn.CreateCommand(); c.CommandText = sql; c.ExecuteNonQuery(); }
-
-            // 1) Полностью отсутствующие таблицы создаём целиком (IF NOT EXISTS — безопасно).
-            foreach (var (table, cols) in NewTableCols)
-            {
-                var colDefs = string.Join(",\n        ", cols.Select(cc => $"\"{cc.Col}\" {cc.Def}"));
-                Exec($@"CREATE TABLE IF NOT EXISTS ""{table}"" (
-        {colDefs});");
-                Console.WriteLine($"[SchitayKa] Схема обновлена на месте: создана таблица {table} (данные сохранены)");
-            }
-
-            // 2) Недостающие колонки — точечно через ALTER TABLE (SQLite поддерживает без пересоздания таблицы).
-            foreach (var (table, col, def) in AddCols)
-            {
-                if (SqliteError(path, $"SELECT 1 FROM \"{table}\" LIMIT 1;") is not null) continue; // таблицы ещё нет
-                if (SqliteError(path, $"SELECT \"{col}\" FROM \"{table}\" LIMIT 1;") is null) continue; // колонка уже есть
-                Exec($"ALTER TABLE \"{table}\" ADD COLUMN \"{col}\" {def};");
-                Console.WriteLine($"[SchitayKa] Схема обновлена на месте: добавлена колонка {table}.{col} (данные сохранены)");
-            }
-
-            // 3) Индексы, ожидаемые моделью EF.
-            Exec(@"CREATE INDEX IF NOT EXISTS ""IX_Accounts_UserId"" ON ""Accounts"" (""UserId"");");
-            Exec(@"CREATE UNIQUE INDEX IF NOT EXISTS ""IX_FamilyInvitations_Code"" ON ""FamilyInvitations"" (""Code"");");
-        }
-        catch (Exception ex)
-        {
-            Console.WriteLine($"[SchitayKa] Не удалось починить схему {path}: {ex.Message}");
-        }
-
-        // Финальная проверка: если после всех починок что-то всё ещё не читается —
-        // это повреждённый файл; оставляем его в поведении «пересоздать», но только
-        // если он НЕ является основным (основной чиним до победного выше).
-        if (IsStaleCopy(path) && !string.Equals(Path.GetFullPath(path), Path.GetFullPath(dbPath), StringComparison.OrdinalIgnoreCase))
-        {
-            Console.WriteLine($"[SchitayKa] Копия {path} осталась несовместимой — удаляю её");
-            DeleteStaleDbCopy(path);
-        }
-    }
-}
-
-// B11: исправление устаревшей копии схемы меняет файл БД — делаем снимок заранее.
-if (File.Exists(dbPath) && IsStaleCopy(dbPath)) BackupBeforeMigration("исправлением схемы БД");
-
-HarmonizeDbCopies(new[]
-{
-    dbPath,
-    Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "data", "app.db")),
-    Path.GetFullPath(Path.Combine(builder.Environment.ContentRootPath, "bin", "Debug", "net8.0", "data", "app.db")),
-    Path.GetFullPath(Path.Combine(builder.Environment.ContentRootPath, "..", "backend", "bin", "Debug", "net8.0", "data", "app.db")),
-});
 
 // --- EF Core Migrations ---
 // Новая БД создаётся и обновляется только через Migrate().
@@ -530,17 +353,20 @@ void PrepareDatabase()
 {
     var opts = new DbContextOptionsBuilder<AppDbContext>().UseSqlite(connStr).Options;
     using var db = new AppDbContext(opts);
+    // B14: проверяем тот файл, к которому реально подключены EF (connection string),
+    // а не вычисленный по ContentRoot путь.
+    var actualPath = SourcePathOf(connStr);
 
-    if (!File.Exists(dbPath))
+    if (!File.Exists(actualPath))
     {
         Console.WriteLine("[SchitayKa] База не найдена — создаю через EF-миграции ...");
         db.Database.Migrate();
         return;
     }
 
-    if (!TableExists(dbPath, "__EFMigrationsHistory"))
+    if (!TableExists(actualPath, "__EFMigrationsHistory"))
     {
-        if (!TableExists(dbPath, "Users"))
+        if (!TableExists(actualPath, "Users"))
         {
             Console.WriteLine("[SchitayKa] Пустой/повреждённый файл БД — пересоздаю через миграции.");
             BackupBeforeMigration("пересозданием пустой БД");
@@ -551,9 +377,9 @@ void PrepareDatabase()
 
         Console.WriteLine("[SchitayKa] Legacy-база без истории миграций — baseline InitialCreate (данные сохраняются).");
         BackupBeforeMigration("baseline legacy-базы");
-        BaselineLegacyDatabase(dbPath);
+        BaselineLegacyDatabase(actualPath);
     }
-    else if (HasPendingMigrations(dbPath))
+    else if (HasPendingMigrations(actualPath))
     {
         // B11: только когда действительно есть неприменённые миграции —
         // иначе каждый запуск создавал бы бесполезную копию.
@@ -1034,3 +860,6 @@ public sealed class FlexibleEnumConverter<T> : System.Text.Json.Serialization.Js
     public override void Write(Utf8JsonWriter writer, T value, System.Text.Json.JsonSerializerOptions options)
         => writer.WriteNumberValue(Convert.ToInt32(value));
 }
+
+// Точка входа для WebApplicationFactory в интеграционных тестах (B18).
+public partial class Program { }
