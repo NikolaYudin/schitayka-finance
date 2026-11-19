@@ -219,10 +219,10 @@ public class BudgetController : ControllerBase
             }).ToList();
 
         // Структура расходов за выбранный месяц (по категориям).
-        // Группируем по НАЗВАНИЮ (без учёта регистра): идентификаторы категорий у каждого
-        // пользователя свои, и один и тот же id — это разные категории, поэтому при охвате
-        // family/ids одноимённые категории («Продукты» у мужа и жены) объединяются.
-        Category? CatOf(Transaction t) => cats.FirstOrDefault(c => c.UserId == t.UserId && c.Id == t.CategoryId);
+        // После 0.3.7 категории общие для семьи: категория может принадлежать другому
+        // члену семьи, поэтому ищем только по Id (UserId совпадать не обязан).
+        // Группируем по названию без учёта регистра для совместимости со старыми данными.
+        Category? CatOf(Transaction t) => cats.FirstOrDefault(c => c.Id == t.CategoryId);
         var expenseShare = nowMonth.Where(t => t.Type == TxType.Expense)
             .GroupBy(t => CatOf(t)?.Name ?? "—", StringComparer.OrdinalIgnoreCase)
             .Select(g =>

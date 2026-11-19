@@ -14,11 +14,13 @@ public class ImportController : ControllerBase
 {
     private readonly AppDbContext _db;
     private readonly ReceiptOcrService _ocr;
+    private readonly AuditService _audit;
 
-    public ImportController(AppDbContext db, ReceiptOcrService ocr)
+    public ImportController(AppDbContext db, ReceiptOcrService ocr, AuditService audit)
     {
         _db = db;
         _ocr = ocr;
+        _audit = audit;
     }
 
     private int Uid => UserAccess.UidOf(User);
@@ -49,8 +51,15 @@ public class ImportController : ControllerBase
         await using var stream = file.OpenReadStream();
         var ocr = await _ocr.ExtractAsync(stream, file.FileName, ct);
         if (!ocr.Ok)
+        {
+            await _audit.LogAsync(Uid, AuditService.ImportReceipt,
+                $"файл {Path.GetFileName(file.FileName)}, {file.Length} байт, OCR ошибка {ocr.StatusCode}",
+                HttpContext, ct);
             return StatusCode(ocr.StatusCode, new { error = ocr.Error });
+        }
 
+        await _audit.LogAsync(Uid, AuditService.ImportReceipt,
+            $"файл {Path.GetFileName(file.FileName)}, {file.Length} байт, OCR успешно", HttpContext, ct);
         return Ok(await ParseTextAsync(ocr.Text ?? ""));
     }
 
@@ -68,6 +77,8 @@ public class ImportController : ControllerBase
         if (text.Length > 20_000)
             return BadRequest(new { error = "Слишком длинный текст (максимум 20 000 символов)." });
 
+        await _audit.LogAsync(Uid, AuditService.ImportReceiptText,
+            $"вставленный текст, {text.Length} символов", HttpContext);
         return Ok(await ParseTextAsync(text));
     }
 

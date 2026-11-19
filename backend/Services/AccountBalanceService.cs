@@ -70,10 +70,10 @@ public static class AccountBalanceService
     }
 
     /// <summary>
-    /// Остаток и начисленный кэшбэк по одному счёту.
-    /// Отрицательный остаток по дебету/наличным показываем как 0 — это историческое
-    /// поведение интерфейса (перерасход не отображается минусом). Для кредитной карты
-    /// Balance — это сумма долга.
+    /// Остаток и начисленный кэшбэк по одному счёту (B19: политика знакового остатка).
+    /// Для debit/cash/deposit отрицательный Balance — реальный перерасход (овердрафт).
+    /// Для credit card Balance — сумма долга; отрицательное значение — переплата сверх долга.
+    /// Знак сохраняется на всех уровнях: БД → API → интерфейс, ничего не маскируется нулём.
     /// </summary>
     public static (decimal Balance, decimal Cashback) Compute(
         Account account, IReadOnlyCollection<BalanceTx> transactions)
@@ -81,7 +81,7 @@ public static class AccountBalanceService
         var net = transactions.Sum(t => t.Type == TxType.Income ? t.Amount : -t.Amount);
 
         if (account.Type == AccountType.CreditCard)
-            return (Math.Max(0, account.StartingBalance - net), 0m);
+            return (decimal.Round(account.StartingBalance - net, 2), 0m);
 
         var cashback = account.CashbackRate > 0
             ? Math.Round(
@@ -90,6 +90,6 @@ public static class AccountBalanceService
                 2)
             : 0m;
 
-        return (Math.Max(0, account.StartingBalance + net + cashback), cashback);
+        return (decimal.Round(account.StartingBalance + net + cashback, 2), cashback);
     }
 }

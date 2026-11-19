@@ -3,6 +3,7 @@ import {
   api, fmt, parseServerDate, BankInfo, PortfolioInfo, HoldingSummary, InvestmentsSummary, QuoteRefreshResult,
 } from './api';
 import { Icon } from './icons';
+import { useDialog } from './dialogs';
 
 const PRODUCTS = [
   { v: 0, label: 'Накопительный счёт' },
@@ -50,6 +51,7 @@ const num = (s: string) => Number(s.replace(',', '.')) || 0;
  * источника остаётся ручная цена, а в карточке видна ошибка.
  */
 export function InvestmentsPage() {
+  const dlg = useDialog();
   const [banks, setBanks] = useState<BankInfo[]>([]);
   const [portfolios, setPortfolios] = useState<PortfolioInfo[]>([]);
   const [summary, setSummary] = useState<InvestmentsSummary | null>(null);
@@ -169,13 +171,13 @@ export function InvestmentsPage() {
   };
 
   const delPortfolio = async (id: number) => {
-    if (!confirm('Удалить портфель вместе с позициями?')) return;
+    if (!await dlg.confirm('Удалить портфель вместе с позициями?')) return;
     try { await api.del(`/api/investments/${id}`); await load(); }
     catch (ex: any) { setErr(ex.message); }
   };
 
   const delHolding = async (pid: number, hid: number) => {
-    if (!confirm('Удалить позицию?')) return;
+    if (!await dlg.confirm('Удалить позицию?')) return;
     try { await api.del(`/api/investments/${pid}/holdings/${hid}`); closeForm(); await load(); }
     catch (ex: any) { setErr(ex.message); }
   };

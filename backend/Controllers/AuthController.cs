@@ -11,6 +11,7 @@ using Microsoft.IdentityModel.Tokens;
 namespace SchitayKa.Api.Controllers;
 
 public record LoginDto(string Email, string Password);
+public record ChangePasswordDto(string CurrentPassword, string NewPassword);
 
 [ApiController]
 [Route("api/auth")]
@@ -18,8 +19,11 @@ public class AuthController : ControllerBase
 {
     private readonly AppDbContext _db;
     private readonly IConfiguration _cfg;
+    private readonly SchitayKa.Api.Services.AuditService _audit;
 
-    public AuthController(AppDbContext db, IConfiguration cfg) { _db = db; _cfg = cfg; }
+    public AuthController(
+        AppDbContext db, IConfiguration cfg, SchitayKa.Api.Services.AuditService audit)
+    { _db = db; _cfg = cfg; _audit = audit; }
 
     // ---------- Пароли: PBKDF2 ----------
     public static string HashPassword(string password)
@@ -49,7 +53,8 @@ public class AuthController : ControllerBase
             audience: _cfg["Jwt:Audience"],
             claims: [new Claim(ClaimTypes.NameIdentifier, user.Id.ToString()),
                      new Claim("name", user.Name),
-                     new Claim(ClaimTypes.Email, user.Email)],
+                     new Claim(ClaimTypes.Email, user.Email),
+                     new Claim("pwdv", user.PasswordVersion.ToString())],
             expires: DateTime.UtcNow.AddDays(30),
             signingCredentials: creds);
         return new JwtSecurityTokenHandler().WriteToken(token);
@@ -83,7 +88,45 @@ public class AuthController : ControllerBase
         var uid = int.Parse(User.FindFirstValue(ClaimTypes.NameIdentifier)!);
         var user = await _db.Users.FindAsync(uid);
         if (user is null) return Unauthorized();
-        return Ok(new { user.Id, user.Email, user.Name, user.StartingBalance, user.FamilyCode });
+        return Ok(new
+        {
+            user.Id, user.Email, user.Name, user.StartingBalance, user.FamilyCode,
+            hasPassword = !string.IsNullOrEmpty(user.PasswordHash),
+        });
+    }
+
+    /// <summary>Смена пароля: старые JWT инвалидируются через PasswordVersion.</summary>
+    [HttpPost("change-password")]
+    [Microsoft.AspNetCore.Authorization.Authorize]
+    [EnableRateLimiting("auth")]
+    public async Task<IActionResult> ChangePassword(ChangePasswordDto dto)
+    {
+        if (!int.TryParse(User.FindFirstValue(ClaimTypes.NameIdentifier), out var uid))
+            return Unauthorized();
+        var user = await _db.Users.FindAsync(uid);
+        if (user is null) return Unauthorized();
+        if (string.IsNullOrEmpty(user.PasswordHash))
+            return BadRequest(new { error = "У аккаунта Яндекса нет пароля" });
+
+        if (!VerifyPassword(dto.CurrentPassword ?? "", user.PasswordHash))
+        {
+            await _audit.LogAsync(uid, SchitayKa.Api.Services.AuditService.PasswordFailed,
+                "неверный текущий пароль", HttpContext);
+            return BadRequest(new { error = "Текущий пароль неверен" });
+        }
+
+        var next = dto.NewPassword ?? "";
+        if (next.Length < 8)
+            return BadRequest(new { error = "Новый пароль должен быть не короче 8 символов" });
+        if (next == dto.CurrentPassword)
+            return BadRequest(new { error = "Новый пароль должен отличаться от текущего" });
+
+        user.PasswordHash = HashPassword(next);
+        user.PasswordVersion++;
+        await _db.SaveChangesAsync();
+        await _audit.LogAsync(uid, SchitayKa.Api.Services.AuditService.PasswordChanged,
+            "пароль обновлён", HttpContext);
+        return Ok(new { changed = true, passwordVersion = user.PasswordVersion });
     }
 
     // ---------- Яндекс OAuth (authorization code flow, server-side) ----------

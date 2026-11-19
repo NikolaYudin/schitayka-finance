@@ -154,8 +154,8 @@ public class AccountsController : ControllerBase
     {
         if (Uid < 0) return Unauthorized(new { error = "Требуется вход" });
         if (string.IsNullOrWhiteSpace(dto.Name)) return BadRequest(new { error = "Название счёта обязательно" });
-        if (dto.Balance < 0 && dto.Type != AccountType.CreditCard)
-            return BadRequest(new { error = "Баланс не может быть отрицательным (для кредитной карты укажите сумму долга)" });
+        // B19: знаковый стартовый остаток разрешён — отрицательный дебет означает
+        // начальный перерасход, а отрицательная кредитка — переплату сверх долга.
         var targetUid = Uid;
         if (forUserId is int fuid && fuid != Uid)
         {
@@ -174,7 +174,7 @@ public class AccountsController : ControllerBase
             UserId = targetUid,
             Name = name,
             Type = dto.Type,
-            StartingBalance = Math.Abs(dto.Balance), // для кредитки — стартовый долг
+            StartingBalance = decimal.Round(dto.Balance, 2), // знак сохраняется: долг / перерасход / переплата
             CreditLimit = dto.Type == AccountType.CreditCard ? (dto.CreditLimit ?? 0) : 0,
             CashbackRate = dto.CashbackRate is > 0 and <= 100 ? dto.CashbackRate.Value : 0,
             BankId = dto.BankId,
@@ -208,7 +208,7 @@ public class AccountsController : ControllerBase
 
         acc.Name = name;
         acc.Type = dto.Type;
-        acc.StartingBalance = Math.Abs(dto.Balance);
+        acc.StartingBalance = decimal.Round(dto.Balance, 2);
         acc.CreditLimit = dto.Type == AccountType.CreditCard ? (dto.CreditLimit ?? 0) : 0;
         acc.CashbackRate = dto.CashbackRate is > 0 and <= 100 ? dto.CashbackRate.Value : 0;
         if (!await CanUseBankAsync(dto.BankId))
@@ -238,8 +238,8 @@ public class AccountsController : ControllerBase
         if (!await CanManage(id)) return NotFound();
         var acc = await _db.Accounts.FirstOrDefaultAsync(a => a.Id == id);
         if (acc is null) return NotFound();
+        // B19: уход в минус допустим — это честный перерасход, а не скрытый ноль.
         acc.StartingBalance += dto.Delta;
-        if (acc.StartingBalance < 0) acc.StartingBalance = 0;
         await _db.SaveChangesAsync();
         await RecalcAllAccounts(acc.UserId);
         await _rules.EvaluateAllAsync(acc.UserId);

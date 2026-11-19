@@ -2,6 +2,7 @@ import { useEffect, useState, type FormEvent } from 'react';
 import { api, AccountInfo, AccountRule, AccountRuleKind, Category, TxType } from './api';
 import { Icon } from './icons';
 import { plural } from './plural';
+import { useDialog } from './dialogs';
 
 const KIND_NAME: Record<number, string> = { 0: 'Автоподстановка', 1: 'Неснижаемый остаток', 2: 'Резерв' };
 const KIND_HINT: Record<number, string> = {
@@ -12,6 +13,7 @@ const KIND_HINT: Record<number, string> = {
 const KIND_TABS: number[] = [0, 1, 2];
 
 export function AccountRulesCard() {
+  const dlg = useDialog();
   const [kind, setKind] = useState<number>(0);
   const [rules, setRules] = useState<AccountRule[]>([]);
   const [accounts, setAccounts] = useState<AccountInfo[]>([]);
@@ -60,7 +62,7 @@ export function AccountRulesCard() {
     reload();
   };
   const del = async (r: AccountRule) => {
-    if (!confirm(`Удалить правило «${r.name}»?`)) return;
+    if (!await dlg.confirm(`Удалить правило «${r.name}»?`)) return;
     await api.del(`/api/account-rules/${r.id}`);
     reload();
   };

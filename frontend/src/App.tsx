@@ -12,6 +12,7 @@ import { CalendarPage } from './CalendarPage';
 import { AccountRulesCard } from './AccountRulesCard';
 import { useTheme, type ThemeController, type ThemeMode } from './theme';
 import { ToastProvider } from './toasts';
+import { DialogProvider, useDialog } from './dialogs';
 import { Icon, type IconName } from './icons';
 import { plural } from './plural';
 import { getBankCardStyle, setBankCardStyle, type BankCardStyle } from './bankstyle';
@@ -385,6 +386,7 @@ export default function App() {
 
   return (
     <ToastProvider>
+    <DialogProvider>
       <div className={`app ${collapsed ? 'is-collapsed' : ''}`}>
         <Sidebar
           route={route}
@@ -436,6 +438,7 @@ export default function App() {
           />
         )}
       </div>
+    </DialogProvider>
     </ToastProvider>
   );
 }
@@ -468,6 +471,7 @@ function Settings({ auth, categories, theme, onReload, update, updateBusy, updat
       </div>
       <BanksCard />
       <ExportCard />
+      <AuditCard />
       <AccountRulesCard />
     </>
   );
@@ -524,6 +528,52 @@ function ExportCard() {
           <Icon name="download" size={16} /> {busy ? 'Формируем…' : 'Скачать JSON профиля'}
         </button>
       </div>
+    </div>
+  );
+}
+
+/** B10: журнал чувствительных действий (экспорт, импорт, смена пароля). */
+interface AuditRow {
+  id: number; action: string; details: string; ipAddress?: string | null; createdAt: string;
+}
+const AUDIT_NAMES: Record<string, string> = {
+  'export.profile': 'Экспорт профиля',
+  'import.receipt': 'Импорт чека',
+  'import.receipt.text': 'Импорт текста чека',
+  'auth.password-changed': 'Смена пароля',
+  'auth.password-failed': 'Неудачная попытка смены пароля',
+};
+
+function AuditCard() {
+  const [rows, setRows] = useState<AuditRow[] | null>(null);
+  const [error, setError] = useState('');
+
+  useEffect(() => {
+    api.get<AuditRow[]>('/api/audit?take=20').then(setRows).catch(e => setError(e.message));
+  }, []);
+
+  return (
+    <div className="card">
+      <div className="card-head">
+        <div>
+          <h3>Журнал безопасности</h3>
+          <p className="card-sub">Экспорт и импорт данных, смена пароля</p>
+        </div>
+      </div>
+      {error && <div className="alert alert-warn">{error}</div>}
+      {rows === null && !error && <div className="muted">Загружаем…</div>}
+      {rows?.length === 0 && <div className="muted">Записей пока нет.</div>}
+      {!!rows?.length && (
+        <div className="audit-list">
+          {rows.map(r => (
+            <div key={r.id} className="audit-row">
+              <span className="audit-action">{AUDIT_NAMES[r.action] ?? r.action}</span>
+              <span className="audit-details">{r.details}</span>
+              <span className="audit-time">{new Date(r.createdAt).toLocaleString('ru-RU')}</span>
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
@@ -764,11 +814,32 @@ function UpdateCard({ update, busy, error, onCheck }: {
 }
 
 function ProfileCard({ auth }: { auth: ReturnType<typeof useAuth> }) {
+  const dlg = useDialog();
   const [name, setName] = useState(auth.user?.name ?? '');
   const [bal, setBal] = useState(String(auth.user?.startingBalance ?? 0));
   const [msg, setMsg] = useState('');
   const [err, setErr] = useState('');
   const [busy, setBusy] = useState(false);
+  const [curPwd, setCurPwd] = useState('');
+  const [newPwd, setNewPwd] = useState('');
+  const [newPwd2, setNewPwd2] = useState('');
+  const [pwdMsg, setPwdMsg] = useState('');
+  const [pwdBusy, setPwdBusy] = useState(false);
+
+  const changePwd = async (e: React.FormEvent) => {
+    e.preventDefault(); setPwdMsg('');
+    if (newPwd !== newPwd2) { setPwdMsg('Новые пароли не совпадают'); return; }
+    if (newPwd.length < 8) { setPwdMsg('Новый пароль должен быть не короче 8 символов'); return; }
+    setPwdBusy(true);
+    try {
+      await api.post('/api/auth/change-password', {
+        currentPassword: curPwd, newPassword: newPwd,
+      });
+      setCurPwd(''); setNewPwd(''); setNewPwd2('');
+      await dlg.alert('Пароль изменён. Старые сессии отключены — войдите заново.');
+      auth.logout();
+    } catch (ex: any) { setPwdMsg(ex.message); } finally { setPwdBusy(false); }
+  };
 
   const save = async (e: React.FormEvent) => {
     e.preventDefault(); setMsg(''); setErr(''); setBusy(true);
@@ -820,6 +891,34 @@ function ProfileCard({ auth }: { auth: ReturnType<typeof useAuth> }) {
           </button>
         </div>
       </form>
+
+      {auth.user?.hasPassword === false ? (
+        <div className="muted" style={{ marginTop: 16 }}>
+          Вы входите через Яндекс — пароль у аккаунта не установлен.
+        </div>
+      ) : (
+        <form onSubmit={changePwd} style={{ marginTop: 20, borderTop: '1px solid var(--border)', paddingTop: 16 }}>
+          <h4>Смена пароля</h4>
+          <label>Текущий пароль
+            <input type="password" autoComplete="current-password" value={curPwd}
+              onChange={e => setCurPwd(e.target.value)} required />
+          </label>
+          <label>Новый пароль
+            <input type="password" autoComplete="new-password" value={newPwd}
+              onChange={e => setNewPwd(e.target.value)} minLength={8} required />
+          </label>
+          <label>Повторите новый пароль
+            <input type="password" autoComplete="new-password" value={newPwd2}
+              onChange={e => setNewPwd2(e.target.value)} minLength={8} required />
+          </label>
+          {pwdMsg && <div className="alert alert-danger">{pwdMsg}</div>}
+          <div className="action-row">
+            <button className="btn primary" type="submit" disabled={pwdBusy}>
+              <Icon name="check" size={16} /> {pwdBusy ? 'Меняем…' : 'Сменить пароль'}
+            </button>
+          </div>
+        </form>
+      )}
     </div>
   );
 }
@@ -920,6 +1019,7 @@ function WidgetsCard() {
 }
 
 function CategoriesCard({ categories, onChanged }: { categories: Category[]; onChanged: () => void }) {
+  const dlg = useDialog();
   const [name, setName] = useState('');
   const [type, setType] = useState<0 | 1>(1);
   const [color, setColor] = useState('#007aff');
@@ -933,9 +1033,9 @@ function CategoriesCard({ categories, onChanged }: { categories: Category[]; onC
     } catch (ex: any) { setErr(ex.message); }
   };
   const del = async (id: number) => {
-    if (!confirm('Удалить категорию?')) return;
+    if (!await dlg.confirm('Удалить категорию?')) return;
     try { await api.del(`/api/categories/${id}`); onChanged(); }
-    catch (ex: any) { alert(ex.message); }
+    catch (ex: any) { await dlg.alert(ex.message); }
   };
 
   return (
@@ -1005,6 +1105,7 @@ function CategoriesCard({ categories, onChanged }: { categories: Category[]; onC
 
 /** Банки (0.3/N5): справочник основных банков РФ + свои банки; выбор банка — в форме счета. */
 function BanksCard() {
+  const dlg = useDialog();
   const [banks, setBanks] = useState<BankInfo[]>([]);
   const [search, setSearch] = useState('');
   const [name, setName] = useState('');
@@ -1028,20 +1129,20 @@ function BanksCard() {
     finally { setBusy(false); }
   };
   const del = async (b: BankInfo) => {
-    if (!confirm(`Удалить банк «${b.name}» из списка?`)) return;
+    if (!await dlg.confirm(`Удалить банк «${b.name}» из списка?`)) return;
     try { await api.del(`/api/banks/${b.id}`); load(); }
-    catch (ex: any) { alert(ex.message); }
+    catch (ex: any) { await dlg.alert(ex.message); }
   };
   const removeUnusedOwn = async () => {
     const count = banks.filter(b => !b.isSystem && !b.inUse).length;
-    if (count === 0) { alert('Нет неиспользуемых своих банков для удаления.'); return; }
-    if (!confirm(`Удалить ${count} ${plural(count, 'неиспользуемый свой банк', 'неиспользуемых своих банка', 'неиспользуемых своих банков')}?`)) return;
+    if (count === 0) { await dlg.alert('Нет неиспользуемых своих банков для удаления.'); return; }
+    if (!await dlg.confirm(`Удалить ${count} ${plural(count, 'неиспользуемый свой банк', 'неиспользуемых своих банка', 'неиспользуемых своих банков')}?`)) return;
     setErr(''); setBusy(true);
     try {
       const r = await api.del<{ removed: number }>('/api/banks/unused');
       load();
-      alert(`Удалено банков: ${r.removed}`);
-    } catch (ex: any) { setErr(ex.message); alert(ex.message); }
+      await dlg.alert(`Удалено банков: ${r.removed}`);
+    } catch (ex: any) { setErr(ex.message); await dlg.alert(ex.message); }
     finally { setBusy(false); }
   };
 

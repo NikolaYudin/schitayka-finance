@@ -1987,6 +1987,10 @@ td .btn { vertical-align: middle; }
   font-variant-numeric: tabular-nums;
 }
 .account-meta { font-size: 11.5px; font-weight: 500; color: var(--muted); }
+/* B19: отрицательный остаток показываем честно, а не нулём */
+.account-balance.is-negative { color: var(--danger, #e5484d); }
+.account-overdraft { font-size: 11.5px; font-weight: 600; color: var(--danger, #e5484d); margin-top: -2px; }
+.wallet-overdraft { font-size: 11.5px; font-weight: 650; margin-top: 2px; color: #ffe0e0; }
 .account-actions { display: flex; gap: 5px; flex-wrap: wrap; margin-top: auto; padding-top: 12px; }
 .account-actions .btn {
   height: 30px;
@@ -2578,4 +2582,38 @@ td .btn { vertical-align: middle; }
     animation-iteration-count: 1 !important;
     transition-duration: 0.01ms !important;
   }
+}
+
+/* Единые диалоги (B12) */
+.dlg-backdrop {
+  position: fixed; inset: 0; z-index: 1000; display: flex; align-items: center; justify-content: center;
+  background: rgba(0, 0, 0, .45); padding: 16px;
+}
+.dlg {
+  width: min(440px, 100%); background: var(--card, var(--surface, #fff)); color: var(--text);
+  border: 1px solid var(--border); border-radius: 14px; padding: 16px;
+  box-shadow: 0 12px 40px rgba(0, 0, 0, .25);
+}
+.dlg-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.dlg-msg { margin: 12px 0 16px; line-height: 1.45; white-space: pre-wrap; }
+.dlg-input {
+  width: 100%; padding: 10px 12px; margin-bottom: 16px;
+  border: 1px solid var(--border); border-radius: 8px;
+  background: var(--bg, transparent); color: var(--text);
+}
+.dlg-actions { display: flex; justify-content: flex-end; gap: 8px; }
+
+/* Журнал безопасности (B10) */
+.audit-list { display: flex; flex-direction: column; gap: 6px; }
+.audit-row {
+  display: grid; grid-template-columns: minmax(140px, 1fr) 2fr auto; gap: 10px;
+  align-items: center; padding: 8px 0; border-bottom: 1px solid var(--border);
+  font-size: 12.5px;
+}
+.audit-row:last-child { border-bottom: 0; }
+.audit-action { font-weight: 650; color: var(--text); }
+.audit-details { color: var(--muted); overflow-wrap: anywhere; }
+.audit-time { color: var(--muted); font-size: 11.5px; white-space: nowrap; }
+@media (max-width: 640px) {
+  .audit-row { grid-template-columns: 1fr; gap: 2px; }
 }

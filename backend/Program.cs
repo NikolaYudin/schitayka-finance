@@ -234,6 +234,87 @@ var connStr = builder.Configuration.GetConnectionString("Default");
 if (string.IsNullOrEmpty(connStr) || connStr.Contains("Data Source=data/app.db"))
     connStr = $"Data Source={dbPath}";
 
+// --- B11: страховочная копия БД перед изменением схемы ---
+// Снимок делается через VACUUM INTO: он консистентен даже при включённом WAL
+// и не требует остановки приложения. Копии лежат в <папка БД>/backups и попадают
+// в тот же docker-том, что и сама база.
+// Фактический путь к файлу БД берём из строки подключения, а не из dbPath:
+// ConnectionStrings__Default может указывать на другой файл.
+string SourcePathOf(string connectionString)
+{
+    try
+    {
+        var b = new Microsoft.Data.Sqlite.SqliteConnectionStringBuilder(connectionString);
+        if (string.IsNullOrWhiteSpace(b.DataSource)) return dbPath;
+        return Path.IsPathRooted(b.DataSource)
+            ? b.DataSource
+            : Path.GetFullPath(Path.Combine(builder.Environment.ContentRootPath, b.DataSource));
+    }
+    catch { return dbPath; }
+}
+
+// Копии кладём рядом с реальной БД, чтобы они попали в тот же docker-том.
+var backupDir = Path.Combine(Path.GetDirectoryName(SourcePathOf(connStr)) ?? dbDir, "backups");
+
+void TrimBackups(string dir)
+{
+    try
+    {
+        var files = new DirectoryInfo(dir).GetFiles("app.db.pre-migrate-*.db")
+            .OrderByDescending(f => f.LastWriteTimeUtc).ToList();
+        for (var i = 0; i < files.Count; i++)
+        {
+            // Держим последние 10 копий и ничего старше 30 дней.
+            if (i >= 10 || files[i].LastWriteTimeUtc < DateTime.UtcNow.AddDays(-30))
+                files[i].Delete();
+        }
+    }
+    catch { /* уборка копий не должна мешать запуску */ }
+}
+
+string? BackupBeforeMigration(string reason)
+{
+    var source = SourcePathOf(connStr);
+    if (!File.Exists(source)) return null;
+    var target = Path.Combine(backupDir, $"app.db.pre-migrate-{DateTime.Now:yyyyMMdd-HHmmss}.db");
+    try
+    {
+        Directory.CreateDirectory(backupDir);
+        using var conn = new Microsoft.Data.Sqlite.SqliteConnection($"Data Source={source};Pooling=False");
+        conn.Open();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = "VACUUM INTO $target;";
+        cmd.Parameters.AddWithValue("$target", target);
+        cmd.ExecuteNonQuery();
+        Console.WriteLine($"[SchitayKa] Бэкап БД перед {reason}: {target}");
+        TrimBackups(backupDir);
+        return target;
+    }
+    catch (Exception ex)
+    {
+        // Бэкап — страховка, а не блокер: без него приложение всё равно должно
+        // запуститься, но факт неудачи обязательно виден в журнале.
+        Console.WriteLine($"[SchitayKa] ВНИМАНИЕ: не удалось сделать бэкап БД ({reason}): {ex.Message}");
+        return null;
+    }
+}
+
+bool HasPendingMigrations(string path)
+{
+    try
+    {
+        var opts = new DbContextOptionsBuilder<AppDbContext>().UseSqlite($"Data Source={path}").Options;
+        using var probe = new AppDbContext(opts);
+        var applied = probe.Database.GetAppliedMigrations().ToHashSet();
+        return probe.Database.GetMigrations().Any(m => !applied.Contains(m));
+    }
+    catch
+    {
+        // Не смогли определить состояние — считаем, что миграции есть, и страхуемся.
+        return true;
+    }
+}
+
 // --- Жёсткая самонастройка схемы: демо работает ВСЕГДА ---
 // Проверка выполняется ДО регистрации DbContext и до первого подключения EF,
 // чтобы исключаемые SqliteException не всплывали в отладчике Visual Studio
@@ -401,6 +482,9 @@ void HarmonizeDbCopies(IEnumerable<string> copies)
     }
 }
 
+// B11: исправление устаревшей копии схемы меняет файл БД — делаем снимок заранее.
+if (File.Exists(dbPath) && IsStaleCopy(dbPath)) BackupBeforeMigration("исправлением схемы БД");
+
 HarmonizeDbCopies(new[]
 {
     dbPath,
@@ -459,13 +543,21 @@ void PrepareDatabase()
         if (!TableExists(dbPath, "Users"))
         {
             Console.WriteLine("[SchitayKa] Пустой/повреждённый файл БД — пересоздаю через миграции.");
+            BackupBeforeMigration("пересозданием пустой БД");
             db.Database.EnsureDeleted();
             db.Database.Migrate();
             return;
         }
 
         Console.WriteLine("[SchitayKa] Legacy-база без истории миграций — baseline InitialCreate (данные сохраняются).");
+        BackupBeforeMigration("baseline legacy-базы");
         BaselineLegacyDatabase(dbPath);
+    }
+    else if (HasPendingMigrations(dbPath))
+    {
+        // B11: только когда действительно есть неприменённые миграции —
+        // иначе каждый запуск создавал бы бесполезную копию.
+        BackupBeforeMigration("применением миграций");
     }
 
     db.Database.Migrate();
@@ -479,6 +571,7 @@ builder.Services.AddScoped<SchitayKa.Api.Services.TransferService>();
 builder.Services.AddScoped<SchitayKa.Api.Services.DebtService>();
 builder.Services.AddScoped<SchitayKa.Api.Services.ObligationService>();
 builder.Services.AddScoped<SchitayKa.Api.Services.CalendarService>();
+builder.Services.AddScoped<SchitayKa.Api.Services.AuditService>();
 
 builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
     .AddJwtBearer(o =>
@@ -493,6 +586,25 @@ builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
             ValidateIssuerSigningKey = true,
             IssuerSigningKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(jwtKey)),
             NameClaimType = "name",
+        };
+        // Смена пароля увеличивает PasswordVersion — старые токены перестают действовать.
+        o.Events = new Microsoft.AspNetCore.Authentication.JwtBearer.JwtBearerEvents
+        {
+            OnTokenValidated = async ctx =>
+            {
+                var idClaim = ctx.Principal?.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value;
+                var verClaim = ctx.Principal?.FindFirst("pwdv")?.Value;
+                if (!int.TryParse(idClaim, out var uid) || !int.TryParse(verClaim, out var tokenVersion))
+                {
+                    ctx.Fail("Неверные данные токена");
+                    return;
+                }
+                var db = ctx.HttpContext.RequestServices.GetRequiredService<SchitayKa.Api.Data.AppDbContext>();
+                var current = await db.Users.AsNoTracking()
+                    .Where(u => u.Id == uid).Select(u => (int?)u.PasswordVersion).FirstOrDefaultAsync();
+                if (current is null || current.Value != tokenVersion)
+                    ctx.Fail("Пароль был изменён — войдите заново");
+            }
         };
     });
 
@@ -559,6 +671,7 @@ using (var scope = app.Services.CreateScope())
     if (reseedDemo)
     {
         Console.WriteLine("[SchitayKa] SCHITAYKA_RESEED_DEMO=true — пересоздаю базу с чистым демо-сидом ...");
+        BackupBeforeMigration("принудительным пересозданием демо-БД");
         await db.Database.EnsureDeletedAsync();
         db.Database.Migrate();
     }

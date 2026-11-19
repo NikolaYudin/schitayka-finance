@@ -3,6 +3,7 @@ import {
   api, fmt, AccountInfo, Category, DebtInfo, ObligationInfo, ObligationsSummary,
 } from './api';
 import { Icon } from './icons';
+import { useDialog } from './dialogs';
 import { ScopeSwitch } from './ScopeSwitch';
 import { loadScope, withScope, SCOPE_CHANGED, type ScopeState } from './scope';
 
@@ -34,6 +35,7 @@ const monthName = () => new Intl.DateTimeFormat('ru-RU', { month: 'long' }).form
  * Сам платёж в бюджет не входит — деньги появляются только через операцию.
  */
 export function ObligationsPage() {
+  const dlg = useDialog();
   const [items, setItems] = useState<ObligationInfo[]>([]);
   const [summary, setSummary] = useState<ObligationsSummary | null>(null);
   const [accounts, setAccounts] = useState<AccountInfo[]>([]);
@@ -176,7 +178,7 @@ export function ObligationsPage() {
   };
 
   const delPayment = async (o: ObligationInfo, paymentId: number) => {
-    if (!confirm('Удалить факт оплаты? Связанная операция тоже будет удалена.')) return;
+    if (!await dlg.confirm('Удалить факт оплаты? Связанная операция тоже будет удалена.')) return;
     try { await api.del(withScope(`/api/obligations/${o.id}/payments/${paymentId}`, scope)); await load(); }
     catch (ex: any) { setErr(ex.message); }
   };
@@ -189,7 +191,7 @@ export function ObligationsPage() {
   };
 
   const delObligation = async (id: number) => {
-    if (!confirm('Удалить платёж, историю оплат и связанные операции?')) return;
+    if (!await dlg.confirm('Удалить платёж, историю оплат и связанные операции?')) return;
     try { await api.del(withScope(`/api/obligations/${id}`, scope)); await load(); }
     catch (ex: any) { setErr(ex.message); }
   };

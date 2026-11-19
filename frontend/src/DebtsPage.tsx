@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { api, fmt, AccountInfo, DebtInfo, DebtEventInfo, DebtsSummary } from './api';
 import { Icon } from './icons';
+import { useDialog } from './dialogs';
 import { ScopeSwitch } from './ScopeSwitch';
 import { loadScope, withScope, SCOPE_CHANGED, type ScopeState } from './scope';
 
@@ -45,6 +46,7 @@ const effectLabel = (e: DebtEventInfo) => {
  * и необязательная операция по счёту при возврате.
  */
 export function DebtsPage() {
+  const dlg = useDialog();
   const [debts, setDebts] = useState<DebtInfo[]>([]);
   const [summary, setSummary] = useState<DebtsSummary | null>(null);
   const [accounts, setAccounts] = useState<AccountInfo[]>([]);
@@ -185,7 +187,7 @@ export function DebtsPage() {
   };
 
   const delEvent = async (debtId: number, eventId: number) => {
-    if (!confirm('Удалить событие? Связанная операция тоже будет удалена.')) return;
+    if (!await dlg.confirm('Удалить событие? Связанная операция тоже будет удалена.')) return;
     try { await api.del(withScope(`/api/debts/${debtId}/events/${eventId}`, scope)); await load(); }
     catch (ex: any) { setErr(ex.message); }
   };
@@ -198,7 +200,7 @@ export function DebtsPage() {
   };
 
   const delDebt = async (id: number) => {
-    if (!confirm('Удалить долг, историю и связанные операции?')) return;
+    if (!await dlg.confirm('Удалить долг, историю и связанные операции?')) return;
     try { await api.del(withScope(`/api/debts/${id}`, scope)); await load(); }
     catch (ex: any) { setErr(ex.message); }
   };

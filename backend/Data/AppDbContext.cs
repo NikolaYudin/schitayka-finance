@@ -26,6 +26,7 @@ public class AppDbContext : DbContext
     public DbSet<Obligation> Obligations => Set<Obligation>();
     public DbSet<ObligationPayment> ObligationPayments => Set<ObligationPayment>();
     public DbSet<CalendarEvent> CalendarEvents => Set<CalendarEvent>();
+    public DbSet<AuditLog> AuditLogs => Set<AuditLog>();
 
     protected override void OnModelCreating(ModelBuilder mb)
     {
@@ -166,6 +167,10 @@ public class AppDbContext : DbContext
             .HasOne(e => e.Obligation).WithMany().HasForeignKey(e => e.ObligationId).OnDelete(DeleteBehavior.SetNull);
         mb.Entity<CalendarEvent>()
             .HasOne(e => e.Account).WithMany().HasForeignKey(e => e.AccountId).OnDelete(DeleteBehavior.SetNull);
+
+        mb.Entity<AuditLog>().HasIndex(a => new { a.UserId, a.CreatedAt });
+        mb.Entity<AuditLog>()
+            .HasOne(a => a.User).WithMany().HasForeignKey(a => a.UserId).OnDelete(DeleteBehavior.Cascade);
     }
 }
 
@@ -174,6 +179,7 @@ public class User
     public int Id { get; set; }
     public string Email { get; set; } = "";          // для локальных; для яндекс — fake-уникальный
     public string PasswordHash { get; set; } = "";   // пусто => вход только через Яндекс
+    public int PasswordVersion { get; set; }         // инвалидация старых JWT после смены пароля
     public string Name { get; set; } = "";
     public string? YandexId { get; set; }
     public decimal StartingBalance { get; set; }     // стартовый баланс («сколько на счетах сейчас»)
@@ -699,5 +705,21 @@ public class CalendarEvent
     public int? AccountId { get; set; }
     public Account? Account { get; set; }
 
+    public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
+}
+
+/// <summary>
+/// Аудит чувствительных действий: экспорт/импорт данных и смена пароля.
+/// В журнал никогда не попадают пароли, токены, содержимое чеков и изображения.
+/// </summary>
+public class AuditLog
+{
+    public int Id { get; set; }
+    public int UserId { get; set; }
+    public User User { get; set; } = null!;
+    public string Action { get; set; } = "";
+    public string Details { get; set; } = "";
+    public string? IpAddress { get; set; }
+    public string? UserAgent { get; set; }
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
 }

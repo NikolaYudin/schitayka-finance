@@ -1,9 +1,6 @@
-// Простой API-клиент с JWT из localStorage
-const TOKEN_KEY = 'sk_token';
-
-export function getToken(): string | null { return localStorage.getItem(TOKEN_KEY); }
-export function setToken(t: string) { localStorage.setItem(TOKEN_KEY, t); }
-export function clearToken() { localStorage.removeItem(TOKEN_KEY); }
+// Простой API-клиент с JWT из sessionStorage (единое хранилище — см. token.ts)
+import { getToken, setToken, clearToken } from './token';
+export { getToken, setToken, clearToken };
 
 export class ApiError extends Error {
   status: number;
@@ -102,7 +99,7 @@ export const api = {
 // ---- Типы ----
 export type TxType = 0 | 1; // 0 = доход, 1 = расход
 
-export interface UserInfo { id: number; email: string; name: string; startingBalance?: number; familyCode?: string | null; }
+export interface UserInfo { id: number; email: string; name: string; startingBalance?: number; familyCode?: string | null; hasPassword?: boolean; }
 export interface Category {
   id: number; name: string; type: TxType; color: string;
   isSystem?: boolean; familyShared?: boolean;

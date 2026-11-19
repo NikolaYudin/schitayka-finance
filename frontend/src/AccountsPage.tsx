@@ -5,6 +5,7 @@ import {
 } from './api';
 import { Icon } from './icons';
 import { bankOf, bankMonogram, darken } from './bankstyle';
+import { useDialog } from './dialogs';
 
 const TYPE_HINT: Record<AccountType, string> = {
   0: 'Дебетовая карта',
@@ -23,6 +24,7 @@ function accountInitial(name: string): string {
 
 // ---- Страница «Счета»: карточки в сетке + форма добавления/редактирования ----
 export function AccountsPage({ onChanged }: { onChanged?: () => void }) {
+  const dlg = useDialog();
   const [list, setList] = useState<AccountInfo[] | null>(null);
   const [err, setErr] = useState('');
   const [editing, setEditing] = useState<AccountInfo | null>(null); // null = нет формы, объект (id 0) = новая
@@ -56,9 +58,9 @@ export function AccountsPage({ onChanged }: { onChanged?: () => void }) {
   useEffect(() => { load(); loadRules(); loadAlerts(); loadLoans(); }, [showArchived, familyMode]);
 
   const cancelTransfer = async (id: number) => {
-    if (!confirm('Отменить перевод? Обе его операции будут удалены, остатки вернутся.')) return;
+    if (!await dlg.confirm('Отменить перевод? Обе его операции будут удалены, остатки вернутся.')) return;
     try { await api.del(`/api/transfers/${id}`); afterChange(); }
-    catch (e: any) { alert(e.message); }
+    catch (e: any) { await dlg.alert(e.message); }
   };
   const transfersFor = (accountId: number) =>
     transfers.filter(t => t.fromAccountId === accountId || t.toAccountId === accountId).slice(0, 3);
@@ -66,9 +68,9 @@ export function AccountsPage({ onChanged }: { onChanged?: () => void }) {
   const afterChange = () => { load(); onChanged?.(); };
 
   const del = async (a: AccountInfo) => {
-    if (!confirm(`Удалить счёт «${a.name}»? Операции останутся в журнале без счёта.`)) return;
+    if (!await dlg.confirm(`Удалить счёт «${a.name}»? Операции останутся в журнале без счёта.`)) return;
     try { await api.del(`/api/accounts/${a.id}`); afterChange(); }
-    catch (e: any) { alert(e.message); }
+    catch (e: any) { await dlg.alert(e.message); }
   };
   const archive = async (a: AccountInfo) => {
     try {
@@ -78,21 +80,21 @@ export function AccountsPage({ onChanged }: { onChanged?: () => void }) {
         bankId: a.bankId ?? null,
       });
       afterChange();
-    } catch (e: any) { alert(e.message); }
+    } catch (e: any) { await dlg.alert(e.message); }
   };
   const adjust = async (a: AccountInfo, kind: 'cashback' | 'adjust') => {
     const def = kind === 'cashback' ? '' : '-5000';
-    const raw = prompt(kind === 'cashback'
+    const raw = await dlg.prompt(kind === 'cashback'
       ? `Сумма зачисленного кэшбэка на «${a.name}», ₽`
       : `Корректировка баланса «${a.name}» (можно со знаком −), ₽`, def);
     if (raw === null) return;
     const amount = Number(raw.replace(',', '.')) || 0;
-    if (amount === 0) { alert('Укажите сумму'); return; }
+    if (amount === 0) { await dlg.alert('Укажите сумму'); return; }
     try {
       if (kind === 'cashback') await api.post(`/api/accounts/${a.id}/cashback`, { amount });
       else await api.post(`/api/accounts/${a.id}/adjust`, { delta: amount });
       afterChange();
-    } catch (e: any) { alert(e.message); }
+    } catch (e: any) { await dlg.alert(e.message); }
   };
 
   const visible = (list ?? []).filter(a => !a.isArchived);
@@ -119,16 +121,16 @@ export function AccountsPage({ onChanged }: { onChanged?: () => void }) {
     return Math.max(0, Math.min(a.balance, r.threshold ?? 0) - taken);
   };
   const takeLoan = async (a: AccountInfo, r: AccountRule) => {
-    const raw = prompt(`Сколько взять из резерва «${r.name}» на счёт «${a.name}»?`, '1000');
+    const raw = await dlg.prompt(`Сколько взять из резерва «${r.name}» на счёт «${a.name}»?`, '1000');
     if (raw === null) return;
     const amount = Number(raw.replace(',', '.')) || 0;
-    if (amount <= 0) { alert('Укажите сумму'); return; }
+    if (amount <= 0) { await dlg.alert('Укажите сумму'); return; }
     try { await api.post('/api/reserve-loans', { accountId: a.id, amount, ruleId: r.id }); afterChange(); }
-    catch (e: any) { alert(e.message); }
+    catch (e: any) { await dlg.alert(e.message); }
   };
   const returnLoan = async (id: number) => {
     try { await api.post(`/api/reserve-loans/${id}/return`, {}); afterChange(); }
-    catch (e: any) { alert(e.message); }
+    catch (e: any) { await dlg.alert(e.message); }
   };
 
   return (
@@ -215,7 +217,12 @@ export function AccountsPage({ onChanged }: { onChanged?: () => void }) {
                 {showOwnerBadge && <span className="badge badge-muted">{a.ownerName || 'участник'}</span>}
               </div>
 
-              <div className="account-balance">{fmt(a.balance)}</div>
+              <div className={`account-balance ${a.balance < 0 ? 'is-negative' : ''}`}>{fmt(a.balance)}</div>
+              {a.balance < 0 && (
+                <div className="account-overdraft">
+                  {a.type === 1 ? 'переплата сверх долга' : 'перерасход'}
+                </div>
+              )}
 
               {a.type === 1 && a.creditLimit > 0 && (
                 <div className="limit-row" style={{ marginTop: 4 }}>
@@ -511,6 +518,7 @@ function AccountForm({ account, onClose, onSaved }: {
 
 // ---- Семья: приглашения и состав группы ----
 export function FamilyCard() {
+  const dlg = useDialog();
   const [members, setMembers] = useState<FamilyMember[] | null>(null);
   const [familyCode, setFamilyCode] = useState<string | null>(null);
   const [inviteCode, setInviteCode] = useState<string | null>(null);
@@ -546,7 +554,7 @@ export function FamilyCard() {
     } catch (ex: any) { setErr(ex.message); }
   };
   const leave = async () => {
-    if (!confirm('Выйти из семьи?')) return;
+    if (!await dlg.confirm('Выйти из семьи?')) return;
     try { await api.post('/api/family/leave'); setInviteCode(null); load(); }
     catch (ex: any) { setErr(ex.message); }
   };

@@ -204,6 +204,39 @@ namespace SchitayKa.Api.Migrations
                     b.ToTable("AccountRules");
                 });
 
+            modelBuilder.Entity("SchitayKa.Api.Data.AuditLog", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("Action")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Details")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("IpAddress")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("UserAgent")
+                        .HasColumnType("TEXT");
+
+                    b.Property<int>("UserId")
+                        .HasColumnType("INTEGER");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("UserId", "CreatedAt");
+
+                    b.ToTable("AuditLogs");
+                });
+
             modelBuilder.Entity("SchitayKa.Api.Data.Bank", b =>
                 {
                     b.Property<int>("Id")
@@ -955,6 +988,9 @@ namespace SchitayKa.Api.Migrations
                         .IsRequired()
                         .HasColumnType("TEXT");
 
+                    b.Property<int>("PasswordVersion")
+                        .HasColumnType("INTEGER");
+
                     b.Property<decimal>("StartingBalance")
                         .HasColumnType("TEXT");
 
@@ -1032,6 +1068,17 @@ namespace SchitayKa.Api.Migrations
                         .IsRequired();
 
                     b.Navigation("Account");
+
+                    b.Navigation("User");
+                });
+
+            modelBuilder.Entity("SchitayKa.Api.Data.AuditLog", b =>
+                {
+                    b.HasOne("SchitayKa.Api.Data.User", "User")
+                        .WithMany()
+                        .HasForeignKey("UserId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
 
                     b.Navigation("User");
                 });

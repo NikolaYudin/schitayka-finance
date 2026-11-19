@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Category, Goal, Tx, api, fmt, MONTHS_RU } from './api';
 import { Icon } from './icons';
+import { useDialog } from './dialogs';
 
 const pad2 = (n: number) => String(n).padStart(2, '0');
 
@@ -48,6 +49,7 @@ export function GoalsPage({ initialTab = 'goals' }: { initialTab?: 'goals' | 'li
 // Цели
 // ============================================================================
 function Goals() {
+  const dlg = useDialog();
   const [goals, setGoals] = useState<Goal[] | null>(null);
   const [name, setName] = useState('');
   const [target, setTarget] = useState('');
@@ -69,14 +71,14 @@ function Goals() {
     } catch (ex: any) { setErr(ex.message); } finally { setBusy(false); }
   };
   const deposit = async (g: Goal) => {
-    const v = prompt(`Пополнить «${g.name}» на сумму, ₽ (можно со знаком − для снятия):`);
+    const v = await dlg.prompt(`Пополнить «${g.name}» на сумму, ₽ (можно со знаком − для снятия):`);
     if (v === null || !v.trim()) return;
     try { await api.post(`/api/goals/${g.id}/deposit`, { delta: Number(v.replace(',', '.')) }); load(); }
-    catch (ex: any) { alert(ex.message); }
+    catch (ex: any) { await dlg.alert(ex.message); }
   };
   const del = async (id: number) => {
-    if (!confirm('Удалить цель?')) return;
-    try { await api.del(`/api/goals/${id}`); load(); } catch (ex: any) { alert(ex.message); }
+    if (!await dlg.confirm('Удалить цель?')) return;
+    try { await api.del(`/api/goals/${id}`); load(); } catch (ex: any) { await dlg.alert(ex.message); }
   };
 
   return (
@@ -161,6 +163,7 @@ function Goals() {
 // Лимиты
 // ============================================================================
 function Limits() {
+  const dlg = useDialog();
   const now = new Date();
   const [ym, setYm] = useState(`${now.getFullYear()}-${pad2(now.getMonth() + 1)}`);
   const [cats, setCats] = useState<Category[]>([]);
@@ -207,8 +210,8 @@ function Limits() {
     } catch (ex: any) { setErr(ex.message); }
   };
   const del = async (id: number) => {
-    if (!confirm('Удалить лимит?')) return;
-    try { await api.del(`/api/limits/${id}`); load(); } catch (ex: any) { alert(ex.message); }
+    if (!await dlg.confirm('Удалить лимит?')) return;
+    try { await api.del(`/api/limits/${id}`); load(); } catch (ex: any) { await dlg.alert(ex.message); }
   };
 
   const shift = (delta: number) => {

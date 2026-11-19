@@ -212,7 +212,9 @@ public class TransactionsController : ControllerBase
         var tx = await _db.Transactions.FirstOrDefaultAsync(t => t.Id == id && t.UserId == Uid);
         if (tx is null) return NotFound();
         var cat = await CategoryService.FindAsync(_db, Uid, dto.CategoryId);
-        if (await _db.Transfers.AnyAsync(t => t.FromTxId == id || t.ToTxId == id))
+        // B20: исторические пары IsTransfer могут не иметь записи Transfers —
+        // защищаем и их, иначе редактирование одной половины разбалансирует перевод.
+        if (tx.IsTransfer || await _db.Transfers.AnyAsync(t => t.FromTxId == id || t.ToTxId == id))
             return BadRequest(new { error = "Стороны перевода нельзя изменять отдельно. Отмените перевод и создайте его заново." });
         if (cat is null) return BadRequest(new { error = "Категория не найдена" });
         if (dto.Amount <= 0) return BadRequest(new { error = "Сумма должна быть больше нуля" });
@@ -240,14 +242,20 @@ public class TransactionsController : ControllerBase
 
         // Операция входит в перевод — отменяем перевод целиком (обе стороны),
         // иначе суммы по счетам разойдутся.
-        var canceledTransferId = await new TransferService(_db).CancelByTransactionAsync(Uid, id);
+        var result = await new TransferService(_db).CancelByTransactionDetailedAsync(Uid, id);
+        if (result.Error is not null)
+            return BadRequest(new { error = result.Error });
+        var canceledTransferId = result.TransferId;
+
         if (canceledTransferId is null)
         {
+            // Одиночная операция: удаляем и пересчитываем её счёт.
             _db.Transactions.Remove(tx);
+            await _db.SaveChangesAsync();
+            await RecalcAccounts(accId);
         }
-
-        await _db.SaveChangesAsync();
-        await RecalcAccounts(accId);
+        // B20: при отмене перевода TransferService уже удалил обе половины
+        // и пересчитал оба счёта — повторный пересчёт здесь не нужен.
         await _db.SaveChangesAsync();
         await _rules.EvaluateAllAsync(Uid);
         return Ok(new { canceledTransferId });

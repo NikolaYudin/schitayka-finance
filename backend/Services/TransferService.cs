@@ -144,15 +144,73 @@ public sealed class TransferService
     /// (иначе останется «половина» перевода и суммы разойдутся).
     /// Доступ: инициатор/владелец перевода или член семьи (N3).
     /// </summary>
-    public async Task<int?> CancelByTransactionAsync(int userId, int transactionId)
+    public readonly record struct CancelByTxResult(int? TransferId, string? Error);
+
+    public async Task<int?> CancelByTransactionAsync(int userId, int transactionId) =>
+        (await CancelByTransactionDetailedAsync(userId, transactionId)).TransferId;
+
+    /// <summary>
+    /// Отменяет перевод по одной из его операций. B20: умеет находить исторические
+    /// пары IsTransfer, у которых нет записи Transfers (создавались до миграции переводов).
+    /// TransferId = id отменённого перевода, Error = причина отказа.
+    /// </summary>
+    public async Task<CancelByTxResult> CancelByTransactionDetailedAsync(
+        int userId, int transactionId)
     {
         var transfer = await _db.Transfers
             .FirstOrDefaultAsync(t => t.FromTxId == transactionId || t.ToTxId == transactionId);
-        if (transfer is null) return null;
-        if (!await CanManageTransferAsync(userId, transfer.UserId)) return null;
+        if (transfer is not null)
+        {
+            if (!await CanManageTransferAsync(userId, transfer.UserId))
+                return new CancelByTxResult(null, "Перевод не найден");
+            await CancelAsync(userId, transfer.Id);
+            return new CancelByTxResult(transfer.Id, null);
+        }
 
-        await CancelAsync(userId, transfer.Id);
-        return transfer.Id;
+        // Историческая пара без записи Transfers: ищем вторую половину по
+        // сумме, дате, комментарию и противоположному типу — только однозначно.
+        var tx = await _db.Transactions.FirstOrDefaultAsync(t => t.Id == transactionId);
+        if (tx is null || !tx.IsTransfer || tx.AccountId is null)
+            return new CancelByTxResult(null, null);
+        if (!await CanManageTransferAsync(userId, tx.UserId))
+            return new CancelByTxResult(null, "Операция не найдена");
+
+        var comment = tx.Comment ?? "";
+        var manageable = await FamilyAccess.ManageableUserIdsAsync(_db, userId);
+        var candidates = await _db.Transactions
+            .Where(t => t.Id != tx.Id && t.IsTransfer && t.Type != tx.Type
+                     && t.Amount == tx.Amount && t.Date == tx.Date
+                     && (t.Comment ?? "") == comment
+                     && t.AccountId != null && t.AccountId != tx.AccountId
+                     && manageable.Contains(t.UserId))
+            .ToListAsync();
+
+        if (candidates.Count > 1)
+            return new CancelByTxResult(null,
+                "Найдено несколько похожих переводов — уточните, какую пару отменить");
+        if (candidates.Count == 0)
+            return new CancelByTxResult(null, null); // одиночная помеченная операция — не перевод
+
+        var other = candidates[0];
+        var legacy = new Transfer
+        {
+            UserId = tx.UserId,
+            FromAccountId = tx.Type == TxType.Expense ? tx.AccountId.Value : other.AccountId!.Value,
+            ToAccountId = tx.Type == TxType.Income ? tx.AccountId.Value : other.AccountId!.Value,
+            FromTxId = tx.Type == TxType.Expense ? tx.Id : other.Id,
+            ToTxId = tx.Type == TxType.Income ? tx.Id : other.Id,
+            Amount = tx.Amount,
+            Date = tx.Date,
+            Comment = comment,
+            CreatedAt = DateTime.UtcNow,
+        };
+        _db.Transfers.Add(legacy);
+        await _db.SaveChangesAsync();
+
+        var (ok, cancelError) = await CancelAsync(userId, legacy.Id);
+        return ok
+            ? new CancelByTxResult(legacy.Id, null)
+            : new CancelByTxResult(null, cancelError);
     }
 
     /// <summary>Инициатор/владелец перевода или любой член семьи может видеть и отменять перевод.</summary>

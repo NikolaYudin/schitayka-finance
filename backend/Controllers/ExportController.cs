@@ -14,8 +14,13 @@ namespace SchitayKa.Api.Controllers;
 public class ExportController : ControllerBase
 {
     private readonly AppDbContext _db;
+    private readonly AuditService _audit;
 
-    public ExportController(AppDbContext db) => _db = db;
+    public ExportController(AppDbContext db, AuditService audit)
+    {
+        _db = db;
+        _audit = audit;
+    }
 
     private int Uid => UserAccess.UidOf(User);
 
@@ -453,6 +458,8 @@ public class ExportController : ControllerBase
 
         Response.Headers["Cache-Control"] = "no-store";
         var fileName = $"schitayka-profile-{DateTime.Now:yyyyMMdd-HHmmss}.json";
+        await _audit.LogAsync(Uid, AuditService.ExportProfile, $"файл {fileName}, {json.Length} байт",
+            HttpContext, ct);
         return File(json, "application/json; charset=utf-8", fileName);
     }
 

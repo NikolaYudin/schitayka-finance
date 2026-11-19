@@ -11,6 +11,7 @@ import { plural } from './plural';
 import { bankOf, bankMonogram, darken } from './bankstyle';
 import { loadWidgets, type DashboardWidgets } from './widgets';
 import { loadScope, saveScope, scopeQuery, SCOPE_CHANGED, type ScopeState } from './scope';
+import { useDialog } from './dialogs';
 
 // ============================================================================
 // Вспомогательные функции
@@ -860,6 +861,9 @@ function FamilyWalletCard({ account, onTx }: { account: FamilyAccountRow; onTx?:
       <div>
         <div className="wallet-name">{account.name}</div>
         <div className="wallet-balance">{fmt(account.balance)}</div>
+        {account.balance < 0 && (
+          <div className="wallet-overdraft">{account.type === 1 ? 'переплата' : 'перерасход'}</div>
+        )}
       </div>
       <div className="wallet-foot">
         <span className="wallet-foot-item">{account.typeName}</span>
@@ -896,6 +900,9 @@ function WalletCard({ account }: { account: AccountSummaryRow }) {
       <div>
         <div className="wallet-name">{account.name}</div>
         <div className="wallet-balance">{fmt(account.balance)}</div>
+        {account.balance < 0 && (
+          <div className="wallet-overdraft">{account.type === 1 ? 'переплата' : 'перерасход'}</div>
+        )}
       </div>
       <div className="wallet-foot">
         {account.type === 1 && account.creditLimit > 0 ? (
@@ -1352,6 +1359,7 @@ export function QuickTxModal({ categories, accounts = [], onClose, onSaved, pres
 // Журнал операций
 // ============================================================================
 export function Journal() {
+  const dlg = useDialog();
   const now = new Date();
   const [ym, setYm] = useState(`${now.getFullYear()}-${pad2(now.getMonth() + 1)}`);
   const [txs, setTxs] = useState<Tx[] | null>(null);
@@ -1372,16 +1380,16 @@ export function Journal() {
   useEffect(load, [ym]);
 
   const del = async (id: number) => {
-    if (!confirm('Удалить операцию?')) return;
+    if (!await dlg.confirm('Удалить операцию?')) return;
     try { await api.del(`/api/transactions/${id}`); load(); }
-    catch (e: any) { alert(e.message); }
+    catch (e: any) { await dlg.alert(e.message); }
   };
 
   // Отмена перевода удаляет обе его операции.
   const cancelTransfer = async (id: number) => {
-    if (!confirm('Отменить перевод? Обе его операции будут удалены, остатки вернутся.')) return;
+    if (!await dlg.confirm('Отменить перевод? Обе его операции будут удалены, остатки вернутся.')) return;
     try { await api.del(`/api/transfers/${id}`); load(); }
-    catch (e: any) { alert(e.message); }
+    catch (e: any) { await dlg.alert(e.message); }
   };
 
   const shift = (delta: number) => {

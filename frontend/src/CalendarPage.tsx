@@ -3,6 +3,7 @@ import {
   api, fmt, AccountInfo, CalendarItem, DebtInfo, ObligationInfo,
 } from './api';
 import { Icon } from './icons';
+import { useDialog } from './dialogs';
 import { ScopeSwitch } from './ScopeSwitch';
 import { loadScope, withScope, SCOPE_CHANGED, type ScopeState } from './scope';
 
@@ -45,6 +46,7 @@ const colorOf = (source: number) => SOURCES.find(s => s.v === source)?.color ?? 
  * вкладам, начислениям процентов и пользовательским событиям.
  */
 export function CalendarPage() {
+  const dlg = useDialog();
   const [view, setView] = useState<View>('month');
   const [anchor, setAnchor] = useState(new Date());
   const [items, setItems] = useState<CalendarItem[]>([]);
@@ -157,7 +159,7 @@ export function CalendarPage() {
   };
 
   const del = async (item: CalendarItem) => {
-    if (!confirm(`Удалить событие «${item.title}»?`)) return;
+    if (!await dlg.confirm(`Удалить событие «${item.title}»?`)) return;
     try { await api.del(withScope(`/api/calendar/events/${item.id}`, scope)); await load(); }
     catch (ex: any) { setErr(ex.message); }
   };
