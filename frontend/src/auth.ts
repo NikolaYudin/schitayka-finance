@@ -25,7 +25,8 @@ export function useAuth() {
   const login = async (email: string, password: string) => {
     const r = await api.post<{ token: string; user: UserInfo }>('/api/auth/login', { email, password });
     setToken(r.token);
-    setState({ user: r.user, loading: false });
+    // Догружаем полный профиль: в /me есть роль и серверная тема.
+    await loadMe();
   };
 
   const logout = () => { clearToken(); setState({ user: null, loading: false }); location.hash = '#/login'; };

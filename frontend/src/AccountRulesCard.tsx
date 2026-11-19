@@ -20,6 +20,9 @@ export function AccountRulesCard() {
   const [cats, setCats] = useState<Category[]>([]);
   const [err, setErr] = useState('');
   const [msg, setMsg] = useState('');
+  const [overwrite, setOverwrite] = useState(false);
+  const [from, setFrom] = useState('');
+  const [to, setTo] = useState('');
 
   const reload = async () => {
     const [r, c, a] = await Promise.all([
@@ -66,11 +69,37 @@ export function AccountRulesCard() {
     await api.del(`/api/account-rules/${r.id}`);
     reload();
   };
+  const applyQuery = () => {
+    const p = new URLSearchParams();
+    if (overwrite) p.set('overwrite', 'true');
+    if (from) p.set('from', from);
+    if (to) p.set('to', to);
+    return p.toString();
+  };
+
   const applyToOld = async () => {
     setErr(''); setMsg('');
     try {
-      const res = await api.post<{ matched: number; dryRun: boolean }>('/api/account-rules/apply?dryRun=true', {});
+      const q = applyQuery();
+      const res = await api.post<{ matched: number; dryRun: boolean }>(
+        `/api/account-rules/apply?dryRun=true${q ? '&' + q : ''}`, {});
       setMsg(`Проверка завершена: правило подошло бы к ${res.matched} операциям.`);
+    } catch (e: any) { setErr(e.message); }
+  };
+
+  // B13: реальное применение — только после явного подтверждения.
+  const applyForReal = async () => {
+    setErr(''); setMsg('');
+    const ok = await dlg.confirm(
+      `Применить правила к существующим операциям${overwrite ? ' (включая уже привязанные к счетам)' : ''}? Изменения нельзя отменить.`,
+      'Применение правил');
+    if (!ok) return;
+    try {
+      const q = applyQuery();
+      const res = await api.post<{ matched: number; changedAccounts: number; changedCategories: number }>(
+        `/api/account-rules/apply?dryRun=false${q ? '&' + q : ''}`, {});
+      setMsg(`Применено: ${res.matched} операций, счетов ${res.changedAccounts}, категорий ${res.changedCategories}.`);
+      reload();
     } catch (e: any) { setErr(e.message); }
   };
 
@@ -141,10 +170,23 @@ export function AccountRulesCard() {
       )}
 
       {kind === 0 && rules.length > 0 && (
-        <div style={{ marginTop: 12 }}>
-          <button className="btn small" type="button" onClick={applyToOld}>
-            <Icon name="refresh" size={14} /> Проверить на старых операциях
-          </button>
+        <div className="rules-apply" style={{ marginTop: 12 }}>
+          <div className="rules-apply-fields">
+            <label>С <input type="date" value={from} onChange={e => setFrom(e.target.value)} /></label>
+            <label>По <input type="date" value={to} onChange={e => setTo(e.target.value)} /></label>
+            <label className="export-check">
+              <input type="checkbox" checked={overwrite} onChange={e => setOverwrite(e.target.checked)} />
+              <span>Включая операции со счётом</span>
+            </label>
+          </div>
+          <div className="action-row">
+            <button className="btn small" type="button" onClick={applyToOld}>
+              <Icon name="refresh" size={14} /> Проверить
+            </button>
+            <button className="btn small primary" type="button" onClick={applyForReal}>
+              <Icon name="check" size={14} /> Применить к старым операциям
+            </button>
+          </div>
         </div>
       )}
 

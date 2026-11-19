@@ -79,4 +79,63 @@ public class ReceiptParserTests
         Assert.Contains(result.Warnings, w => w.Contains("Сумма не найдена"));
         Assert.Contains(result.Warnings, w => w.Contains("Дата не найдена"));
     }
+
+    [Fact]
+    public void Parse_ItemsWithQuantityAndPrice_ExtractsPositions()
+    {
+        const string text = """
+        ООО "Пятёрочка"
+        Чек № 123
+        11.11.2026 18:42
+        Молоко 2 x 89,90
+        Хлеб 50,00
+        ИТОГО 229,80
+        НДС 0,00
+        """;
+
+        var result = ReceiptParser.Parse(text, Categories);
+
+        Assert.NotNull(result.Items);
+        Assert.Equal(2, result.Items!.Count);
+        Assert.Contains(result.Items, i =>
+            i.Name == "Молоко" && i.Quantity == 2m && i.Price == 89.90m && i.Amount == 179.80m);
+        Assert.Contains(result.Items, i => i.Name == "Хлеб" && i.Amount == 50m);
+        Assert.DoesNotContain(result.Items, i =>
+            i.Name.Contains("ИТОГО", StringComparison.OrdinalIgnoreCase)
+            || i.Name.Contains("НДС", StringComparison.OrdinalIgnoreCase));
+        Assert.DoesNotContain(result.Warnings, w => w.Contains("Сумма позиций"));
+    }
+
+    [Fact]
+    public void Parse_QuantityOnSeparateLine_UsesPreviousName()
+    {
+        const string text = """
+        Магазин
+        Молоко
+        2 x 89,90
+        ИТОГО 179,80
+        """;
+
+        var result = ReceiptParser.Parse(text, Categories);
+
+        var item = Assert.Single(result.Items!);
+        Assert.Equal("Молоко", item.Name);
+        Assert.Equal(2m, item.Quantity);
+        Assert.Equal(89.90m, item.Price);
+        Assert.Equal(179.80m, item.Amount);
+    }
+
+    [Fact]
+    public void Parse_ItemsTotalDiffersFromReceiptTotal_AddsWarning()
+    {
+        const string text = """
+        Магазин
+        Хлеб 50,00
+        ИТОГО 500,00
+        """;
+
+        var result = ReceiptParser.Parse(text, Categories);
+
+        Assert.Contains(result.Warnings, w => w.Contains("Сумма позиций"));
+    }
 }

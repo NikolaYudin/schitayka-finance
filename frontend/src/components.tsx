@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
 import { useAuth } from './auth';
 import {
   Summary, Category, Tx, TxType, AccountInfo, api, fmt, parseServerDate, MONTHS_RU,
@@ -848,7 +848,7 @@ function FamilyWalletCard({ account, onTx }: { account: FamilyAccountRow; onTx?:
     ? { background: `linear-gradient(138deg, ${bank.color} 0%, ${darken(bank.color)} 100%)`, boxShadow: '0 14px 30px rgba(18, 24, 48, 0.18)' }
     : undefined;
   return (
-    <div className={`wallet wallet--${tone} wallet--family ${bank ? 'wallet--bank' : ''}`} style={style}>
+    <div className={`wallet wallet--${tone} wallet--family wallet--hybrid ${bank ? 'wallet--bank' : ''}`} style={style}>
       <div className="wallet-top">
         <span className="wallet-type">
           <Icon name="user" size={13} />
@@ -887,15 +887,21 @@ function WalletCard({ account }: { account: AccountSummaryRow }) {
     ? { background: `linear-gradient(138deg, ${bank.color} 0%, ${darken(bank.color)} 100%)`, boxShadow: '0 14px 30px rgba(18, 24, 48, 0.18)' }
     : undefined;
   return (
-    <div className={`wallet wallet--${tone} ${bank ? 'wallet--bank' : ''}`} style={style}>
+    <div className={`wallet wallet--${tone} wallet--hybrid ${bank ? 'wallet--bank' : ''}`} style={style}>
       <div className="wallet-top">
         <span className="wallet-type">
           <Icon name={account.type === 3 ? 'trending-up' : 'credit-card'} size={13} />
           {account.typeName}
         </span>
+        {account.type === 3 && <span className="wallet-badge">ВКЛАД</span>}
         {bank
           ? <span className="wallet-monogram" title={account.name}>{bankMonogram(bank.short, account.name)}</span>
           : <span className="wallet-chip" aria-hidden="true" />}
+        {account.type === 3 && !bank && (
+          <span className="wallet-ring" style={{ '--ring': `${Math.min(100, Math.max(8, account.cashbackRate || 18))}%` } as CSSProperties}>
+            <span>{account.cashbackRate ? `${account.cashbackRate}%` : '↑'}</span>
+          </span>
+        )}
       </div>
       <div>
         <div className="wallet-name">{account.name}</div>
@@ -996,12 +1002,29 @@ export function QuickTxModal({ categories, accounts = [], onClose, onSaved, pres
   const [manualText, setManualText] = useState('');
   const fileRef = useRef<HTMLInputElement>(null);
 
+  // QR-код чека ФНС (B1): вставка строки, файл или камера через jsQR.
+  const [qrOpen, setQrOpen] = useState(false);
+  const [qrText, setQrText] = useState('');
+  const [qrError, setQrError] = useState('');
+  const [cameraOpen, setCameraOpen] = useState(false);
+  const [selectedItems, setSelectedItems] = useState<number[]>([]);
+  const videoRef = useRef<HTMLVideoElement>(null);
+  const qrFileRef = useRef<HTMLInputElement>(null);
+  const streamRef = useRef<MediaStream | null>(null);
+  const rafRef = useRef<number | null>(null);
+
   useEffect(() => () => {
     if (previewUrl) URL.revokeObjectURL(previewUrl);
   }, [previewUrl]);
 
+  useEffect(() => () => {
+    streamRef.current?.getTracks().forEach(t => t.stop());
+    if (rafRef.current !== null) cancelAnimationFrame(rafRef.current);
+  }, []);
+
   const applyParsed = (r: ReceiptParseResult) => {
     setImportResult(r);
+    setSelectedItems((r.items ?? []).map((_, idx) => idx));
     setType(r.type);
     if (r.amount !== null) setAmount(String(r.amount).replace('.', ','));
     if (r.date) setDate(r.date);
@@ -1022,7 +1045,7 @@ export function QuickTxModal({ categories, accounts = [], onClose, onSaved, pres
     try {
       const form = new FormData();
       form.append('file', file);
-      const parsed = await api.upload<ReceiptParseResult>('/api/import/receipt', form);
+      const parsed = await api.importReceiptFile(form);
       applyParsed(parsed);
     } catch (ex: any) {
       setImportError(ex.message || 'Не удалось распознать изображение.');
@@ -1037,13 +1060,149 @@ export function QuickTxModal({ categories, accounts = [], onClose, onSaved, pres
     setImporting(true);
     setImportError('');
     try {
-      const parsed = await api.post<ReceiptParseResult>('/api/import/receipt/text', { text: manualText });
+      const parsed = await api.importReceiptText(manualText);
       applyParsed(parsed);
       setManualOpen(false);
     } catch (ex: any) {
       setImportError(ex.message || 'Не удалось разобрать текст.');
     } finally {
       setImporting(false);
+    }
+  };
+
+  const parseQrText = async (raw: string) => {
+    const text = raw.trim();
+    if (text.length < 5) {
+      setQrError('Вставьте строку QR-кода чека.');
+      return;
+    }
+    setImporting(true);
+    setQrError('');
+    try {
+      const parsed = await api.importReceiptQr(text);
+      applyParsed(parsed);
+      setImportError('');
+      setQrOpen(false);
+    } catch (ex: any) {
+      setQrError(ex.message || 'Не удалось разобрать QR-код.');
+    } finally {
+      setImporting(false);
+    }
+  };
+
+  /** Декодирование QR с изображения полностью в браузере (jsQR). */
+  const decodeQrFile = async (file: File): Promise<string | null> => {
+    try {
+      const bitmap = await createImageBitmap(file);
+      const canvas = document.createElement('canvas');
+      canvas.width = bitmap.width;
+      canvas.height = bitmap.height;
+      const ctx = canvas.getContext('2d');
+      if (!ctx) { bitmap.close(); return null; }
+      ctx.drawImage(bitmap, 0, 0);
+      const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+      bitmap.close();
+      const jsQR = (await import('jsqr')).default;
+      return jsQR(new Uint8ClampedArray(imageData.data), canvas.width, canvas.height)?.data ?? null;
+    } catch {
+      return null;
+    }
+  };
+
+  const stopCamera = () => {
+    streamRef.current?.getTracks().forEach(t => t.stop());
+    streamRef.current = null;
+    if (rafRef.current !== null) {
+      cancelAnimationFrame(rafRef.current);
+      rafRef.current = null;
+    }
+    setCameraOpen(false);
+  };
+
+  const startCamera = async () => {
+    setQrError('');
+    try {
+      if (!navigator.mediaDevices?.getUserMedia) {
+        setQrError('Камера недоступна в этом браузере. Вставьте строку QR вручную.');
+        return;
+      }
+      const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } });
+      streamRef.current = stream;
+      const video = videoRef.current;
+      if (!video) { stopCamera(); return; }
+      video.srcObject = stream;
+      await video.play();
+      setCameraOpen(true);
+      const jsQR = (await import('jsqr')).default;
+      const tick = () => {
+        const v = videoRef.current;
+        if (!v || v.readyState < 2) { rafRef.current = requestAnimationFrame(tick); return; }
+        const w = v.videoWidth;
+        const h = v.videoHeight;
+        if (w > 0 && h > 0) {
+          const canvas = document.createElement('canvas');
+          canvas.width = w;
+          canvas.height = h;
+          const ctx = canvas.getContext('2d');
+          if (ctx) {
+            ctx.drawImage(v, 0, 0, w, h);
+            const code = jsQR(ctx.getImageData(0, 0, w, h).data, w, h);
+            if (code?.data) {
+              stopCamera();
+              void parseQrText(code.data);
+              return;
+            }
+          }
+        }
+        rafRef.current = requestAnimationFrame(tick);
+      };
+      rafRef.current = requestAnimationFrame(tick);
+    } catch (ex: any) {
+      stopCamera();
+      setQrError(ex.message || 'Не удалось открыть камеру. Вставьте строку QR вручную.');
+    }
+  };
+
+  const toggleItem = (idx: number) =>
+    setSelectedItems(prev => prev.includes(idx) ? prev.filter(i => i !== idx) : [...prev, idx]);
+
+  /** Сохранить выбранные позиции чека отдельными операциями (B3). */
+  const saveItems = async () => {
+    const items = importResult?.items;
+    if (!items?.length || selectedItems.length === 0) return;
+    setBusy(true);
+    setErr('');
+    try {
+      const acc = accounts.find(a => a.id === accountId) || null;
+      for (const idx of selectedItems) {
+        const item = items[idx];
+        const comment = importResult?.merchant ? `${importResult.merchant}: ${item.name}` : item.name;
+        if (acc?.isFamily) {
+          const catName = cats.find(c => c.id === categoryId)?.name ?? 'Прочее';
+          await api.post(`/api/accounts/${acc.id}/tx`, {
+            type: importResult?.type ?? type,
+            amount: item.amount,
+            date,
+            comment,
+            categoryName: catName,
+          });
+        } else {
+          await api.post('/api/transactions', {
+            categoryId,
+            type: importResult?.type ?? type,
+            amount: item.amount,
+            date,
+            comment,
+            accountId,
+          });
+        }
+      }
+      onSaved();
+      onClose();
+    } catch (ex: any) {
+      setErr(ex.message || 'Не удалось сохранить позиции чека.');
+    } finally {
+      setBusy(false);
     }
   };
 
@@ -1124,6 +1283,12 @@ export function QuickTxModal({ categories, accounts = [], onClose, onSaved, pres
     setAmount(String(cur + n));
   };
 
+  const selectedSum = (importResult?.items ?? [])
+    .filter((_, idx) => selectedItems.includes(idx))
+    .reduce((sum, item) => sum + item.amount, 0);
+  const itemsMatch = importResult?.amount == null
+    || Math.abs(selectedSum - importResult.amount) <= 1;
+
   return (
     <div className="sk-modal-back" onClick={onClose}>
       <form className="sk-modal" onClick={e => e.stopPropagation()} onSubmit={submit} role="dialog" aria-modal="true" aria-label="Новая операция">
@@ -1200,6 +1365,13 @@ export function QuickTxModal({ categories, accounts = [], onClose, onSaved, pres
           >
             <Icon name="pencil" size={14} /> Вставить текст
           </button>
+          <button
+            type="button"
+            className={`btn ghost small ${qrOpen ? 'active' : ''}`}
+            onClick={() => { setQrOpen(v => !v); setQrError(''); }}
+          >
+            <Icon name="camera" size={14} /> QR чека
+          </button>
           {previewUrl && <img className="receipt-thumb" src={previewUrl} alt="Загруженный чек" />}
         </div>
 
@@ -1234,10 +1406,124 @@ export function QuickTxModal({ categories, accounts = [], onClose, onSaved, pres
               <span>Категория: <b>{importResult.categoryName ?? '—'}</b></span>
               {importResult.merchant && <span>Продавец: <b>{importResult.merchant}</b></span>}
             </div>
+            {!!importResult.items?.length && (
+              <div className="receipt-items">
+                <div className="receipt-items-head">
+                  <span>Позиции чека · выбрано {selectedItems.length}</span>
+                  <button
+                    type="button"
+                    className="btn ghost small"
+                    onClick={() => setSelectedItems(
+                      selectedItems.length === importResult.items!.length
+                        ? []
+                        : importResult.items!.map((_, i) => i))}
+                  >
+                    {selectedItems.length === importResult.items!.length ? 'Снять все' : 'Выбрать все'}
+                  </button>
+                </div>
+                {importResult.items.map((item, idx) => (
+                  <label className="receipt-item" key={`${idx}-${item.name}`}>
+                    <input
+                      type="checkbox"
+                      checked={selectedItems.includes(idx)}
+                      onChange={() => toggleItem(idx)}
+                    />
+                    <span className="receipt-item-name">{item.name}</span>
+                    <span className="receipt-item-meta">
+                      {item.quantity != null ? `${item.quantity} × ` : ''}
+                      {item.price != null ? fmt(item.price) : ''}
+                    </span>
+                    <b className="receipt-item-amount">{fmt(item.amount)}</b>
+                  </label>
+                ))}
+                <div className="receipt-items-foot">
+                  <span>Выбрано на <b>{fmt(selectedSum)}</b></span>
+                  {!itemsMatch && (
+                    <span className="receipt-warning">
+                      Сумма позиций отличается от суммы чека более чем на 1 ₽
+                    </span>
+                  )}
+                  <button
+                    type="button"
+                    className="btn secondary small"
+                    disabled={busy || selectedItems.length === 0 || !itemsMatch}
+                    onClick={saveItems}
+                  >
+                    Сохранить {selectedItems.length}{' '}
+                    {plural(selectedItems.length, 'позицию', 'позиции', 'позиций')}
+                  </button>
+                </div>
+              </div>
+            )}
             <details>
               <summary>Распознанный текст</summary>
               <pre>{importResult.rawText}</pre>
             </details>
+          </div>
+        )}
+
+        {qrOpen && (
+          <div className="receipt-manual receipt-qr">
+            <div className="receipt-qr-actions">
+              <button
+                type="button"
+                className="btn secondary small"
+                disabled={importing}
+                onClick={cameraOpen ? stopCamera : startCamera}
+              >
+                <Icon name="camera" size={14} /> {cameraOpen ? 'Остановить камеру' : 'Сканировать камерой'}
+              </button>
+              <button
+                type="button"
+                className="btn ghost small"
+                disabled={importing}
+                onClick={() => qrFileRef.current?.click()}
+              >
+                <Icon name="image" size={14} /> QR из файла
+              </button>
+              <input
+                ref={qrFileRef}
+                type="file"
+                accept="image/*"
+                hidden
+                onChange={async e => {
+                  const file = e.target.files?.[0];
+                  if (!file) return;
+                  setQrError('');
+                  const decoded = await decodeQrFile(file);
+                  if (!decoded) {
+                    setQrError('Не удалось найти QR на изображении. Вставьте строку вручную.');
+                  } else {
+                    setQrText(decoded);
+                    void parseQrText(decoded);
+                  }
+                  if (qrFileRef.current) qrFileRef.current.value = '';
+                }}
+              />
+            </div>
+            <video
+              ref={videoRef}
+              className="receipt-qr-video"
+              style={{ display: cameraOpen ? 'block' : 'none' }}
+              playsInline
+              muted
+            />
+            {qrError && <div className="receipt-qr-error">{qrError}</div>}
+            <label>Или вставьте строку QR-кода
+              <textarea
+                value={qrText}
+                onChange={e => setQrText(e.target.value)}
+                placeholder={'t=250.00&s=250.00&fn=9960440300813376&i=42&fp=1234'}
+              />
+            </label>
+            <button
+              type="button"
+              className="btn secondary small"
+              disabled={importing || qrText.trim().length < 5}
+              onClick={() => parseQrText(qrText)}
+            >
+              <Icon name="sparkles" size={14} /> {importing ? 'Разбираем…' : 'Разобрать QR'}
+            </button>
           </div>
         )}
 

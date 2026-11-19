@@ -282,7 +282,7 @@ function TopBar({ route, theme, onAdd, onMenu, user, hasUpdate, onLogout, onGoSe
 // ---------- Приложение ----------
 export default function App() {
   const auth = useAuth();
-  const theme = useTheme();
+  const theme = useTheme(auth.user?.theme);
   const [route, setRoute] = useHashRoute();
   const [showQuick, setShowQuick] = useState(false);
   const [presetAccountId, setPresetAccountId] = useState<number | null>(null);
@@ -458,6 +458,7 @@ function Settings({ auth, categories, theme, onReload, update, updateBusy, updat
         error={updateError}
         onCheck={onCheckUpdates}
       />
+      {auth.user?.isMaster && <AdminUsersCard />}
       <div className="settings-grid">
         <div className="settings-col">
           <ProfileCard auth={auth} />
@@ -481,13 +482,34 @@ function ExportCard() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [saved, setSaved] = useState(false);
+  // B4: параметры экспорта запоминаются между посещениями настроек.
+  const readParam = (key: string, fallback: string): string => {
+    try { return localStorage.getItem(key) ?? fallback; } catch { return fallback; }
+  };
+  const writeParam = (key: string, value: string) => {
+    try { localStorage.setItem(key, value); } catch { /* приватный режим */ }
+  };
+  const [from, setFrom] = useState(() => readParam('sk_export_from', ''));
+  const [to, setTo] = useState(() => readParam('sk_export_to', ''));
+  const [anonymize, setAnonymize] = useState(() => readParam('sk_export_anonymize', '0') === '1');
+  const [take, setTake] = useState(() => readParam('sk_export_take', ''));
 
   const download = async () => {
+    if (from && to && from > to) {
+      setError('Дата «С» должна быть не позже даты «По».');
+      return;
+    }
     setBusy(true);
     setError('');
     setSaved(false);
     try {
-      await api.download('/api/export/profile', 'schitayka-profile.json');
+      const params = new URLSearchParams();
+      if (from) params.set('from', from);
+      if (to) params.set('to', to);
+      if (anonymize) params.set('anonymize', 'true');
+      if (take) params.set('take', take);
+      const query = params.toString();
+      await api.download(`/api/export/profile${query ? `?${query}` : ''}`, 'schitayka-profile.json');
       setSaved(true);
       window.setTimeout(() => setSaved(false), 5000);
     } catch (e: any) {
@@ -502,7 +524,7 @@ function ExportCard() {
       <div className="card-head">
         <div>
           <h3>Данные для ИИ-анализа</h3>
-          <p className="card-sub">Полный профиль одним JSON-файлом</p>
+          <p className="card-sub">Профиль одним JSON-файлом</p>
         </div>
         <span className="badge badge-muted">JSON</span>
       </div>
@@ -515,8 +537,42 @@ function ExportCard() {
         <span><Icon name="check" size={14} /> месячные агрегаты</span>
       </div>
 
+      <div className="export-params">
+        <label>
+          <span>С</span>
+          <input type="date" value={from} onChange={e => {
+            setFrom(e.target.value); writeParam('sk_export_from', e.target.value);
+          }} />
+        </label>
+        <label>
+          <span>По</span>
+          <input type="date" value={to} onChange={e => {
+            setTo(e.target.value); writeParam('sk_export_to', e.target.value);
+          }} />
+        </label>
+        <label>
+          <span>Операций</span>
+          <select value={take} onChange={e => {
+            setTake(e.target.value); writeParam('sk_export_take', e.target.value);
+          }}>
+            <option value="">все (до 5000)</option>
+            <option value="500">500</option>
+            <option value="2000">2000</option>
+            <option value="5000">5000</option>
+          </select>
+        </label>
+        <label className="export-check">
+          <input type="checkbox" checked={anonymize} onChange={e => {
+            setAnonymize(e.target.checked); writeParam('sk_export_anonymize', e.target.checked ? '1' : '0');
+          }} />
+          <span>Обезличить</span>
+        </label>
+      </div>
+
       <p className="muted export-note">
         В файл попадают только ваши данные: без пароля, JWT, кода семьи и чужих семейных счетов.
+        Период и лимит ограничивают выборку операций (не более 5000). При обезличивании имя, email,
+        комментарии и названия заменяются нейтральными значениями — суммы и даты остаются.
         Передавайте JSON только доверенному ИИ-сервису — внутри ваша финансовая история.
       </p>
 
@@ -809,6 +865,90 @@ function UpdateCard({ update, busy, error, onCheck }: {
           Проверено: {when(update.checkedAt)}
         </div>
       )}
+    </div>
+  );
+}
+
+/** Управление пользователями семьи (мастер-профиль → администратор). */
+interface AdminUser {
+  id: number; email: string; name: string; role: string;
+  hasPassword: boolean; isFamily: boolean; createdAt: string;
+}
+
+function AdminUsersCard() {
+  const dlg = useDialog();
+  const [rows, setRows] = useState<AdminUser[]>([]);
+  const [email, setEmail] = useState('');
+  const [name, setName] = useState('');
+  const [password, setPassword] = useState('');
+  const [error, setError] = useState('');
+  const [busy, setBusy] = useState(false);
+
+  const reload = () => api.get<AdminUser[]>('/api/admin/users')
+    .then(setRows).catch(e => setError(e.message));
+  useEffect(() => { reload(); }, []);
+
+  const create = async (e: React.FormEvent) => {
+    e.preventDefault(); setError(''); setBusy(true);
+    try {
+      await api.post('/api/admin/users', { email, name, password });
+      setEmail(''); setName(''); setPassword('');
+      await dlg.alert('Пользователь создан и добавлен в семью.');
+      reload();
+    } catch (err: any) { setError(err.message); } finally { setBusy(false); }
+  };
+
+  const reset = async (u: AdminUser) => {
+    const next = await dlg.prompt(`Новый пароль для ${u.email} (не короче 8 символов)`, '', 'Сброс пароля');
+    if (!next) return;
+    if (next.length < 8) { await dlg.alert('Пароль должен быть не короче 8 символов'); return; }
+    try {
+      await api.post(`/api/admin/users/${u.id}/reset-password`, { password: next });
+      await dlg.alert('Пароль сброшен. Сессии пользователя отключены.');
+      reload();
+    } catch (err: any) { setError(err.message); }
+  };
+
+  return (
+    <div className="card">
+      <div className="card-head">
+        <div>
+          <h3>Пользователи семьи</h3>
+          <p className="card-sub">Администратор создаёт записи и сбрасывает пароли</p>
+        </div>
+        <span className="badge badge-muted">{rows.length}</span>
+      </div>
+
+      <div className="admin-users">
+        {rows.map(u => (
+          <div key={u.id} className="admin-user-row">
+            <span className="member-avatar">{initials(u.name)}</span>
+            <span className="admin-user-info">
+              <b>{u.name}</b>
+              <span>{u.email}{u.isFamily ? ' · семья' : ''}</span>
+            </span>
+            <span className="badge badge-muted">{u.role === 'Master' ? 'Администратор' : 'Участник'}</span>
+            <button className="btn small secondary" type="button" onClick={() => reset(u)}>
+              Сбросить пароль
+            </button>
+          </div>
+        ))}
+        {rows.length === 0 && <div className="muted">Пользователей пока нет.</div>}
+      </div>
+
+      <form onSubmit={create} style={{ marginTop: 14, borderTop: '1px solid var(--border)', paddingTop: 14 }}>
+        <h4>Добавить пользователя</h4>
+        <label>Email<input type="email" value={email} onChange={e => setEmail(e.target.value)} required /></label>
+        <label>Имя<input value={name} onChange={e => setName(e.target.value)} required /></label>
+        <label>Пароль<input type="password" value={password} onChange={e => setPassword(e.target.value)}
+          minLength={8} required autoComplete="new-password" /></label>
+        {error && <div className="alert alert-danger">{error}</div>}
+        <div className="action-row">
+          <button className="btn primary" type="submit" disabled={busy}>
+            <Icon name="plus" size={16} /> {busy ? 'Создаём…' : 'Создать пользователя'}
+          </button>
+        </div>
+      </form>
     </div>
   );
 }

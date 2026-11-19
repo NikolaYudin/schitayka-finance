@@ -168,6 +168,10 @@ public class AppDbContext : DbContext
         mb.Entity<CalendarEvent>()
             .HasOne(e => e.Account).WithMany().HasForeignKey(e => e.AccountId).OnDelete(DeleteBehavior.SetNull);
 
+        // Явные значения по умолчанию: новые пользователи — участники, тема — системная.
+        mb.Entity<User>().Property(u => u.Role).HasDefaultValue(UserRole.Member).HasSentinel(UserRole.Member);
+        mb.Entity<User>().Property(u => u.Theme).HasDefaultValue("system");
+
         mb.Entity<AuditLog>().HasIndex(a => new { a.UserId, a.CreatedAt });
         mb.Entity<AuditLog>()
             .HasOne(a => a.User).WithMany().HasForeignKey(a => a.UserId).OnDelete(DeleteBehavior.Cascade);
@@ -184,6 +188,13 @@ public class User
     public string? YandexId { get; set; }
     public decimal StartingBalance { get; set; }     // стартовый баланс («сколько на счетах сейчас»)
     public string? FamilyCode { get; set; }           // код семейной группы (приглашения)
+    public UserRole Role { get; set; } = UserRole.Member;
+    // Служебная запись мастера: хранит состояние первичной настройки, вход по паролю невозможен.
+    public bool IsSystemMaster { get; set; }
+    // Кто создал пользователя (мастер/администратор семьи).
+    public int? CreatedByUserId { get; set; }
+    // Тема интерфейса, синхронизируемая между устройствами (B6).
+    public string Theme { get; set; } = "system";
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
     public List<Category> Categories { get; set; } = [];
     public List<Transaction> Transactions { get; set; } = [];
@@ -193,6 +204,12 @@ public class User
 }
 
 public enum TxType { Income = 0, Expense = 1 }
+
+/// <summary>
+/// Роль пользователя. Master — администратор семьи (создаёт пользователей),
+/// Member — обычный участник. Мастер-профиль в БД — служебная запись для первичной настройки.
+/// </summary>
+public enum UserRole { Master = 0, Member = 1 }
 
 // Типы счетов: дебетовая карта, кредитная карта, наличные, вклад/копилка, прочее
 public enum AccountType { DebitCard = 0, CreditCard = 1, Cash = 2, Deposit = 3, Other = 4 }

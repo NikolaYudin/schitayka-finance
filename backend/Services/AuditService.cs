@@ -14,6 +14,7 @@ public sealed class AuditService
     public const string ExportProfile = "export.profile";
     public const string ImportReceipt = "import.receipt";
     public const string ImportReceiptText = "import.receipt.text";
+    public const string ImportReceiptQr = "import.receipt.qr";
     public const string PasswordChanged = "auth.password-changed";
     public const string PasswordFailed = "auth.password-failed";
 

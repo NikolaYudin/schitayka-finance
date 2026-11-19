@@ -1,3 +1,6 @@
+using System.Globalization;
+using System.Security.Cryptography;
+using System.Text;
 using System.Text.Encodings.Web;
 using System.Text.Json;
 using Microsoft.AspNetCore.Authorization;
@@ -28,19 +31,53 @@ public class ExportController : ControllerBase
     /// Полный JSON-профиль пользователя для анализа ИИ-агентом.
     /// Экспортируются только собственные данные: без паролей, JWT, кода семьи
     /// и чужих семейных счетов/операций.
+    /// B4: необязательные параметры from/to (yyyy-MM-dd), anonymize и take (1..5000).
     /// </summary>
     [HttpGet("profile")]
-    public async Task<IActionResult> Profile(CancellationToken ct)
+    public async Task<IActionResult> Profile(
+        [FromQuery] string? from,
+        [FromQuery] string? to,
+        [FromQuery] bool anonymize,
+        [FromQuery] int? take,
+        CancellationToken ct)
     {
         if (Uid < 0) return Unauthorized(new { error = "Требуется вход" });
+
+        // Даты необязательны; неверный формат — явная ошибка, а не молчаливое игнорирование.
+        DateOnly? fromDate = null;
+        DateOnly? toDate = null;
+        if (!string.IsNullOrWhiteSpace(from))
+        {
+            if (!DateOnly.TryParseExact(from, "yyyy-MM-dd", CultureInfo.InvariantCulture,
+                    DateTimeStyles.None, out var parsedFrom))
+                return BadRequest(new { error = "Параметр from должен быть в формате yyyy-MM-dd" });
+            fromDate = parsedFrom;
+        }
+        if (!string.IsNullOrWhiteSpace(to))
+        {
+            if (!DateOnly.TryParseExact(to, "yyyy-MM-dd", CultureInfo.InvariantCulture,
+                    DateTimeStyles.None, out var parsedTo))
+                return BadRequest(new { error = "Параметр to должен быть в формате yyyy-MM-dd" });
+            toDate = parsedTo;
+        }
+        if (fromDate is { } fd && toDate is { } td && fd > td)
+            return BadRequest(new { error = "Параметр from не может быть позже to" });
+
+        // Нет параметра => 5000 (весь экспорт по умолчанию); всё вне диапазона — кламп.
+        var effectiveTake = take is null ? 5000 : Math.Clamp(take.Value, 1, 5000);
 
         var user = await _db.Users.AsNoTracking().FirstOrDefaultAsync(u => u.Id == Uid, ct);
         if (user is null) return Unauthorized(new { error = "Пользователь не найден" });
 
-        // Экспорт остаётся личным (только мои операции), но категории могут быть
-        // общими для семьи — включаем и те, на которые ссылаются мои записи.
-        var usedCategoryIds = await _db.Transactions.AsNoTracking()
-            .Where(t => t.UserId == Uid).Select(t => t.CategoryId).Distinct().ToListAsync(ct);
+        // Фильтр дат и лимит применяются на уровне IQueryable: в память попадают только
+        // отобранные операции и категории, на которые они ссылаются.
+        var txQuery = _db.Transactions.AsNoTracking().Where(t => t.UserId == Uid);
+        if (fromDate is { } fromValue) txQuery = txQuery.Where(t => t.Date >= fromValue);
+        if (toDate is { } toValue) txQuery = txQuery.Where(t => t.Date <= toValue);
+        txQuery = txQuery.OrderBy(t => t.Date).ThenBy(t => t.Id);
+
+        var limitedTxQuery = txQuery.Take(effectiveTake);
+        var usedCategoryIds = await limitedTxQuery.Select(t => t.CategoryId).Distinct().ToListAsync(ct);
         usedCategoryIds.AddRange(await _db.BudgetLimits.AsNoTracking()
             .Where(l => l.UserId == Uid).Select(l => l.CategoryId).Distinct().ToListAsync(ct));
         var categories = await _db.Categories.AsNoTracking()
@@ -53,10 +90,8 @@ public class ExportController : ControllerBase
             .OrderBy(a => a.Type).ThenBy(a => a.Name)
             .ToListAsync(ct);
 
-        var transactions = await _db.Transactions.AsNoTracking()
-            .Where(t => t.UserId == Uid)
-            .OrderBy(t => t.Date).ThenBy(t => t.Id)
-            .ToListAsync(ct);
+        var transactions = await limitedTxQuery.ToListAsync(ct);
+        var truncated = transactions.Count == effectiveTake;
 
         var limits = await _db.BudgetLimits.AsNoTracking()
             .Where(l => l.UserId == Uid)
@@ -82,6 +117,27 @@ public class ExportController : ControllerBase
             .Where(l => l.UserId == Uid && l.ReturnedAt == null)
             .OrderBy(l => l.DueDate).ThenBy(l => l.Id)
             .ToListAsync(ct);
+
+        // B4: обезличивание. Объекты загружены AsNoTracking — правим копии в памяти,
+        // БД не затрагивается. Суммы, даты, типы и числовые id связей остаются прежними.
+        object userIdValue = anonymize ? StableUserPseudonym(Uid) : user.Id;
+        if (anonymize)
+        {
+            user.Name = "Пользователь";
+            user.Email = "anonymous@example.invalid";
+
+            foreach (var account in accounts) account.Name = $"Счёт {account.Id}";
+            foreach (var category in categories) category.Name = $"Категория {category.Id}";
+            foreach (var tx in transactions) tx.Comment = "";
+            foreach (var goal in goals) goal.Name = $"Цель {goal.Id}";
+            foreach (var rule in rules)
+            {
+                rule.Name = $"Правило {rule.Id}";
+                rule.CommentContains = null;
+            }
+            foreach (var alert in alerts) alert.Message = "Оповещение";
+            foreach (var loan in loans) loan.Comment = "";
+        }
 
         var familyMembersCount = string.IsNullOrEmpty(user.FamilyCode)
             ? 1
@@ -248,12 +304,21 @@ public class ExportController : ControllerBase
         {
             meta = new
             {
-                schemaVersion = 1,
+                schemaVersion = 2,
                 exportedAt = DateTime.UtcNow.ToString("yyyy-MM-ddTHH:mm:ssZ"),
                 application = "СчитайКа",
                 scope = "personal",
                 currency = "RUB",
                 description = "Полный профиль пользователя для анализа ИИ-агентом: счета, операции, категории, лимиты, цели, правила и агрегаты.",
+                // B4: параметры запроса и признак усечения выборки.
+                exportParams = new
+                {
+                    from = fromDate?.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture),
+                    to = toDate?.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture),
+                    anonymize,
+                    take = effectiveTake,
+                    truncated,
+                },
             },
             application = new
             {
@@ -264,7 +329,7 @@ public class ExportController : ControllerBase
             },
             user = new
             {
-                user.Id,
+                id = userIdValue,
                 user.Name,
                 user.Email,
                 user.StartingBalance,
@@ -425,8 +490,8 @@ public class ExportController : ControllerBase
                 .Select(p => new
                 {
                     p.Id,
-                    p.Name,
-                    bankName = p.Bank.Name,
+                    name = anonymize ? "—" : p.Name,
+                    bankName = anonymize ? "—" : p.Bank.Name,
                     product = (int)p.Product,
                     strategy = (int)p.Strategy,
                     p.Currency,
@@ -434,8 +499,8 @@ public class ExportController : ControllerBase
                     holdings = p.Holdings.Select(h => new
                     {
                         h.Id,
-                        h.Name,
-                        h.Ticker,
+                        name = anonymize ? "—" : h.Name,
+                        ticker = anonymize ? "" : h.Ticker,
                         assetType = (int)h.AssetType,
                         h.Quantity,
                         h.AvgPrice,
@@ -446,7 +511,7 @@ public class ExportController : ControllerBase
                             : (h.CurrentPrice > 0 ? h.CurrentPrice : h.AvgPrice)), 2),
                     }),
                 })
-                .ToListAsync(),
+                .ToListAsync(ct),
         };
 
         var json = JsonSerializer.SerializeToUtf8Bytes(payload, new JsonSerializerOptions
@@ -458,9 +523,20 @@ public class ExportController : ControllerBase
 
         Response.Headers["Cache-Control"] = "no-store";
         var fileName = $"schitayka-profile-{DateTime.Now:yyyyMMdd-HHmmss}.json";
-        await _audit.LogAsync(Uid, AuditService.ExportProfile, $"файл {fileName}, {json.Length} байт",
-            HttpContext, ct);
+        // В аудит — только параметры запроса и признак обезличивания, без персональных значений.
+        var auditDetails = $"файл {fileName}, {json.Length} байт; "
+            + $"from={fromDate?.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture) ?? "все"}, "
+            + $"to={toDate?.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture) ?? "все"}, "
+            + $"take={effectiveTake}, anonymize={anonymize}, truncated={truncated}";
+        await _audit.LogAsync(Uid, AuditService.ExportProfile, auditDetails, HttpContext, ct);
         return File(json, "application/json; charset=utf-8", fileName);
+    }
+
+    /// <summary>Стабильный псевдоним пользователя для обезличенного экспорта.</summary>
+    private static string StableUserPseudonym(int uid)
+    {
+        var hash = SHA256.HashData(Encoding.UTF8.GetBytes($"schitayka-export-user:{uid}"));
+        return "user-" + Convert.ToHexString(hash)[..12].ToLowerInvariant();
     }
 
     private static string TxTypeKey(TxType type) => type == TxType.Income ? "income" : "expense";

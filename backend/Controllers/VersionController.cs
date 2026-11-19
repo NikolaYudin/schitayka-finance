@@ -21,12 +21,15 @@ public class VersionController : ControllerBase
         _db = db;
     }
 
-    /// <summary>Администратор экземпляра: e-mail из списка или первый зарегистрированный пользователь.</summary>
+    /// <summary>
+    /// Администратор экземпляра: роль Master или e-mail из списка SelfUpdate:AdminEmails.
+    /// Неявное правило «первый пользователь = админ» убрано: права теперь явные.
+    /// </summary>
     private async Task<bool> IsAdminAsync(int uid, string? email)
     {
         if (_selfUpdate.IsAdminByEmail(email)) return true;
-        var firstId = await _db.Users.OrderBy(u => u.Id).Select(u => (int?)u.Id).FirstOrDefaultAsync();
-        return firstId is int id && id == uid;
+        return await _db.Users.AnyAsync(u => u.Id == uid && u.Role == SchitayKa.Api.Data.UserRole.Master
+            && !u.IsSystemMaster);
     }
 
     /// <summary>Текущая версия сборки без обращения к GitHub.</summary>

@@ -190,7 +190,7 @@ export function AccountsPage({ onChanged }: { onChanged?: () => void }) {
             const isDepositCard = a.type === 3;
             return (
             <div
-              className={`account-card ${a.isArchived ? 'is-archived' : ''} ${isDepositCard && !bank ? 'deposit-style' : ''}`}
+              className={`account-card account-card--hybrid ${a.isArchived ? 'is-archived' : ''} ${isDepositCard && !bank ? 'deposit-style' : ''}`}
               key={a.id}
               style={{ '--acc': isDepositCard && !bank ? '#f5c400' : a.color } as CSSProperties}
             >
@@ -214,6 +214,12 @@ export function AccountsPage({ onChanged }: { onChanged?: () => void }) {
                     {a.bankName && <div className="account-type">{a.bankName}</div>}
                   </div>
                 </div>
+                {isDepositCard && a.interest && (
+                  <span className="account-ring"
+                    style={{ '--ring': `${Math.min(100, Math.max(6, a.interest.interestRate * 5))}%` } as CSSProperties}>
+                    <span>{fmt(a.interest.interestYearly)}</span>
+                  </span>
+                )}
                 {showOwnerBadge && <span className="badge badge-muted">{a.ownerName || 'участник'}</span>}
               </div>
 

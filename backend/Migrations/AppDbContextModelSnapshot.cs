@@ -973,12 +973,18 @@ namespace SchitayKa.Api.Migrations
                     b.Property<DateTime>("CreatedAt")
                         .HasColumnType("TEXT");
 
+                    b.Property<int?>("CreatedByUserId")
+                        .HasColumnType("INTEGER");
+
                     b.Property<string>("Email")
                         .IsRequired()
                         .HasColumnType("TEXT");
 
                     b.Property<string>("FamilyCode")
                         .HasColumnType("TEXT");
+
+                    b.Property<bool>("IsSystemMaster")
+                        .HasColumnType("INTEGER");
 
                     b.Property<string>("Name")
                         .IsRequired()
@@ -991,8 +997,20 @@ namespace SchitayKa.Api.Migrations
                     b.Property<int>("PasswordVersion")
                         .HasColumnType("INTEGER");
 
+                    b.Property<int>("Role")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("INTEGER")
+                        .HasDefaultValue(1)
+                        .HasSentinel(1);
+
                     b.Property<decimal>("StartingBalance")
                         .HasColumnType("TEXT");
+
+                    b.Property<string>("Theme")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("TEXT")
+                        .HasDefaultValue("system");
 
                     b.Property<string>("YandexId")
                         .HasColumnType("TEXT");

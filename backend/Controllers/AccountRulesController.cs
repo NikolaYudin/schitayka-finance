@@ -13,7 +13,9 @@ public class AccountRulesController : ControllerBase
 {
     private readonly AppDbContext _db;
     private readonly AccountRulesService _rules;
-    public AccountRulesController(AppDbContext db, AccountRulesService rules) { _db = db; _rules = rules; }
+    private readonly AuditService? _audit;
+    public AccountRulesController(AppDbContext db, AccountRulesService rules, AuditService? audit = null)
+    { _db = db; _rules = rules; _audit = audit; }
     private int Uid => UserAccess.UidOf(User);
 
     public record RuleDto(
@@ -135,53 +137,37 @@ public class AccountRulesController : ControllerBase
     }
 
     // Применить автоправила к существующим операциям (по умолчанию — только без счёта).
+    // B13: фильтры по датам/счёту/категории и явное подтверждение (dryRun=false).
     [HttpPost("apply")]
-    public async Task<IActionResult> Apply([FromQuery] bool dryRun = true, [FromQuery] bool overwrite = false)
+    public async Task<IActionResult> Apply(
+        [FromQuery] bool dryRun = true,
+        [FromQuery] bool overwrite = false,
+        [FromQuery] DateOnly? from = null,
+        [FromQuery] DateOnly? to = null,
+        [FromQuery] int? accountId = null,
+        [FromQuery] int? categoryId = null)
     {
         if (Uid < 0) return Unauthorized(new { error = "Требуется вход" });
+        if (from is { } f && to is { } t && f > t)
+            return BadRequest(new { error = "Начальная дата позже конечной" });
 
-        var rules = await _db.AccountRules
-            .Where(r => r.UserId == Uid && r.Kind == AccountRuleKind.AutoAssign && r.IsEnabled)
-            .OrderBy(r => r.Priority).ThenBy(r => r.Id).ToListAsync();
-        if (rules.Count == 0) return Ok(new { dryRun, matched = 0, samples = Array.Empty<object>() });
+        var options = new AccountRulesService.ApplyOptions(
+            dryRun, overwrite, from, to, accountId, categoryId);
+        var result = await _rules.ApplyToExistingAsync(Uid, options);
 
-        var activeAccountIds = (await _db.Accounts
-            .Where(a => a.UserId == Uid && !a.IsArchived)
-            .Select(a => a.Id).ToListAsync()).ToHashSet();
-        var validCategoryIds = (await (await CategoryService.AccessibleAsync(_db, Uid))
-            .Select(c => c.Id).ToListAsync()).ToHashSet();
+        if (!dryRun && result.Matched > 0 && _audit is not null)
+            await _audit.LogAsync(Uid, "rules.apply-existing",
+                $"обработано {result.Matched}, счетов {result.ChangedAccounts}, категорий {result.ChangedCategories}",
+                HttpContext);
 
-        var txQuery = _db.Transactions.Where(t => t.UserId == Uid);
-        if (!overwrite) txQuery = txQuery.Where(t => t.AccountId == null);
-        var txs = await txQuery.OrderBy(t => t.Date).ThenBy(t => t.Id).ToListAsync();
-
-        var matched = 0;
-        var samples = new List<object>();
-        foreach (var tx in txs)
+        return Ok(new
         {
-            var result = AccountRulesService.MatchRule(rules, activeAccountIds,
-                new AccountRulesService.RuleCandidate(tx.Type, tx.Amount, tx.Comment, tx.CategoryId));
-            if (result is null) continue;
-            matched++;
-
-            if (samples.Count < 20)
-                samples.Add(new { tx.Id, tx.Date, tx.Comment, ruleName = result.RuleName,
-                    accountId = result.AccountId, categoryId = result.SetCategoryId });
-
-            if (dryRun) continue;
-            if (result.AccountId is { } newAccount) tx.AccountId = newAccount;
-            if (result.SetCategoryId is { } newCategory && validCategoryIds.Contains(newCategory))
-                tx.CategoryId = newCategory;
-        }
-
-        if (!dryRun && matched > 0)
-        {
-            await _db.SaveChangesAsync();
-            await RecalcAllAccountsAsync(Uid);
-            await _rules.EvaluateAllAsync(Uid);
-        }
-
-        return Ok(new { dryRun, matched, samples });
+            dryRun,
+            matched = result.Matched,
+            changedAccounts = result.ChangedAccounts,
+            changedCategories = result.ChangedCategories,
+            samples = result.Samples,
+        });
     }
 
     private async Task<string?> ValidateAsync(RuleDto dto, int? ruleId = null)
@@ -248,11 +234,6 @@ public class AccountRulesController : ControllerBase
         rule.NotifyInApp = dto.NotifyInApp;
     }
 
-    // Пересчёт балансов: bulk-apply меняет привязку операций к счетам.
-    // Формула — в AccountBalanceService, чтобы не дублировать её в контроллерах.
-    private Task RecalcAllAccountsAsync(int uid) =>
-        SchitayKa.Api.Services.AccountBalanceService.RecalcAsync(
-            _db, _db.Accounts.Where(a => a.UserId == uid));
 }
 
 [ApiController]

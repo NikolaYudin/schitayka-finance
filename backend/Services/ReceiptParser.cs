@@ -7,6 +7,12 @@ namespace SchitayKa.Api.Services;
 /// <summary>Минимальная ссылка на категорию для подсказки при импорте.</summary>
 public sealed record CategoryRef(int Id, string Name, TxType Type);
 
+/// <summary>
+/// Отдельная позиция чека (B3). Количество и цена могут отсутствовать —
+/// тогда известна только итоговая сумма строки <paramref name="Amount"/>.
+/// </summary>
+public sealed record ReceiptItem(string Name, decimal? Quantity, decimal? Price, decimal Amount);
+
 public sealed record ReceiptParseResult(
     decimal? Amount,
     string Date,
@@ -19,7 +25,10 @@ public sealed record ReceiptParseResult(
     double Confidence,
     IReadOnlyList<string> Warnings,
     IReadOnlyList<string> Lines,
-    string RawText);
+    string RawText,
+    // Новые поля необязательны: старые клиенты продолжают получать прежний JSON.
+    IReadOnlyList<ReceiptItem>? Items = null,
+    ReceiptQrInfo? Qr = null);
 
 /// <summary>
 /// Разбирает текст чека/банковского скриншота: сумму, дату, тип, продавца и категорию.
@@ -39,6 +48,16 @@ public static class ReceiptParser
         @"\b(\d{1,2})[./](\d{1,2})[./](\d{2,4})\b", RegexOptions.Compiled);
 
     private static readonly Regex LongDigitsRx = new(@"\d{10,}", RegexOptions.Compiled);
+
+    // Позиции чека: «2 x 89,90», «2 х 89,90 = 179,80», «Молоко 2 x 89,90».
+    private static readonly Regex QtyPriceRx = new(
+        @"(?<qty>\d{1,4}(?:[.,]\d{1,2})?)\s*[xх×]\s*(?<price>\d{1,3}(?:[ \u00A0]\d{3})+(?:[.,]\d{1,2})?|\d+(?:[.,]\d{1,2})?)",
+        RegexOptions.Compiled | RegexOptions.IgnoreCase);
+
+    // Служебные строки, которые не являются позициями чека.
+    private static readonly Regex SkipItemRx = new(
+        @"^(итог|итого|сумма|ндс|налог|сдача|change|total|amount|карта|оплат|paid|кассир|смена|чек|дата|время|тел|адрес|операц|терминал|банкомат|баланс|скидк|discount|фн|фд|фиск|qr)",
+        RegexOptions.Compiled | RegexOptions.IgnoreCase);
 
     private static readonly Regex IncomeRx = new(
         @"зачислен|поступлен|перевод\s+от|пополнен|возврат\s+средств|\bincome\b|\breceived\b|\bcredit\b",
@@ -122,12 +141,19 @@ public static class ReceiptParser
         var type = IncomeRx.IsMatch(normalized) ? 0 : 1;
         var amount = ExtractAmount(lines);
         var merchant = ExtractMerchant(lines);
+        var items = ExtractItems(lines);
         var (categoryId, categoryName) = GuessCategory(normalized, categories, type);
 
         var warnings = new List<string>();
         if (amount is null) warnings.Add("Сумма не найдена — проверьте и заполните вручную.");
         if (!dateFound) warnings.Add("Дата не найдена — подставлена текущая.");
         if (categoryId is null) warnings.Add("Категория не распознана — выберите вручную.");
+        if (items.Count > 0 && amount is not null)
+        {
+            var itemsTotal = items.Sum(i => i.Amount);
+            if (Math.Abs(itemsTotal - amount.Value) > 1m)
+                warnings.Add($"Сумма позиций {itemsTotal:0.00} не совпадает с суммой чека {amount.Value:0.00} (допуск 1 ₽).");
+        }
 
         var confidence = 0.2;
         if (amount is not null) confidence += 0.4;
@@ -149,7 +175,42 @@ public static class ReceiptParser
             Confidence: confidence,
             Warnings: warnings,
             Lines: lines.Take(120).ToList(),
-            RawText: normalized.Trim().Length > 6000 ? normalized.Trim()[..6000] : normalized.Trim());
+            RawText: normalized.Trim().Length > 6000 ? normalized.Trim()[..6000] : normalized.Trim(),
+            Items: items);
+    }
+
+    /// <summary>
+    /// Построить результат импорта из локально разобранного QR-кода ФНС.
+    /// В QR нет даты, продавца и категорий — эти поля пользователь заполняет сам.
+    /// </summary>
+    public static ReceiptParseResult FromQr(ReceiptQrInfo qr, string rawText)
+    {
+        var lines = new List<string> { $"t={qr.Amount:0.00}" };
+        if (qr.PositionAmount is not null) lines.Add($"s={qr.PositionAmount:0.00}");
+        lines.Add($"fn={qr.Fn}");
+        lines.Add($"i={qr.FiscalDocument}");
+        lines.Add($"fp={qr.FiscalSign}");
+        if (qr.Shift is not null) lines.Add($"n={qr.Shift}");
+
+        return new ReceiptParseResult(
+            Amount: qr.Amount,
+            Date: DateOnly.FromDateTime(DateTime.Today).ToString("yyyy-MM-dd"),
+            Type: 1,
+            TypeName: "Расход",
+            CategoryId: null,
+            CategoryName: null,
+            Merchant: null,
+            Comment: $"Чек ФНС ФД {qr.FiscalDocument}",
+            Confidence: 0.7,
+            Warnings:
+            [
+                "Дата в QR отсутствует — подставлена текущая.",
+                "Категория из QR не определяется — выберите вручную.",
+            ],
+            Lines: lines,
+            RawText: rawText.Length > 6000 ? rawText[..6000] : rawText,
+            Items: Array.Empty<ReceiptItem>(),
+            Qr: qr);
     }
 
     private static string NormalizeLine(string line)
@@ -297,6 +358,104 @@ public static class ReceiptParser
     private static string CleanMerchant(string line)
     {
         var cleaned = line.Trim(' ', '-', '—', ':', ';', '.', ',', '"', '\'', '«', '»');
+        return cleaned.Length > 80 ? cleaned[..80] : cleaned;
+    }
+
+    /// <summary>
+    /// Эвристический разбор чека на позиции. Пропускаем служебные строки
+    /// (итог, НДС, даты, номера ФН/ФД), а также названия продавца.
+    /// </summary>
+    private static IReadOnlyList<ReceiptItem> ExtractItems(IReadOnlyList<string> lines)
+    {
+        var items = new List<ReceiptItem>();
+        string? pendingName = null;
+
+        foreach (var line in lines)
+        {
+            if (line.Length < 2 || SkipItemRx.IsMatch(line)) continue;
+            if (IsoDateRx.IsMatch(line) || DotDateRx.IsMatch(line)) continue;
+            if (LongDigitsRx.IsMatch(line)) continue; // ФН, ФД, номер карты
+            if (line.Count(char.IsLetter) < 2 && !QtyPriceRx.IsMatch(line)) continue;
+
+            // Явный вид «2 x 89,90» (название может быть в этой же или прошлой строке).
+            var qp = QtyPriceRx.Match(line);
+            if (qp.Success)
+            {
+                var qty = ParseAmount(qp.Groups["qty"].Value);
+                var price = ParseAmount(qp.Groups["price"].Value);
+                var before = line[..qp.Index].Trim(' ', '-', '.', ',', ':');
+                var after = line[(qp.Index + qp.Length)..].Trim();
+                var trailing = FirstMoney(after);
+                var total = trailing ?? (qty.HasValue && price.HasValue
+                    ? Math.Round(qty.Value * price.Value, 2)
+                    : price);
+                var name = before.Length >= 2 && before.Any(char.IsLetter) ? before : pendingName;
+                if (string.IsNullOrWhiteSpace(name)) name = $"Позиция {items.Count + 1}";
+                if (total is not null)
+                    items.Add(new ReceiptItem(CleanItemName(name), qty, price, total.Value));
+                pendingName = null;
+                continue;
+            }
+
+            // Простая строка «Хлеб 50,00» или «Хлеб 2 50,00».
+            var moneyMatches = NumberRx.Matches(line);
+            decimal? last = null;
+            Match? lastMatch = null;
+            foreach (Match match in moneyMatches)
+            {
+                var value = ParseAmount(match.Value);
+                if (value is null) continue;
+                last = value;
+                lastMatch = match;
+            }
+
+            if (last is not null && lastMatch is not null)
+            {
+                var name = line[..lastMatch.Index].Trim(' ', '-', '.', ',', ':');
+                decimal? qty = null;
+                decimal? price = null;
+
+                var beforeNumbers = NumberRx.Matches(name);
+                if (beforeNumbers.Count > 0)
+                {
+                    var lastNumber = beforeNumbers[^1];
+                    var possibleQty = ParseAmount(lastNumber.Value);
+                    name = name[..lastNumber.Index].Trim(' ', '-', '.', ',', ':');
+                    if (possibleQty is not null)
+                    {
+                        qty = possibleQty;
+                        price = last;
+                    }
+                }
+
+                if (name.Any(char.IsLetter))
+                    items.Add(new ReceiptItem(CleanItemName(name), qty, price, last.Value));
+                pendingName = null;
+                continue;
+            }
+
+            // Строка только с названием — пригодится для выражения «2 x …» на следующей строке.
+            if (line.Length <= 60 && line.Count(char.IsLetter) >= 3
+                && !LegalFormRx.IsMatch(line) && !SkipMerchantRx.IsMatch(line))
+                pendingName = CleanItemName(line);
+        }
+
+        return items;
+    }
+
+    private static decimal? FirstMoney(string text)
+    {
+        foreach (Match match in NumberRx.Matches(text))
+        {
+            var value = ParseAmount(match.Value);
+            if (value is not null) return value;
+        }
+        return null;
+    }
+
+    private static string CleanItemName(string name)
+    {
+        var cleaned = Regex.Replace(name, @"\s+", " ").Trim(' ', '-', '—', ':', ';', '.', ',', '"', '\'', '«', '»');
         return cleaned.Length > 80 ? cleaned[..80] : cleaned;
     }
 

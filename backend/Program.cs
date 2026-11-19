@@ -572,6 +572,7 @@ builder.Services.AddScoped<SchitayKa.Api.Services.DebtService>();
 builder.Services.AddScoped<SchitayKa.Api.Services.ObligationService>();
 builder.Services.AddScoped<SchitayKa.Api.Services.CalendarService>();
 builder.Services.AddScoped<SchitayKa.Api.Services.AuditService>();
+builder.Services.AddScoped<SchitayKa.Api.Services.BudgetSummaryService>();
 
 builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
     .AddJwtBearer(o =>
@@ -620,6 +621,12 @@ builder.Services.AddHttpClient("github", c => c.Timeout = TimeSpan.FromSeconds(8
 builder.Services.AddHttpClient("github-download", c => c.Timeout = TimeSpan.FromMinutes(10));
 builder.Services.AddSingleton<SchitayKa.Api.Services.UpdateChecker>();
 builder.Services.AddSingleton<SchitayKa.Api.Services.SelfUpdateService>();
+// OCR чеков (B2): по умолчанию только локальный tesseract. Удалённый vision-провайдер
+// подключается, но вызывается лишь при явном Ocr:Provider=openai и наличии ключа;
+// при ошибке фасад возвращается к локальному провайдеру.
+builder.Services.AddHttpClient("ocr-openai", c => c.Timeout = TimeSpan.FromSeconds(60));
+builder.Services.AddSingleton<SchitayKa.Api.Services.ILocalOcrProvider, SchitayKa.Api.Services.TesseractOcrProvider>();
+builder.Services.AddSingleton<SchitayKa.Api.Services.IRemoteOcrProvider, SchitayKa.Api.Services.OpenAiVisionOcrProvider>();
 builder.Services.AddSingleton<SchitayKa.Api.Services.ReceiptOcrService>();
 // Котировки инвестиций (пункт 1.0 плана): публичный MOEX ISS, кэш/backoff внутри провайдера.
 builder.Services.AddHttpClient("moex", c => c.Timeout = TimeSpan.FromSeconds(8));
@@ -706,7 +713,7 @@ using (var scope = app.Services.CreateScope())
             // Демо-аккаунта нет — создаём только его, НЕ удаляя других пользователей.
             // Полный reseed доступен лишь через SCHITAYKA_RESEED_DEMO=true (см. выше).
             string Hash(string pw) => SchitayKa.Api.Controllers.AuthController.HashPassword(pw);
-            var demo = new User { Email = "demo@schitayka.ru", Name = "Демо-пользователь", PasswordHash = Hash("demo123"), StartingBalance = 45000 };
+            var demo = new User { Email = "demo@schitayka.ru", Name = "Демо-пользователь", PasswordHash = Hash("demo123"), StartingBalance = 45000, Role = UserRole.Master };
             db.Users.Add(demo);
             await db.SaveChangesAsync(); // фиксируем Id пользователя
 

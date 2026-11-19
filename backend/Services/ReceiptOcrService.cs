@@ -1,15 +1,13 @@
-using System.ComponentModel;
-using System.Diagnostics;
-using System.Text;
-
 namespace SchitayKa.Api.Services;
 
+/// <summary>Публичный контракт результата OCR (используется контроллером и UI).</summary>
 public sealed record OcrResult(bool Ok, string? Text, string? Error, int StatusCode);
 
 /// <summary>
-/// OCR через локальный tesseract CLI. В Docker-образе tesseract-ocr + rus/eng
-/// устанавливаются заранее; при отсутствии бинарника возвращается понятная ошибка,
-/// а пользователь может разобрать текст вручную.
+/// Фасад распознавания чеков. Выбирает провайдера по настройке <c>Ocr:Provider</c>:
+/// по умолчанию работает только локальный tesseract. Удалённый OpenAI-провайдер
+/// вызывается, только если провайдер явно выбран И задан ключ; при любой ошибке
+/// изображение повторно подаётся локальному провайдеру (fallback).
 /// </summary>
 public sealed class ReceiptOcrService
 {
@@ -19,96 +17,62 @@ public sealed class ReceiptOcrService
     };
 
     private readonly IConfiguration _cfg;
+    private readonly ILocalOcrProvider _local;
+    private readonly IRemoteOcrProvider _remote;
+    private readonly ILogger<ReceiptOcrService> _log;
 
-    public ReceiptOcrService(IConfiguration cfg) => _cfg = cfg;
+    public ReceiptOcrService(
+        IConfiguration cfg,
+        ILocalOcrProvider local,
+        IRemoteOcrProvider remote,
+        ILogger<ReceiptOcrService> log)
+    {
+        _cfg = cfg;
+        _local = local;
+        _remote = remote;
+        _log = log;
+    }
+
+    /// <summary>Имя провайдера, который будет вызван первым (для диагностики).</summary>
+    public string ActiveProviderName => UseRemote ? _remote.Name : _local.Name;
+
+    private bool UseRemote =>
+        string.Equals(_cfg["Ocr:Provider"], "openai", StringComparison.OrdinalIgnoreCase)
+        && !string.IsNullOrWhiteSpace(_cfg["Ocr:OpenAi:ApiKey"]);
 
     public async Task<OcrResult> ExtractAsync(
-        Stream stream, string fileName, CancellationToken ct)
+        Stream stream, string? fileName, CancellationToken ct = default)
     {
-        var ext = Path.GetExtension(fileName ?? "");
+        var safeName = fileName ?? "";
+        var ext = Path.GetExtension(safeName);
         if (!AllowedExtensions.Contains(ext))
             return new OcrResult(false, null,
                 "Поддерживаются изображения JPG, PNG, WebP, BMP или TIFF.", 415);
 
-        var tempFile = Path.Combine(Path.GetTempPath(), $"schitayka-ocr-{Guid.NewGuid():N}{ext.ToLowerInvariant()}");
-        try
-        {
-            await using (var file = File.Create(tempFile))
-                await stream.CopyToAsync(file, ct);
+        if (!UseRemote)
+            return ToResult(await _local.ExtractAsync(stream, safeName, ct));
 
-            var tesseract = _cfg["Ocr:TesseractPath"];
-            if (string.IsNullOrWhiteSpace(tesseract)) tesseract = "tesseract";
-            var languages = _cfg["Ocr:Languages"];
-            if (string.IsNullOrWhiteSpace(languages)) languages = "rus+eng";
-            var timeoutSeconds = _cfg.GetValue<int?>("Ocr:TimeoutSeconds") ?? 30;
+        // Удалённый провайдер может не сработать — буферизуем изображение,
+        // чтобы при fallback отдать те же байты локальному tesseract.
+        using var buffer = new MemoryStream();
+        await stream.CopyToAsync(buffer, ct);
+        buffer.Position = 0;
 
-            var psi = new ProcessStartInfo
-            {
-                FileName = tesseract,
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-                UseShellExecute = false,
-                CreateNoWindow = true,
-                StandardOutputEncoding = Encoding.UTF8,
-                StandardErrorEncoding = Encoding.UTF8,
-            };
-            psi.ArgumentList.Add(tempFile);
-            psi.ArgumentList.Add("stdout");
-            psi.ArgumentList.Add("-l");
-            psi.ArgumentList.Add(languages);
-            psi.ArgumentList.Add("--psm");
-            psi.ArgumentList.Add("6");
+        var remote = await _remote.ExtractAsync(buffer, safeName, ct);
+        if (remote.Ok)
+            return ToResult(remote);
 
-            using var process = new Process { StartInfo = psi };
-            try
-            {
-                process.Start();
-            }
-            catch (Win32Exception)
-            {
-                return new OcrResult(false, null,
-                    "OCR не настроен на сервере: не найден tesseract. Можно вставить текст чека вручную.", 503);
-            }
+        _log.LogWarning(
+            "OCR-провайдер {Remote} не сработал ({Error}). Переход на локальный {Local}.",
+            _remote.Name, remote.Error, _local.Name);
+        buffer.Position = 0;
+        var local = await _local.ExtractAsync(buffer, safeName, ct);
+        if (!local.Ok && !string.IsNullOrWhiteSpace(remote.Error))
+            return new OcrResult(false, null,
+                $"{local.Error} ({_remote.Name}: {remote.Error})", local.StatusCode);
 
-            using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
-            cts.CancelAfter(TimeSpan.FromSeconds(Math.Clamp(timeoutSeconds, 5, 120)));
-
-            var stdoutTask = process.StandardOutput.ReadToEndAsync(cts.Token);
-            var stderrTask = process.StandardError.ReadToEndAsync(cts.Token);
-
-            try
-            {
-                await process.WaitForExitAsync(cts.Token);
-            }
-            catch (OperationCanceledException)
-            {
-                try { process.Kill(entireProcessTree: true); } catch { /* already exited */ }
-                return new OcrResult(false, null,
-                    "Распознавание заняло слишком много времени. Попробуйте другой скриншот или вставьте текст вручную.", 504);
-            }
-
-            var output = await stdoutTask;
-            var error = await stderrTask;
-
-            if (process.ExitCode != 0 || string.IsNullOrWhiteSpace(output))
-            {
-                var message = string.IsNullOrWhiteSpace(error)
-                    ? "Не удалось распознать текст на изображении."
-                    : $"Не удалось распознать текст: {Trim(error)}";
-                return new OcrResult(false, null, message, 422);
-            }
-
-            return new OcrResult(true, output, null, 200);
-        }
-        finally
-        {
-            try { File.Delete(tempFile); } catch { /* ignore */ }
-        }
+        return ToResult(local);
     }
 
-    private static string Trim(string text)
-    {
-        var line = text.Trim().Split('\n').FirstOrDefault()?.Trim() ?? "";
-        return line.Length > 240 ? line[..240] + "…" : line;
-    }
+    private static OcrResult ToResult(OcrProviderResult r) => new(r.Ok, r.Text, r.Error, r.StatusCode);
 }

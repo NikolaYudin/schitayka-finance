@@ -82,6 +82,24 @@ public class ImportController : ControllerBase
         return Ok(await ParseTextAsync(text));
     }
 
+    /// <summary>
+    /// Разобрать QR-код чека ФНС локально, без обращения к ФНС (B1).
+    /// Поддерживается строка вида «t=…&amp;s=…&amp;fn=…&amp;i=…&amp;fp=…&amp;n=…».
+    /// </summary>
+    [HttpPost("receipt/qr")]
+    [EnableRateLimiting("import")]
+    public async Task<IActionResult> ReceiptQr([FromBody] TextDto dto, CancellationToken ct)
+    {
+        if (Uid < 0) return Unauthorized(new { error = "Требуется вход" });
+        var qr = ReceiptQrParser.Parse(dto.Text);
+        if (!qr.Ok || qr.Data is null)
+            return BadRequest(new { error = qr.Error ?? "Не удалось разобрать QR-код чека." });
+
+        await _audit.LogAsync(Uid, AuditService.ImportReceiptQr,
+            $"QR {dto.Text?.Length ?? 0} символов, ФД {qr.Data.FiscalDocument}", HttpContext, ct);
+        return Ok(ReceiptParser.FromQr(qr.Data, dto.Text ?? ""));
+    }
+
     private async Task<ReceiptParseResult> ParseTextAsync(string text)
     {
         var categories = await (await CategoryService.AccessibleAsync(_db, Uid))

@@ -54,6 +54,97 @@ public class AccountRulesService
     public static decimal FreeReserve(decimal balance, decimal threshold, decimal taken) =>
         Math.Max(0, Math.Min(balance, threshold) - taken);
 
+    /// <summary>Параметры ретроактивного применения правил (B13).</summary>
+    public record ApplyOptions(
+        bool DryRun = true,
+        bool Overwrite = false,
+        DateOnly? From = null,
+        DateOnly? To = null,
+        int? AccountId = null,
+        int? CategoryId = null);
+
+    /// <summary>Итог ретроактивного применения: сколько операций и что именно изменено.</summary>
+    public record ApplyResult(
+        int Matched, int ChangedAccounts, int ChangedCategories, IReadOnlyList<object> Samples);
+
+    /// <summary>
+    /// Применяет включённые правила автоподстановки к существующим операциям.
+    /// Логика вынесена из контроллера, чтобы UI, ручной запуск и будущие задачи
+    /// использовали один и тот же путь. dryRun ничего не сохраняет.
+    /// </summary>
+    public async Task<ApplyResult> ApplyToExistingAsync(
+        int userId, ApplyOptions options, CancellationToken ct = default)
+    {
+        var rules = await _db.AccountRules.AsNoTracking()
+            .Where(r => r.UserId == userId && r.Kind == AccountRuleKind.AutoAssign && r.IsEnabled)
+            .OrderBy(r => r.Priority).ThenBy(r => r.Id).ToListAsync(ct);
+        if (rules.Count == 0)
+            return new ApplyResult(0, 0, 0, Array.Empty<object>());
+
+        var activeAccountIds = (await _db.Accounts.AsNoTracking()
+            .Where(a => a.UserId == userId && !a.IsArchived)
+            .Select(a => a.Id).ToListAsync(ct)).ToHashSet();
+        var accessibleCategories = await CategoryService.AccessibleAsync(_db, userId);
+        var validCategoryIds = (await accessibleCategories
+            .Select(c => c.Id).ToListAsync(ct)).ToHashSet();
+
+        var query = _db.Transactions.Where(t => t.UserId == userId);
+        if (!options.Overwrite) query = query.Where(t => t.AccountId == null);
+        if (options.From is { } from) query = query.Where(t => t.Date >= from);
+        if (options.To is { } to) query = query.Where(t => t.Date <= to);
+        if (options.AccountId is { } accountId) query = query.Where(t => t.AccountId == accountId);
+        if (options.CategoryId is { } categoryId) query = query.Where(t => t.CategoryId == categoryId);
+
+        var txs = await query.OrderBy(t => t.Date).ThenBy(t => t.Id).ToListAsync(ct);
+
+        var matched = 0;
+        var changedAccounts = 0;
+        var changedCategories = 0;
+        var samples = new List<object>();
+
+        await using Microsoft.EntityFrameworkCore.Storage.IDbContextTransaction? transaction = options.DryRun
+            ? null
+            : await _db.Database.BeginTransactionAsync(ct);
+        foreach (var tx in txs)
+        {
+            var result = MatchRule(rules, activeAccountIds,
+                new RuleCandidate(tx.Type, tx.Amount, tx.Comment, tx.CategoryId));
+            if (result is null) continue;
+            matched++;
+
+            if (samples.Count < 20)
+                samples.Add(new
+                {
+                    tx.Id, tx.Date, tx.Comment, ruleName = result.RuleName,
+                    accountId = result.AccountId, categoryId = result.SetCategoryId,
+                });
+
+            if (options.DryRun) continue;
+            if (result.AccountId is { } newAccount && tx.AccountId != newAccount)
+            {
+                tx.AccountId = newAccount;
+                changedAccounts++;
+            }
+            if (result.SetCategoryId is { } newCategory
+                && validCategoryIds.Contains(newCategory) && tx.CategoryId != newCategory)
+            {
+                tx.CategoryId = newCategory;
+                changedCategories++;
+            }
+        }
+
+        if (!options.DryRun && matched > 0)
+        {
+            await _db.SaveChangesAsync(ct);
+            await AccountBalanceService.RecalcAsync(_db,
+                _db.Accounts.Where(a => a.UserId == userId), ct);
+            await EvaluateAllAsync(userId);
+            await transaction!.CommitAsync(ct);
+        }
+
+        return new ApplyResult(matched, changedAccounts, changedCategories, samples);
+    }
+
     // Полная проверка: минимумы, резервы, просрочки займов.
     public async Task EvaluateAllAsync(int userId)
     {

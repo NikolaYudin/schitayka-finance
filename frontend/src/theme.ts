@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { api, getToken } from './api';
 
 export type ThemeMode = 'light' | 'dark' | 'system';
 export type ResolvedTheme = 'light' | 'dark';
@@ -7,10 +8,14 @@ const STORAGE_KEY = 'sk_theme';
 const DARK_QUERY = '(prefers-color-scheme: dark)';
 const THEME_COLORS: Record<ResolvedTheme, string> = { light: '#f1f2f7', dark: '#09090b' };
 
+function isThemeMode(v: unknown): v is ThemeMode {
+  return v === 'light' || v === 'dark' || v === 'system';
+}
+
 export function getStoredTheme(): ThemeMode {
   try {
     const v = localStorage.getItem(STORAGE_KEY);
-    if (v === 'light' || v === 'dark' || v === 'system') return v;
+    if (isThemeMode(v)) return v;
   } catch { /* localStorage может быть недоступен */ }
   return 'system';
 }
@@ -30,11 +35,24 @@ export function applyTheme(mode: ThemeMode): ResolvedTheme {
   return resolved;
 }
 
-// Режим темы: light | dark | system. Выбор хранится в localStorage,
-// системный режим следит за prefers-color-scheme.
-export function useTheme() {
-  const [mode, setMode] = useState<ThemeMode>(() => getStoredTheme());
+/**
+ * Режим темы: light | dark | system.
+ * B6: localStorage остаётся офлайн-кэшем, но после загрузки профиля значение
+ * приходит с сервера; каждое изменение отправляется на сервер (best effort).
+ * Если сервер недоступен — локальный выбор продолжает работать.
+ */
+export function useTheme(serverTheme?: ThemeMode | null) {
+  const [mode, setModeState] = useState<ThemeMode>(() => getStoredTheme());
   const [resolved, setResolved] = useState<ResolvedTheme>(() => resolveTheme(getStoredTheme()));
+  const hydrated = useRef(false);
+
+  // Серверное значение применяется один раз за жизнь компонента: при логине
+  // оно переопределяет кэш этого браузера.
+  useEffect(() => {
+    if (!isThemeMode(serverTheme) || hydrated.current) return;
+    hydrated.current = true;
+    if (serverTheme !== getStoredTheme()) setModeState(serverTheme);
+  }, [serverTheme]);
 
   useEffect(() => {
     setResolved(applyTheme(mode));
@@ -49,9 +67,17 @@ export function useTheme() {
     return () => mq.removeEventListener?.('change', onChange);
   }, [mode]);
 
-  const toggle = useCallback(() => {
-    setMode(prev => (resolveTheme(prev) === 'dark' ? 'light' : 'dark'));
+  const setMode = useCallback((next: ThemeMode) => {
+    setModeState(next);
+    if (!getToken()) return; // не авторизован — только локальный кэш
+    void api.put('/api/settings/appearance', { theme: next }).catch(() => {
+      // Ошибка синхронизации не должна ломать переключение темы.
+    });
   }, []);
+
+  const toggle = useCallback(() => {
+    setMode(resolveTheme(mode) === 'dark' ? 'light' : 'dark');
+  }, [mode, setMode]);
 
   return { mode, resolved, setMode, toggle };
 }

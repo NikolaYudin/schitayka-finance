@@ -54,7 +54,8 @@ public class AuthController : ControllerBase
             claims: [new Claim(ClaimTypes.NameIdentifier, user.Id.ToString()),
                      new Claim("name", user.Name),
                      new Claim(ClaimTypes.Email, user.Email),
-                     new Claim("pwdv", user.PasswordVersion.ToString())],
+                     new Claim("pwdv", user.PasswordVersion.ToString()),
+                     new Claim(ClaimTypes.Role, user.Role.ToString())],
             expires: DateTime.UtcNow.AddDays(30),
             signingCredentials: creds);
         return new JwtSecurityTokenHandler().WriteToken(token);
@@ -70,7 +71,7 @@ public class AuthController : ControllerBase
         if (email.Length == 0 || string.IsNullOrEmpty(dto.Password))
             return Unauthorized(new { error = "Неверный email или пароль" });
         var user = await _db.Users.FirstOrDefaultAsync(u => u.Email == email);
-        if (user is null || !VerifyPassword(dto.Password, user.PasswordHash))
+        if (user is null || user.IsSystemMaster || !VerifyPassword(dto.Password, user.PasswordHash))
             return Unauthorized(new { error = "Неверный email или пароль" });
         return Ok(new { token = BuildJwt(user), user = new { user.Id, user.Email, user.Name } });
     }
@@ -92,6 +93,10 @@ public class AuthController : ControllerBase
         {
             user.Id, user.Email, user.Name, user.StartingBalance, user.FamilyCode,
             hasPassword = !string.IsNullOrEmpty(user.PasswordHash),
+            role = user.Role.ToString(),
+            isMaster = user.Role == UserRole.Master,
+            canManageUsers = user.Role == UserRole.Master,
+            theme = SchitayKa.Api.Services.ThemeSettings.Normalize(user.Theme),
         });
     }
 

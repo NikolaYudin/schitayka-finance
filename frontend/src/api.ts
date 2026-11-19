@@ -94,12 +94,24 @@ export const api = {
     window.setTimeout(() => URL.revokeObjectURL(url), 1500);
   },
   getBanks: () => request<BankInfo[]>('/api/banks'),
+
+  // ---- Импорт чека: изображение, вставленный текст, QR-строка ФНС (B1–B3) ----
+  importReceiptFile: (form: FormData) => api.upload<ReceiptParseResult>('/api/import/receipt', form),
+  importReceiptText: (text: string) => api.post<ReceiptParseResult>('/api/import/receipt/text', { text }),
+  importReceiptQr: (text: string) => api.post<ReceiptParseResult>('/api/import/receipt/qr', { text }),
 };
 
 // ---- Типы ----
 export type TxType = 0 | 1; // 0 = доход, 1 = расход
 
-export interface UserInfo { id: number; email: string; name: string; startingBalance?: number; familyCode?: string | null; hasPassword?: boolean; }
+export interface UserInfo {
+  id: number; email: string; name: string; startingBalance?: number; familyCode?: string | null;
+  hasPassword?: boolean;
+  role?: 'Master' | 'Member';
+  isMaster?: boolean;
+  canManageUsers?: boolean;
+  theme?: 'light' | 'dark' | 'system';
+}
 export interface Category {
   id: number; name: string; type: TxType; color: string;
   isSystem?: boolean; familyShared?: boolean;
@@ -460,6 +472,27 @@ export interface ReceiptParseResult {
   warnings: string[];
   lines: string[];
   rawText: string;
+  /** Новые поля необязательны — старый сервер их не возвращает. */
+  items?: ReceiptItem[] | null;
+  qr?: ReceiptQrInfo | null;
+}
+
+/** Отдельная позиция чека (B3): количество и цена могут отсутствовать. */
+export interface ReceiptItem {
+  name: string;
+  quantity?: number | null;
+  price?: number | null;
+  amount: number;
+}
+
+/** Поля локально разобранного QR-кода ФНС (B1). */
+export interface ReceiptQrInfo {
+  amount: number;
+  positionAmount?: number | null;
+  fn: string;
+  fiscalDocument: string;
+  fiscalSign: string;
+  shift?: string | null;
 }
 export interface ScopeUser { id: number; name: string; isMe: boolean; }
 export type DashboardScope = 'me' | 'family' | 'ids';
