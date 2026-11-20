@@ -20,6 +20,8 @@ else if (error is not null)
 }
 else
 {
+    <button class="fab" @onclick="GoNew">＋ Добавить операцию</button>
+
     <div class="month-picker">
         <button class="secondary" @onclick="PreviousMonth">‹</button>
         <span>@month.ToString("00") / @year</span>
@@ -35,7 +37,7 @@ else
         <div class="card-list">
             @foreach (var tx in items)
             {
-                <div class="list-card">
+                <div class="list-card" @onclick="() => Edit(tx)">
                     <div>
                         <b>@(tx.CategoryName ?? tx.Comment ?? "Операция")</b>
                         <small>@tx.Date · @(tx.AccountName ?? "")</small>
@@ -61,6 +63,10 @@ else
         if (!Auth.IsAuthenticated) { Nav.NavigateTo("/login"); return; }
         await LoadAsync();
     }
+
+    private void GoNew() => Nav.NavigateTo("/operation");
+    private void GoLogin() => Nav.NavigateTo("/login");
+    private void Edit(TransactionRow tx) => Nav.NavigateTo($"/operation/{tx.Id}?date={tx.Date}");
 
     private async Task LoadAsync()
     {

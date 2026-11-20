@@ -92,6 +92,18 @@ public sealed class ApiClient
     public Task<List<AccountRow>> GetAccountsAsync() =>
         SendAsync<List<AccountRow>>(HttpMethod.Get, "api/accounts");
 
+    public Task<List<CategoryRow>> GetCategoriesAsync() =>
+        SendAsync<List<CategoryRow>>(HttpMethod.Get, "api/categories");
+
+    public Task<TransactionCreated> CreateTransactionAsync(TransactionRequest request) =>
+        SendAsync<TransactionCreated>(HttpMethod.Post, "api/transactions", request);
+
+    public Task<TransactionCreated> UpdateTransactionAsync(int id, TransactionRequest request) =>
+        SendAsync<TransactionCreated>(HttpMethod.Put, $"api/transactions/{id}", request);
+
+    public Task DeleteTransactionAsync(int id) =>
+        SendAsync<object>(HttpMethod.Delete, $"api/transactions/{id}");
+
     public Task ChangePasswordAsync(string current, string next) =>
         SendAsync<object>(HttpMethod.Post, "api/auth/change-password",
             new { currentPassword = current, newPassword = next });

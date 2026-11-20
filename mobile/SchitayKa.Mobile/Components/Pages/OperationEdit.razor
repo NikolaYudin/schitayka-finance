@@ -1,0 +1,195 @@
+@page "/operation"
+@page "/operation/{Id:int}"
+@inject ApiClient Api
+@inject AuthState Auth
+@inject NavigationManager Nav
+
+<h2>@(Id > 0 ? "Изменить операцию" : "Новая операция")</h2>
+
+@if (!Auth.IsAuthenticated)
+{
+    <p class="hint">Перенаправляем на вход…</p>
+}
+else if (loading)
+{
+    <p class="hint">Загружаем…</p>
+}
+else if (error is not null)
+{
+    <div class="error">@error</div>
+    <button class="secondary" @onclick="GoBack">Назад</button>
+}
+else
+{
+    <div class="type-switch">
+        <button class="@(type == 1 ? "active expense" : "")" @onclick="() => SetType(1)">Расход</button>
+        <button class="@(type == 0 ? "active income" : "")" @onclick="() => SetType(0)">Доход</button>
+    </div>
+
+    <label>Сумма
+        <input inputmode="decimal" @bind="amountText" placeholder="0" />
+    </label>
+    <label>Дата
+        <input type="date" @bind="date" @bind:format="yyyy-MM-dd" />
+    </label>
+    <label>Счёт
+        <select @bind="accountId">
+            <option value="">— без счёта —</option>
+            @foreach (var acc in accounts)
+            {
+                <option value="@acc.Id">@acc.Name (@Money(acc.Balance))</option>
+            }
+        </select>
+    </label>
+    <label>Категория
+        <select @bind="categoryId">
+            @foreach (var cat in FilteredCategories)
+            {
+                <option value="@cat.Id">@cat.Name</option>
+            }
+        </select>
+    </label>
+    <label>Комментарий
+        <input @bind="comment" placeholder="Необязательно" />
+    </label>
+
+    @if (message is not null)
+    {
+        <div class="hint">@message</div>
+    }
+
+    <button class="primary" @onclick="Save" disabled="@busy">
+        @(busy ? "Сохраняем…" : "Сохранить")
+    </button>
+
+    @if (Id > 0)
+    {
+        @if (!confirmDelete)
+        {
+            <button class="danger" @onclick="AskDelete">Удалить операцию</button>
+        }
+        else
+        {
+            <div class="error">Удалить операцию безвозвратно?</div>
+            <button class="danger" @onclick="Delete">Да, удалить</button>
+            <button class="secondary" @onclick="CancelDelete">Отмена</button>
+        }
+    }
+
+    <button class="secondary spaced" @onclick="GoBack">К операциям</button>
+}
+
+@code {
+    [Parameter] public int Id { get; set; }
+
+    private List<AccountRow> accounts = [];
+    private List<CategoryRow> categories = [];
+    private int type = 1;
+    private string amountText = "";
+    private DateTime date = DateTime.Today;
+    private string? accountId;
+    private int categoryId;
+    private string? comment;
+    private bool loading = true;
+    private bool busy;
+    private bool confirmDelete;
+    private string? error;
+    private string? message;
+
+    private IEnumerable<CategoryRow> FilteredCategories => categories.Where(c => c.Type == type);
+
+    protected override async Task OnInitializedAsync()
+    {
+        if (!Auth.IsAuthenticated) { Nav.NavigateTo("/login"); return; }
+        try
+        {
+            accounts = await Api.GetAccountsAsync();
+            categories = await Api.GetCategoriesAsync();
+            if (Id > 0)
+            {
+                var datePart = Nav.Uri.Contains('?')
+                    ? Nav.Uri.Split('?').Last().Replace("date=", "") : "";
+                var d = DateOnly.TryParseExact(datePart, "yyyy-MM-dd", out var parsed)
+                    ? parsed : DateOnly.FromDateTime(DateTime.Today);
+                var list = await Api.GetTransactionsAsync(d.Month, d.Year, 500);
+                var tx = list.FirstOrDefault(t => t.Id == Id);
+                if (tx is null) { error = "Операция не найдена"; return; }
+                type = tx.Type;
+                amountText = tx.Amount.ToString("0.##", System.Globalization.CultureInfo.InvariantCulture);
+                date = DateOnly.TryParseExact(tx.Date, "yyyy-MM-dd", out var txd)
+                    ? txd.ToDateTime(TimeOnly.MinValue) : DateTime.Today;
+                accountId = tx.AccountId?.ToString();
+                comment = tx.Comment;
+                categoryId = tx.CategoryId;
+            }
+            else
+            {
+                categoryId = FilteredCategories.FirstOrDefault()?.Id ?? 0;
+            }
+        }
+        catch (ApiException ex) when (ex.StatusCode == 401)
+        {
+            Nav.NavigateTo("/login");
+            return;
+        }
+        catch (Exception ex) { error = ex.Message; }
+        finally { loading = false; }
+    }
+
+    private void SetType(int next)
+    {
+        type = next;
+        categoryId = FilteredCategories.FirstOrDefault()?.Id ?? 0;
+    }
+
+    private void AskDelete() => confirmDelete = true;
+    private void CancelDelete() => confirmDelete = false;
+    private void GoBack() => Nav.NavigateTo("/operations");
+
+    private async Task Save()
+    {
+        error = null; message = null;
+        var amount = decimal.TryParse(amountText.Replace(',', '.'),
+            System.Globalization.NumberStyles.Any,
+            System.Globalization.CultureInfo.InvariantCulture, out var parsed) ? parsed : 0;
+        if (amount <= 0) { error = "Укажите сумму больше нуля"; return; }
+        if (categoryId <= 0) { error = "Выберите категорию"; return; }
+
+        var request = new TransactionRequest
+        {
+            CategoryId = categoryId,
+            Type = type,
+            Amount = decimal.Round(amount, 2),
+            Date = date.ToString("yyyy-MM-dd"),
+            Comment = comment,
+            AccountId = int.TryParse(accountId, out var aid) ? aid : null,
+        };
+
+        busy = true;
+        try
+        {
+            if (Id > 0) await Api.UpdateTransactionAsync(Id, request);
+            else await Api.CreateTransactionAsync(request);
+            Nav.NavigateTo("/operations");
+        }
+        catch (ApiException ex) { error = ex.Message; }
+        catch (Exception ex) { error = ex.Message; }
+        finally { busy = false; }
+    }
+
+    private async Task Delete()
+    {
+        busy = true;
+        try
+        {
+            await Api.DeleteTransactionAsync(Id);
+            Nav.NavigateTo("/operations");
+        }
+        catch (ApiException ex) { error = ex.Message; }
+        catch (Exception ex) { error = ex.Message; }
+        finally { busy = false; }
+    }
+
+    private static string Money(decimal value) =>
+        $"{value.ToString("N0", new System.Globalization.CultureInfo("ru-RU"))} ₽";
+}

@@ -1,4 +1,4 @@
-﻿@page "/"
+@page "/"
 @using System.Globalization
 @inject ApiClient Api
 @inject AuthState Auth
@@ -27,6 +27,8 @@ else
             <span>Расходы: <b class="expense">@Money(summary?.MonthExpense ?? 0)</b></span>
         </div>
     </section>
+
+    <button class="fab" @onclick="GoNew">＋ Добавить операцию</button>
 
     <h3>Счета</h3>
     @if (accounts.Count == 0)
@@ -101,6 +103,9 @@ else
         }
         await LoadAsync();
     }
+
+    private void GoNew() => Nav.NavigateTo("/operation");
+    private void GoLogin() => Nav.NavigateTo("/login");
 
     private async Task LoadAsync()
     {

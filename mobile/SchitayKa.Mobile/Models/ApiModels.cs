@@ -67,6 +67,8 @@ public sealed class Recommendation
 public sealed class TransactionRow
 {
     public int Id { get; set; }
+    public int CategoryId { get; set; }
+    public int? AccountId { get; set; }
     public string Date { get; set; } = "";
     public int Type { get; set; }
     public decimal Amount { get; set; }
@@ -75,6 +77,32 @@ public sealed class TransactionRow
     public string? AccountName { get; set; }
     [JsonPropertyName("isTransfer")]
     public bool IsTransfer { get; set; }
+}
+
+public sealed class CategoryRow
+{
+    public int Id { get; set; }
+    public string Name { get; set; } = "";
+    public int Type { get; set; }          // 0 — доход, 1 — расход
+    public string Color { get; set; } = "";
+    public bool IsSystem { get; set; }
+}
+
+/// <summary>Тело запроса создания/изменения операции (TxDto бэкенда).</summary>
+public sealed class TransactionRequest
+{
+    public int CategoryId { get; set; }
+    public int Type { get; set; }
+    public decimal Amount { get; set; }
+    public string Date { get; set; } = "";   // yyyy-MM-dd
+    public string? Comment { get; set; }
+    public int? AccountId { get; set; }
+}
+
+public sealed class TransactionCreated
+{
+    public int Id { get; set; }
+    public int? AppliedRuleId { get; set; }
 }
 
 public sealed class ApiError

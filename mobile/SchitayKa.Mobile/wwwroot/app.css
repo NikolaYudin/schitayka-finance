@@ -102,3 +102,18 @@ button.danger { background: #fee2e2; color: #b91c1c; margin-top: 16px; }
 .panel h3 { margin-top: 0; }
 .month-picker { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; }
 .month-picker button { width: 44px; padding: 8px; }
+
+.fab {
+  display: block; width: 100%; margin: 14px 0; background: var(--accent); color: #fff;
+  font-weight: 750; padding: 14px;
+}
+.list-card { cursor: pointer; }
+.type-switch { display: flex; gap: 8px; margin-bottom: 14px; }
+.type-switch button { flex: 1; background: #e8ebf4; color: var(--text); }
+.type-switch button.active.income { background: var(--green); color: #fff; }
+.type-switch button.active.expense { background: var(--red); color: #fff; }
+button.spaced { margin-top: 10px; }
+select {
+  width: 100%; padding: 11px 12px; border: 1px solid var(--border);
+  border-radius: 10px; background: #fff; color: var(--text); font-size: 15px;
+}
