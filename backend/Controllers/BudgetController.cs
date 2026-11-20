@@ -3,6 +3,7 @@ using SchitayKa.Api.Data;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.DependencyInjection;
 using SchitayKa.Api.Services;
 
 namespace SchitayKa.Api.Controllers;
@@ -20,7 +21,10 @@ public class BudgetController : ControllerBase
     public BudgetController(AppDbContext db, SchitayKa.Api.Services.AccountRulesService rules)
         : this(db, rules, new BudgetSummaryService(db, rules)) { }
 
-    // Конструктор для DI: BudgetSummaryService регистрируется в Program.cs вызывающей стороной.
+    // Конструктор для DI: явно помечаем его, иначе ActivatorUtilities видит TWO
+    // подходящих конструктора (2-аргументный для тестов тоже строится из сервисов)
+    // и падает с «Multiple constructors accepting all given argument types».
+    [ActivatorUtilitiesConstructor]
     public BudgetController(AppDbContext db, SchitayKa.Api.Services.AccountRulesService rules,
         BudgetSummaryService summary)
     { _db = db; _rules = rules; _summary = summary; }
