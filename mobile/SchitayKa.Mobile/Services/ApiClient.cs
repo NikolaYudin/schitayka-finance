@@ -95,6 +95,9 @@ public sealed class ApiClient
     public Task<List<CategoryRow>> GetCategoriesAsync() =>
         SendAsync<List<CategoryRow>>(HttpMethod.Get, "api/categories");
 
+    public Task<ReceiptParseResult> ParseQrAsync(string text) =>
+        SendAsync<ReceiptParseResult>(HttpMethod.Post, "api/import/receipt/qr", new { text });
+
     public Task<TransactionCreated> CreateTransactionAsync(TransactionRequest request) =>
         SendAsync<TransactionCreated>(HttpMethod.Post, "api/transactions", request);
 

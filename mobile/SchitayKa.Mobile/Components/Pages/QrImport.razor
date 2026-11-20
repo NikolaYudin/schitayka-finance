@@ -1,0 +1,153 @@
+@page "/qr"
+@using Microsoft.JSInterop
+@using Microsoft.Maui.Media
+@inject ApiClient Api
+@inject AuthState Auth
+@inject NavigationManager Nav
+@inject IJSRuntime JS
+
+<h2>QR-код чека</h2>
+
+@if (!Auth.IsAuthenticated)
+{
+    <p class="hint">Перенаправляем на вход…</p>
+}
+else
+{
+    <p class="hint">Отсканируйте QR чека ФНС камерой или вставьте строку вручную. Разбор выполняется локально на сервере, без запроса к ФНС.</p>
+
+    <button class="primary" @onclick="ScanAsync" disabled="@busy">
+        @(busy ? "Работаем…" : "📷 Сканировать камерой")
+    </button>
+
+    <label>Или вставьте QR-строку
+        <input @bind="qrText" placeholder="t=...&fn=...&i=...&fp=..." />
+    </label>
+    <button class="secondary" @onclick="ParseTextAsync">Разобрать строку</button>
+
+    @if (error is not null)
+    {
+        <div class="error">@error</div>
+    }
+
+    @if (result is not null)
+    {
+        <section class="panel">
+            <h3>Распознанное</h3>
+            <p><b>@(result.Amount?.ToString("0.##") ?? "—") ₽</b></p>
+            <p><small>@result.Date · @(result.Merchant ?? "продавец не указан")</small></p>
+            @if (result.Qr is not null)
+            {
+                <p><small>ФН @result.Qr.Fn · ФД @result.Qr.FiscalDocument · ФП @result.Qr.FiscalSign</small></p>
+            }
+            @foreach (var w in result.Warnings.Take(3))
+            {
+                <div class="hint">⚠ @w</div>
+            }
+            @if (result.Items?.Count > 0)
+            {
+                <h4>Позиции (@result.Items.Count)</h4>
+                @foreach (var item in result.Items.Take(10))
+                {
+                    <div class="hint">@item.Name — @item.Amount ₽</div>
+                }
+            }
+        </section>
+
+        <label>Счёт
+            <select @bind="accountId">
+                <option value="">— без счёта —</option>
+                @foreach (var acc in accounts)
+                {
+                    <option value="@acc.Id">@acc.Name</option>
+                }
+            </select>
+        </label>
+        <button class="primary" @onclick="SaveAsync" disabled="@busy">Сохранить операцию</button>
+    }
+
+    <button class="secondary spaced" @onclick="GoBack">Назад</button>
+}
+
+@code {
+    private string qrText = "";
+    private ReceiptParseResult? result;
+    private List<AccountRow> accounts = [];
+    private string? accountId;
+    private string? error;
+    private bool busy;
+
+    protected override async Task OnInitializedAsync()
+    {
+        if (!Auth.IsAuthenticated) { Nav.NavigateTo("/login"); return; }
+        try { accounts = await Api.GetAccountsAsync(); }
+        catch (Exception ex) { error = ex.Message; }
+    }
+
+    private async Task ScanAsync()
+    {
+        error = null; busy = true;
+        try
+        {
+            var photo = await MediaPicker.Default.CapturePhotoAsync();
+            if (photo is null) { error = "Съёмка отменена"; return; }
+            await using var stream = await photo.OpenReadAsync();
+            using var ms = new MemoryStream();
+            await stream.CopyToAsync(ms);
+            var dataUrl = "data:image/jpeg;base64," + Convert.ToBase64String(ms.ToArray());
+            var decoded = await JS.InvokeAsync<string?>("skDecodeQr", dataUrl);
+            if (string.IsNullOrEmpty(decoded)) { error = "QR-код не распознан — попробуйте ввести строку вручную"; return; }
+            qrText = decoded!;
+            result = await Api.ParseQrAsync(decoded!);
+        }
+        catch (Exception ex) { error = ex.Message; }
+        finally { busy = false; }
+    }
+
+    private async Task ParseTextAsync()
+    {
+        error = null;
+        if (string.IsNullOrWhiteSpace(qrText)) { error = "Введите QR-строку"; return; }
+        busy = true;
+        try { result = await Api.ParseQrAsync(qrText.Trim()); }
+        catch (ApiException ex) { error = ex.Message; }
+        catch (Exception ex) { error = ex.Message; }
+        finally { busy = false; }
+    }
+
+    private async Task SaveAsync()
+    {
+        if (result?.Amount is null || result.Amount <= 0) { error = "Не удалось определить сумму"; return; }
+        var date = DateOnly.TryParseExact(result.Date, "yyyy-MM-dd", out var d)
+            ? d : DateOnly.FromDateTime(DateTime.Today);
+        var categoryId = result.CategoryId ?? 0;
+        if (categoryId <= 0)
+        {
+            var cats = await Api.GetCategoriesAsync();
+            categoryId = cats.FirstOrDefault(c => c.Type == result.Type)?.Id ?? 0;
+        }
+        if (categoryId <= 0) { error = "Не выбрана категория"; return; }
+
+        var request = new TransactionRequest
+        {
+            CategoryId = categoryId,
+            Type = result.Type,
+            Amount = decimal.Round(result.Amount.Value, 2),
+            Date = date.ToString("yyyy-MM-dd"),
+            Comment = string.IsNullOrEmpty(result.Merchant) ? result.Comment : result.Merchant,
+            AccountId = int.TryParse(accountId, out var aid) ? aid : null,
+        };
+
+        busy = true;
+        try
+        {
+            await Api.CreateTransactionAsync(request);
+            Nav.NavigateTo("/operations");
+        }
+        catch (ApiException ex) { error = ex.Message; }
+        catch (Exception ex) { error = ex.Message; }
+        finally { busy = false; }
+    }
+
+    private void GoBack() => Nav.NavigateTo("/operations");
+}

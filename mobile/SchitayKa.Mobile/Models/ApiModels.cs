@@ -105,6 +105,37 @@ public sealed class TransactionCreated
     public int? AppliedRuleId { get; set; }
 }
 
+/// <summary>Результат разбора QR-кода чека ФНС (backend ReceiptParseResult).</summary>
+public sealed class ReceiptParseResult
+{
+    public decimal? Amount { get; set; }
+    public string Date { get; set; } = "";
+    public int Type { get; set; }
+    public int? CategoryId { get; set; }
+    public string? CategoryName { get; set; }
+    public string? Merchant { get; set; }
+    public string Comment { get; set; } = "";
+    public List<string> Warnings { get; set; } = [];
+    public List<ReceiptItem>? Items { get; set; }
+    public ReceiptQrInfo? Qr { get; set; }
+}
+
+public sealed class ReceiptItem
+{
+    public string Name { get; set; } = "";
+    public decimal? Quantity { get; set; }
+    public decimal? Price { get; set; }
+    public decimal Amount { get; set; }
+}
+
+public sealed class ReceiptQrInfo
+{
+    public decimal Amount { get; set; }
+    public string Fn { get; set; } = "";
+    public string FiscalDocument { get; set; } = "";
+    public string FiscalSign { get; set; } = "";
+}
+
 public sealed class ApiError
 {
     public string? Error { get; set; }

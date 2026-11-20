@@ -3,6 +3,7 @@
 @inject ApiClient Api
 @inject AuthState Auth
 @inject NavigationManager Nav
+@inject OfflineCache Cache
 
 <h2>Операции</h2>
 
@@ -74,14 +75,16 @@ else
         try
         {
             items = await Api.GetTransactionsAsync(month, year, 100);
+            Cache.Save($"cache_tx_{year}_{month}", items);
         }
         catch (ApiException ex) when (ex.StatusCode == 401)
         {
             Nav.NavigateTo("/login");
         }
-        catch (Exception ex)
+        catch (Exception)
         {
-            error = ex.Message;
+            items = Cache.Load<List<TransactionRow>>($"cache_tx_{year}_{month}") ?? [];
+            error = "Нет связи с сервером — показан сохранённый список.";
         }
         finally { loading = false; }
     }
