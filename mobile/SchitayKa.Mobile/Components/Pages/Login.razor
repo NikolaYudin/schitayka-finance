@@ -1,0 +1,111 @@
+@page "/login"
+@inject ApiClient Api
+@inject AuthState Auth
+@inject AppSettings Settings
+@inject NavigationManager Nav
+
+<div class="login-screen">
+    <div class="login-logo">СчитайКа</div>
+    <p class="login-sub">Учёт доходов и расходов для семьи</p>
+
+    @if (setupRequired)
+    {
+        <h2>Первый запуск</h2>
+        <p class="hint">Создайте администратора — мастер-профиль передаст ему права.</p>
+        <label>Email<input type="email" @bind="adminEmail" /></label>
+        <label>Имя<input @bind="adminName" /></label>
+        <label>Пароль (не короче 8 символов)<input type="password" @bind="adminPassword" /></label>
+    }
+    else
+    {
+        <label>Email<input type="email" @bind="email" /></label>
+        <label>Пароль<input type="password" @bind="password" /></label>
+    }
+
+    @if (!string.IsNullOrEmpty(error))
+    {
+        <div class="error">@error</div>
+    }
+
+    <button class="primary" @onclick="Submit" disabled="@busy">
+        @(busy ? "Подождите…" : setupRequired ? "Создать администратора" : "Войти")
+    </button>
+
+    <details class="server-settings">
+        <summary>Адрес сервера</summary>
+        <label>URL сервера СчитайКа
+            <input @bind="serverUrl" placeholder="@AppSettings.DefaultServerUrl" />
+        </label>
+        <button class="secondary" @onclick="SaveServer">Сохранить адрес</button>
+        @if (!string.IsNullOrEmpty(serverMessage))
+        {
+            <span class="hint">@serverMessage</span>
+        }
+    </details>
+</div>
+
+@code {
+    private string email = "";
+    private string password = "";
+    private string adminEmail = "";
+    private string adminName = "";
+    private string adminPassword = "";
+    private string serverUrl = "";
+    private string? error;
+    private string? serverMessage;
+    private bool setupRequired;
+    private bool busy;
+
+    protected override async Task OnInitializedAsync()
+    {
+        serverUrl = Settings.ServerUrl;
+        try
+        {
+            setupRequired = (await Api.GetSetupStatusAsync()).Required;
+        }
+        catch (Exception ex)
+        {
+            error = $"Сервер недоступен: {ex.Message}. Проверьте адрес в настройках ниже.";
+        }
+    }
+
+    private void SaveServer()
+    {
+        Settings.ServerUrl = serverUrl;
+        serverMessage = "Адрес сохранён";
+    }
+
+    private async Task Submit()
+    {
+        error = null;
+        busy = true;
+        try
+        {
+            var result = setupRequired
+                ? await Api.CreateAdminAsync(adminEmail, adminName, adminPassword)
+                : await Api.LoginAsync(email, password);
+
+            await Auth.SetSessionAsync(result.Token, result.User);
+            try
+            {
+                var me = await Api.GetMeAsync();
+                Auth.UpdateUser(me);
+            }
+            catch { /* профиль догрузим на главной */ }
+
+            Nav.NavigateTo("/");
+        }
+        catch (ApiException ex)
+        {
+            error = ex.StatusCode == 401 ? "Неверный email или пароль" : ex.Message;
+        }
+        catch (Exception ex)
+        {
+            error = ex.Message;
+        }
+        finally
+        {
+            busy = false;
+        }
+    }
+}

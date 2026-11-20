@@ -1,0 +1,48 @@
+﻿@inherits LayoutComponentBase
+@implements IDisposable
+@inject AuthState Auth
+
+<div class="app-shell">
+    <header class="app-head">
+        <div class="brand">
+            <span class="brand-mark">С</span>
+            <span>СчитайКа</span>
+        </div>
+        @if (Auth.IsAuthenticated)
+        {
+            <span class="user-chip">@(Auth.User?.Name ?? "Пользователь")</span>
+        }
+    </header>
+
+    <main class="app-main">
+        @Body
+    </main>
+
+    @if (Auth.IsAuthenticated)
+    {
+        <nav class="app-nav">
+            <NavLink href="" Match="NavLinkMatch.All" class="nav-item">
+                <span>⌂</span><small>Главная</small>
+            </NavLink>
+            <NavLink href="operations" class="nav-item">
+                <span>☰</span><small>Операции</small>
+            </NavLink>
+            <NavLink href="settings" class="nav-item">
+                <span>⚙</span><small>Настройки</small>
+            </NavLink>
+        </nav>
+    }
+</div>
+
+@code {
+    protected override async Task OnInitializedAsync()
+    {
+        await Auth.InitializeAsync();
+        Auth.Changed += OnAuthChanged;
+        await base.OnInitializedAsync();
+    }
+
+    private void OnAuthChanged() => InvokeAsync(StateHasChanged);
+
+    public void Dispose() => Auth.Changed -= OnAuthChanged;
+}

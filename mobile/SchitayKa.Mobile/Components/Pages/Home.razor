@@ -1,0 +1,132 @@
+﻿@page "/"
+@using System.Globalization
+@inject ApiClient Api
+@inject AuthState Auth
+@inject NavigationManager Nav
+
+@if (!Auth.IsAuthenticated)
+{
+    <p class="hint">Перенаправляем на вход…</p>
+}
+else if (loading)
+{
+    <p class="hint">Загружаем данные…</p>
+}
+else if (error is not null)
+{
+    <div class="error">@error</div>
+    <button class="secondary" @onclick="LoadAsync">Повторить</button>
+}
+else
+{
+    <section class="balance-card">
+        <div class="balance-label">Общий баланс · @summary?.ScopeLabel</div>
+        <div class="balance-value">@Money(summary?.TotalBalance ?? 0)</div>
+        <div class="balance-row">
+            <span>Доходы месяца: <b class="income">@Money(summary?.MonthIncome ?? 0)</b></span>
+            <span>Расходы: <b class="expense">@Money(summary?.MonthExpense ?? 0)</b></span>
+        </div>
+    </section>
+
+    <h3>Счета</h3>
+    @if (accounts.Count == 0)
+    {
+        <p class="hint">Счетов пока нет — добавьте их в веб-версии.</p>
+    }
+    else
+    {
+        <div class="card-list">
+            @foreach (var acc in accounts)
+            {
+                <div class="list-card">
+                    <div>
+                        <b>@acc.Name</b>
+                        <small>@acc.TypeName@(string.IsNullOrEmpty(acc.BankShortName) ? "" : $" · {acc.BankShortName}")</small>
+                    </div>
+                    <span class="@(acc.Balance < 0 ? "expense" : "")">@Money(acc.Balance)</span>
+                </div>
+            }
+        </div>
+    }
+
+    <h3>Последние операции</h3>
+    @if (transactions.Count == 0)
+    {
+        <p class="hint">Операций в этом месяце нет.</p>
+    }
+    else
+    {
+        <div class="card-list">
+            @foreach (var tx in transactions)
+            {
+                <div class="list-card">
+                    <div>
+                        <b>@(tx.CategoryName ?? tx.Comment ?? "Операция")</b>
+                        <small>@tx.Date · @(tx.AccountName ?? "")</small>
+                    </div>
+                    <span class="@(tx.Type == 0 ? "income" : "expense")">
+                        @(tx.Type == 0 ? "+" : "−")@Money(tx.Amount)
+                    </span>
+                </div>
+            }
+        </div>
+    }
+
+    @if (summary?.Recommendations.Count > 0)
+    {
+        <h3>Рекомендации</h3>
+        <div class="card-list">
+            @foreach (var rec in summary!.Recommendations.Take(3))
+            {
+                <div class="list-card recommendation">@rec.Text</div>
+            }
+        </div>
+    }
+}
+
+@code {
+    private Summary? summary;
+    private List<AccountRow> accounts = [];
+    private List<TransactionRow> transactions = [];
+    private bool loading = true;
+    private string? error;
+
+    protected override async Task OnInitializedAsync()
+    {
+        if (!Auth.IsAuthenticated)
+        {
+            Nav.NavigateTo("/login");
+            loading = false;
+            return;
+        }
+        await LoadAsync();
+    }
+
+    private async Task LoadAsync()
+    {
+        loading = true;
+        error = null;
+        try
+        {
+            var today = DateTime.Today;
+            summary = await Api.GetSummaryAsync(today.Year, today.Month);
+            accounts = await Api.GetAccountsAsync();
+            transactions = await Api.GetTransactionsAsync(today.Month, today.Year, 10);
+        }
+        catch (ApiException ex) when (ex.StatusCode == 401)
+        {
+            Nav.NavigateTo("/login");
+        }
+        catch (Exception ex)
+        {
+            error = ex.Message;
+        }
+        finally
+        {
+            loading = false;
+        }
+    }
+
+    private static string Money(decimal value) =>
+        $"{value.ToString("N0", new CultureInfo("ru-RU"))} ₽";
+}

@@ -1,0 +1,97 @@
+@page "/operations"
+@using System.Globalization
+@inject ApiClient Api
+@inject AuthState Auth
+@inject NavigationManager Nav
+
+<h2>Операции</h2>
+
+@if (!Auth.IsAuthenticated)
+{
+    <p class="hint">Перенаправляем на вход…</p>
+}
+else if (loading)
+{
+    <p class="hint">Загружаем…</p>
+}
+else if (error is not null)
+{
+    <div class="error">@error</div>
+}
+else
+{
+    <div class="month-picker">
+        <button class="secondary" @onclick="PreviousMonth">‹</button>
+        <span>@month.ToString("00") / @year</span>
+        <button class="secondary" @onclick="NextMonth">›</button>
+    </div>
+
+    @if (items.Count == 0)
+    {
+        <p class="hint">В выбранном месяце операций нет.</p>
+    }
+    else
+    {
+        <div class="card-list">
+            @foreach (var tx in items)
+            {
+                <div class="list-card">
+                    <div>
+                        <b>@(tx.CategoryName ?? tx.Comment ?? "Операция")</b>
+                        <small>@tx.Date · @(tx.AccountName ?? "")</small>
+                    </div>
+                    <span class="@(tx.Type == 0 ? "income" : "expense")">
+                        @(tx.Type == 0 ? "+" : "−")@Money(tx.Amount)
+                    </span>
+                </div>
+            }
+        </div>
+    }
+}
+
+@code {
+    private List<TransactionRow> items = [];
+    private int year = DateTime.Today.Year;
+    private int month = DateTime.Today.Month;
+    private bool loading = true;
+    private string? error;
+
+    protected override async Task OnInitializedAsync()
+    {
+        if (!Auth.IsAuthenticated) { Nav.NavigateTo("/login"); return; }
+        await LoadAsync();
+    }
+
+    private async Task LoadAsync()
+    {
+        loading = true;
+        try
+        {
+            items = await Api.GetTransactionsAsync(month, year, 100);
+        }
+        catch (ApiException ex) when (ex.StatusCode == 401)
+        {
+            Nav.NavigateTo("/login");
+        }
+        catch (Exception ex)
+        {
+            error = ex.Message;
+        }
+        finally { loading = false; }
+    }
+
+    private async Task PreviousMonth()
+    {
+        if (month == 1) { month = 12; year--; } else month--;
+        await LoadAsync();
+    }
+
+    private async Task NextMonth()
+    {
+        if (month == 12) { month = 1; year++; } else month++;
+        await LoadAsync();
+    }
+
+    private static string Money(decimal value) =>
+        $"{value.ToString("N0", new CultureInfo("ru-RU"))} ₽";
+}

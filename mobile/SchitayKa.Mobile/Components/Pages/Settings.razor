@@ -1,0 +1,88 @@
+@page "/settings"
+@inject ApiClient Api
+@inject AuthState Auth
+@inject AppSettings AppConfig
+@inject NavigationManager Nav
+
+<h2>Настройки</h2>
+
+@if (!Auth.IsAuthenticated)
+{
+    <p class="hint">Перенаправляем на вход…</p>
+}
+else
+{
+    <section class="panel">
+        <h3>Профиль</h3>
+        <p><b>@Auth.User?.Name</b><br /><small>@Auth.User?.Email</small></p>
+        @if (Auth.User?.IsMaster == true)
+        {
+            <span class="badge">Администратор семьи</span>
+        }
+    </section>
+
+    <section class="panel">
+        <h3>Подключение</h3>
+        <label>Адрес сервера
+            <input @bind="serverUrl" placeholder="@AppSettings.DefaultServerUrl" />
+        </label>
+        <button class="secondary" @onclick="SaveServer">Сохранить адрес</button>
+        @if (serverMessage is not null) { <span class="hint">@serverMessage</span> }
+    </section>
+
+    <section class="panel">
+        <h3>Смена пароля</h3>
+        <label>Текущий пароль<input type="password" @bind="currentPassword" /></label>
+        <label>Новый пароль (не короче 8 символов)<input type="password" @bind="newPassword" /></label>
+        <button class="secondary" @onclick="ChangePassword">Сменить пароль</button>
+        @if (passwordMessage is not null) { <span class="hint">@passwordMessage</span> }
+    </section>
+
+    <button class="danger" @onclick="Logout">Выйти</button>
+}
+
+@code {
+    private string serverUrl = "";
+    private string? serverMessage;
+    private string currentPassword = "";
+    private string newPassword = "";
+    private string? passwordMessage;
+
+    protected override void OnInitialized()
+    {
+        serverUrl = AppConfig.ServerUrl;
+        if (!Auth.IsAuthenticated) Nav.NavigateTo("/login");
+    }
+
+    private void SaveServer()
+    {
+        AppConfig.ServerUrl = serverUrl;
+        serverMessage = "Сохранено";
+    }
+
+    private async Task ChangePassword()
+    {
+        passwordMessage = null;
+        try
+        {
+            await Api.ChangePasswordAsync(currentPassword, newPassword);
+            currentPassword = "";
+            newPassword = "";
+            passwordMessage = "Пароль изменён, другие сессии отключены";
+        }
+        catch (ApiException ex)
+        {
+            passwordMessage = ex.Message;
+        }
+        catch (Exception ex)
+        {
+            passwordMessage = ex.Message;
+        }
+    }
+
+    private async Task Logout()
+    {
+        await Auth.LogoutAsync();
+        Nav.NavigateTo("/login");
+    }
+}

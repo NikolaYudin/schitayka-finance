@@ -22,6 +22,7 @@ backend/Data/app.db-shm
 backend/Data/app.db-wal
 backend/data/app.db
 backend/data/backups/
+mobile/artifacts/
 /data/
 deploy/xpenology/data/
 publish/
